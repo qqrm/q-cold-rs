@@ -166,4 +166,4 @@ validated with local Cargo checks, while adapter-backed task-flow closeout is
 used only when the required remote and devcontainer prerequisites are present.
 The planned extraction backlog for moving deterministic task-flow ownership
 into Q-COLD is tracked in
-[`docs/taskflow-extraction-backlog.md`](docs/taskflow-extraction-backlog.md).
+[`docs/taskflow-extraction/`](docs/taskflow-extraction/README.md).
