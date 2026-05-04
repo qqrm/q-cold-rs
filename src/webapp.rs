@@ -25,6 +25,7 @@ use axum::{
 use clap::Args;
 use futures_util::stream;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{agents, history, repository, state, status};
 
@@ -808,12 +809,31 @@ fn dashboard_state() -> DashboardState {
             status::snapshot_for(&PathBuf::from(&root))
         }),
         agents: SnapshotBlock::capture("managed agents", agents::snapshot),
+        task_records: task_record_snapshot(),
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),
         commands: CommandTemplates {
             agent_start_template: format!(
                 "/agent_start <track> :: codex exec \"In {root}, start managed task <slug> with cargo qcold task open <slug>, enter the managed task devcontainer, reread AGENTS.md and task logs, then do: <task>. Drive to terminal closeout unless blocked.\""
             ),
+        },
+    }
+}
+
+fn task_record_snapshot() -> TaskRecordSnapshot {
+    let sync_error = crate::sync_codex_task_records().err().map(|err| format!("{err:#}"));
+    match state::load_task_records(None, 100) {
+        Ok(rows) => TaskRecordSnapshot::from_rows(rows, sync_error),
+        Err(err) => TaskRecordSnapshot {
+            count: 0,
+            open: 0,
+            closed: 0,
+            failed: 0,
+            total_displayed_tokens: 0,
+            total_output_tokens: 0,
+            total_reasoning_tokens: 0,
+            records: Vec::new(),
+            error: Some(format!("{err:#}")),
         },
     }
 }
@@ -1320,6 +1340,7 @@ struct DashboardState {
     repositories: Vec<RepositoryContext>,
     status: SnapshotBlock,
     agents: SnapshotBlock,
+    task_records: TaskRecordSnapshot,
     host_agents: HostAgentSnapshot,
     terminals: TerminalSnapshot,
     commands: CommandTemplates,
@@ -1329,6 +1350,152 @@ struct DashboardState {
 struct EventSnapshot {
     state: DashboardState,
     history: Vec<history::HistoryEntry>,
+}
+
+#[derive(Serialize)]
+struct TaskRecordSnapshot {
+    count: usize,
+    open: usize,
+    closed: usize,
+    failed: usize,
+    total_displayed_tokens: u64,
+    total_output_tokens: u64,
+    total_reasoning_tokens: u64,
+    records: Vec<WebTaskRecord>,
+    error: Option<String>,
+}
+
+impl TaskRecordSnapshot {
+    fn from_rows(rows: Vec<state::TaskRecordRow>, error: Option<String>) -> Self {
+        let records = rows.into_iter().map(WebTaskRecord::from_row).collect::<Vec<_>>();
+        let count = records.len();
+        let open = records
+            .iter()
+            .filter(|record| record.status == "open")
+            .count();
+        let failed = records
+            .iter()
+            .filter(|record| record.status.contains("failed"))
+            .count();
+        let closed = records
+            .iter()
+            .filter(|record| record.status.starts_with("closed"))
+            .count();
+        let total_displayed_tokens = records
+            .iter()
+            .filter_map(|record| record.token_usage.as_ref())
+            .map(|usage| usage.displayed_total_tokens)
+            .sum();
+        let total_output_tokens = records
+            .iter()
+            .filter_map(|record| record.token_usage.as_ref())
+            .map(|usage| usage.output_tokens)
+            .sum();
+        let total_reasoning_tokens = records
+            .iter()
+            .filter_map(|record| record.token_usage.as_ref())
+            .map(|usage| usage.reasoning_output_tokens)
+            .sum();
+        Self {
+            count,
+            open,
+            closed,
+            failed,
+            total_displayed_tokens,
+            total_output_tokens,
+            total_reasoning_tokens,
+            records,
+            error,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct WebTaskRecord {
+    id: String,
+    source: String,
+    title: String,
+    description: String,
+    status: String,
+    created_at: u64,
+    updated_at: u64,
+    repo_root: Option<String>,
+    cwd: Option<String>,
+    agent_id: Option<String>,
+    kind: Option<String>,
+    codex_thread_id: Option<String>,
+    session_path: Option<String>,
+    token_usage: Option<TaskTokenUsage>,
+}
+
+impl WebTaskRecord {
+    fn from_row(row: state::TaskRecordRow) -> Self {
+        let metadata = row
+            .metadata_json
+            .as_deref()
+            .and_then(|value| serde_json::from_str::<Value>(value).ok());
+        let token_usage = metadata
+            .as_ref()
+            .and_then(|value| value.get("token_usage"))
+            .map(TaskTokenUsage::from_value);
+        let kind = metadata
+            .as_ref()
+            .and_then(|value| value.get("kind"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        let codex_thread_id = metadata
+            .as_ref()
+            .and_then(|value| value.get("codex_thread_id"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        let session_path = metadata
+            .as_ref()
+            .and_then(|value| value.get("session_path"))
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        Self {
+            id: row.id,
+            source: row.source,
+            title: row.title,
+            description: row.description,
+            status: row.status,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            repo_root: row.repo_root,
+            cwd: row.cwd,
+            agent_id: row.agent_id,
+            kind,
+            codex_thread_id,
+            session_path,
+            token_usage,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct TaskTokenUsage {
+    input_tokens: u64,
+    cached_input_tokens: u64,
+    non_cached_input_tokens: u64,
+    output_tokens: u64,
+    reasoning_output_tokens: u64,
+    total_tokens: u64,
+    displayed_total_tokens: u64,
+}
+
+impl TaskTokenUsage {
+    fn from_value(value: &Value) -> Self {
+        let number = |key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
+        Self {
+            input_tokens: number("input_tokens"),
+            cached_input_tokens: number("cached_input_tokens"),
+            non_cached_input_tokens: number("non_cached_input_tokens"),
+            output_tokens: number("output_tokens"),
+            reasoning_output_tokens: number("reasoning_output_tokens"),
+            total_tokens: number("total_tokens"),
+            displayed_total_tokens: number("displayed_total_tokens"),
+        }
+    }
 }
 
 #[derive(Serialize)]

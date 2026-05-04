@@ -77,10 +77,19 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function badge(status) {
       const span = document.createElement('span');
-      const tone = status.includes('failed') ? 'failed' : status === 'open' ? 'open' : 'ready';
+      const tone = status.includes('failed') ? 'failed' : status === 'open' ? 'open' : status.includes('blocked') ? 'warn' : 'ready';
       span.className = `badge ${tone}`;
       span.textContent = status;
       return span;
+    }
+
+    function formatNumber(value) {
+      return new Intl.NumberFormat('en-US').format(Number(value || 0));
+    }
+
+    function formatTime(unix) {
+      if (!unix) return 'unknown';
+      return new Date(unix * 1000).toLocaleString();
     }
 
     const ansiPalette = [
@@ -219,28 +228,70 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function renderTasks() {
-      const items = model.status.tasks;
-      const open = items.filter((task) => task.status === 'open').length;
-      const failed = items.filter((task) => task.status.includes('failed')).length;
-      document.getElementById('open-count').textContent = `${open} open`;
-      document.getElementById('failed-count').textContent = `${failed} failed`;
-      document.getElementById('nav-tasks').textContent = String(items.length);
+      const snapshot = model.taskRecords;
+      const items = snapshot.records || [];
+      document.getElementById('open-count').textContent = `${snapshot.open || 0} open`;
+      document.getElementById('failed-count').textContent = `${snapshot.failed || 0} failed`;
+      document.getElementById('nav-tasks').textContent = String(snapshot.count || 0);
+      renderTaskStats(snapshot);
+      if (snapshot.error) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = snapshot.error;
+        tasks.replaceChildren(empty);
+        return;
+      }
       if (!items.length) {
-        tasks.innerHTML = '<div class="empty">No managed tasks are open.</div>';
+        tasks.innerHTML = '<div class="empty">No task records yet.</div>';
         return;
       }
       tasks.replaceChildren(...items.map((task) => {
         const node = document.createElement('article');
-        node.className = 'task-card';
+        node.className = 'task-card task-record-card';
         const title = document.createElement('div');
-        title.innerHTML = '<div class="task-title"></div><div class="task-path"></div>';
-        title.children[0].textContent = task.slug;
-        title.children[1].textContent = task.path;
+        title.innerHTML = '<div class="task-title"></div><div class="task-description"></div><div class="task-path"></div>';
+        title.children[0].textContent = task.title || task.id;
+        title.children[1].textContent = task.description || '';
+        title.children[2].textContent = task.cwd || task.repo_root || task.session_path || '';
         const stateCell = document.createElement('div');
         stateCell.appendChild(badge(task.status));
-        const attached = document.createElement('div');
-        attached.appendChild(badge(task.meta.state || 'unknown'));
-        node.append(title, stateCell, attached);
+        const meta = document.createElement('div');
+        meta.className = 'task-meta-stack';
+        meta.appendChild(badge(task.source || 'task'));
+        if (task.agent_id) meta.appendChild(badge(`agent ${task.agent_id.slice(0, 8)}`));
+        if (task.kind) meta.appendChild(badge(task.kind));
+        const usage = document.createElement('div');
+        usage.className = 'task-usage';
+        const tokenUsage = task.token_usage;
+        usage.innerHTML = tokenUsage
+          ? `<strong>${formatNumber(tokenUsage.displayed_total_tokens)}</strong><span>tokens</span><small>${formatNumber(tokenUsage.output_tokens)} out / ${formatNumber(tokenUsage.reasoning_output_tokens)} reasoning</small>`
+          : '<strong>-</strong><span>tokens</span><small>no telemetry</small>';
+        const dates = document.createElement('div');
+        dates.className = 'task-path';
+        dates.textContent = `updated ${formatTime(task.updated_at)}`;
+        meta.appendChild(dates);
+        node.append(title, stateCell, meta, usage);
+        return node;
+      }));
+    }
+
+    function renderTaskStats(snapshot) {
+      const stats = document.getElementById('task-stats');
+      const values = [
+        ['Records', snapshot.count || 0],
+        ['Closed', snapshot.closed || 0],
+        ['Displayed tokens', formatNumber(snapshot.total_displayed_tokens || 0)],
+        ['Output tokens', formatNumber(snapshot.total_output_tokens || 0)],
+        ['Reasoning', formatNumber(snapshot.total_reasoning_tokens || 0)],
+      ];
+      stats.replaceChildren(...values.map(([label, value]) => {
+        const node = document.createElement('div');
+        node.className = 'task-stat';
+        const valueNode = document.createElement('strong');
+        valueNode.textContent = value;
+        const labelNode = document.createElement('span');
+        labelNode.textContent = label;
+        node.append(valueNode, labelNode);
         return node;
       }));
     }
@@ -486,9 +537,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('ready-pill').textContent = terminalReady ? 'terminal ready' : 'terminal hold';
       document.getElementById('ready-pill').className = terminalReady ? 'badge ready' : 'badge warn';
       document.getElementById('repo-pill').textContent = `${state.repository.name} / ${state.repository.branch}`;
-      const open = model.status.tasks.filter((task) => task.status === 'open').length;
-      const failed = model.status.tasks.filter((task) => task.status.includes('failed')).length;
-      const total = Math.max(model.status.tasks.length, 1);
+      const open = model.taskRecords.open || 0;
+      const failed = model.taskRecords.failed || 0;
+      const total = Math.max(model.taskRecords.count || 0, 1);
       const bar = document.getElementById('task-bar');
       bar.replaceChildren();
       const openSeg = document.createElement('div');
@@ -504,7 +555,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('strip-terminal').textContent = terminalReady ? 'Terminal OK' : 'Terminal hold';
       document.getElementById('strip-terminal').className = terminalReady ? 'badge ready' : 'badge warn';
       document.getElementById('strip-repo').textContent = `${state.repository.name} / ${state.repository.branch}`;
-      document.getElementById('strip-tasks').textContent = `${openTasks} open / ${failed} failed${dirty ? ` / ${dirty} dirty` : ''}`;
+      document.getElementById('strip-tasks').textContent = `${open} task records / ${openTasks} worktrees / ${failed} failed${dirty ? ` / ${dirty} dirty` : ''}`;
       document.getElementById('strip-closeouts').textContent = `${incomplete} closeout residue`;
       document.getElementById('strip-closeouts').className = incomplete ? 'strip-text bad' : 'strip-text';
       const hostRecords = model.hostAgents.records || [];
@@ -520,6 +571,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       model = {
         status: parseStatus(state.status.text),
         agents: parseAgents(state.agents.text),
+        taskRecords: state.task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
         hostAgents: state.host_agents || { count: 0, records: [] },
         terminals: state.terminals || { count: 0, records: [] },
       };

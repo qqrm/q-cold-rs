@@ -175,6 +175,31 @@
     .badge.failed { color: var(--bad); background: rgba(180, 35, 24, .12); }
     .badge.ready { color: var(--ok); background: rgba(16, 128, 91, .12); }
     .badge.warn { color: var(--warn); background: rgba(173, 95, 0, .13); }
+    .task-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .task-stat {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--soft);
+      min-width: 0;
+    }
+    .task-stat strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.1;
+      overflow-wrap: anywhere;
+    }
+    .task-stat span {
+      display: block;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
     .task-list { display: grid; gap: 8px; }
     .task-card {
       display: grid;
@@ -183,8 +208,27 @@
       align-items: center;
       padding: 11px 12px;
     }
+    .task-card.task-record-card { grid-template-columns: minmax(220px, 1fr) 110px minmax(130px, .7fr) 130px; }
     .task-title { font-weight: 700; overflow-wrap: anywhere; }
+    .task-description { margin-top: 3px; color: var(--fg); overflow-wrap: anywhere; }
     .task-path { margin-top: 3px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .task-meta-stack {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+      min-width: 0;
+    }
+    .task-usage {
+      display: grid;
+      gap: 2px;
+      justify-items: end;
+      text-align: right;
+      min-width: 0;
+    }
+    .task-usage strong { font-size: 17px; line-height: 1.1; }
+    .task-usage span, .task-usage small { color: var(--muted); }
+    .task-usage small { overflow-wrap: anywhere; }
     .empty {
       border: 1px dashed var(--line);
       border-radius: 8px;
@@ -365,7 +409,8 @@
       .nav { grid-template-columns: repeat(5, 1fr); }
       .nav button { justify-content: center; }
       .nav-count { display: none; }
-      .task-card { grid-template-columns: 1fr; }
+      .task-card, .task-card.task-record-card { grid-template-columns: 1fr; }
+      .task-usage { justify-items: start; text-align: left; }
       .form-grid { grid-template-columns: 1fr; }
       .terminal-head, .terminal-compose, .terminal-meta-form { grid-template-columns: 1fr; }
       .header-actions { width: 100%; justify-content: space-between; }
