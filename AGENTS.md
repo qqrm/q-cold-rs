@@ -19,10 +19,11 @@ repo-local code owns it.
   `cargo qcold task open <task-slug> [profile]` and complete it through the
   task closeout surface.
 - During incubation, task, verify, ci, compat, ffi, build, and install
-  commands delegate through the explicit xtask process adapter. If
-  local Q-COLD development lacks the adapter prerequisites, remote, or
-  devcontainer surface, use normal Cargo validation in this repository and
-  report that task-flow closeout was not applicable.
+  commands delegate through the explicit xtask process adapter. Q-COLD owns a
+  repository-local self adapter under `xtask/` for dogfooding its own flow. If
+  that adapter or another target repository's adapter prerequisites are absent,
+  use normal Cargo validation and report that task-flow closeout was not
+  applicable.
 - Do not bypass the public command surface when the task is explicitly about
   Q-COLD command behavior. Exercise `cargo qcold ...` through the compiled
   binary or `cargo run -- ...` as appropriate.
@@ -116,9 +117,12 @@ fixture or debugging task explicitly needs them.
 - Keep commits scoped to the task. Do not include local secrets, runtime state,
   generated logs, or unrelated user edits.
 - During incubation, a local commit is not a substitute for managed task-flow
-  closeout when that closeout surface is available. If managed task-flow
-  prerequisites are absent or failing, commit after normal Cargo validation and
-  report that task-flow closeout was not applicable.
+  closeout when that closeout surface is available. For Q-COLD self-development,
+  prefer the self-hosted `QCOLD_REPO_ROOT=$PWD cargo qcold task open
+  <task-slug>` flow from a clean primary checkout unless this repository is
+  already the active registered repo, and close out from the managed worktree.
+  If managed task-flow prerequisites are absent or failing, commit after normal
+  Cargo validation and report that task-flow closeout was not applicable.
 
 ## Validation Authority
 

@@ -8,8 +8,10 @@ The name expands to QQRM Collaboration, Orchestration, Lifecycle, and Delivery.
 Q-COLD owns the operator-facing command surface and keeps repository-specific
 proof, validation, and closeout semantics behind explicit adapter traits. The
 first adapter is a generic xtask process adapter, so Q-COLD can build without
-a Cargo path dependency on any target repository. Install the standalone
-operator binary plus Cargo subcommand compatibility locally with:
+a Cargo path dependency on any target repository. Q-COLD also ships its own
+repository-local `xtask` adapter so Q-COLD development can dogfood the same
+`qcold task ...`, `qcold verify ...`, and `qcold ci ...` surfaces. Install the
+standalone operator binary plus Cargo subcommand compatibility locally with:
 
 ```bash
 cargo install --path . --locked
@@ -163,8 +165,12 @@ are recorded as task input.
 
 Adapter-backed commands run from a target repository checkout with
 `cargo xtask`, or through `QCOLD_XTASK_MANIFEST` when an explicit xtask
-manifest path is needed. A sibling checkout layout is still supported as a
-local convenience for development:
+manifest path is needed. In the Q-COLD checkout itself, `.cargo/config.toml`
+defines `cargo xtask` as the self-hosted adapter in `xtask/`, so normal
+development can start with `QCOLD_REPO_ROOT=$PWD cargo qcold task open <slug>`
+from a clean primary checkout, or with plain `cargo qcold task open <slug>` when
+the Q-COLD repository is the active registered repo. A sibling checkout layout
+is still supported as a local convenience for development:
 
 ```text
 repos/github/
@@ -183,9 +189,11 @@ metadata is embedded inside the ZIP at `metadata/bundle-manifest.txt`.
 ## Development contract
 
 This repository follows the task-flow and delegation discipline captured in
-[`AGENTS.md`](AGENTS.md). During incubation, Q-COLD command development is
-validated with local Cargo checks, while adapter-backed task-flow closeout is
-used only when the required remote and devcontainer prerequisites are present.
+[`AGENTS.md`](AGENTS.md). Q-COLD owns a minimal self-hosted task-flow adapter
+for dogfooding: managed worktrees are created under `../WT/qcold/`, success
+closeout runs `cargo fmt --check` plus the serial `cargo-qcold` unit suite,
+then fast-forwards the primary checkout when possible. Repository-specific
+proof semantics for other projects remain behind their adapters.
 The planned extraction backlog for moving deterministic task-flow ownership
 into Q-COLD is tracked in
 [`docs/taskflow-extraction/`](docs/taskflow-extraction/README.md).

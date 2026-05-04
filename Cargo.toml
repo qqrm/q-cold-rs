@@ -13,7 +13,7 @@ name = "qcold"
 path = "src/qcold.rs"
 
 [workspace]
-members = ["."]
+members = [".", "xtask"]
 resolver = "2"
 
 [dependencies]
