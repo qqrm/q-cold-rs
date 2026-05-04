@@ -1,6 +1,7 @@
 # Q-COLD
 
 Q-COLD is an extracted orchestration facade for agent-driven task-flow work.
+The name expands to QQRM Collaboration, Orchestration, Lifecycle, and Delivery.
 
 ![Q-COLD web dashboard terminals](docs/screenshots/qcold-web-terminals.jpg)
 
