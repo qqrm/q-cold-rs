@@ -50,8 +50,10 @@ Adapter-backed `qcold task open <slug>` automatically creates or updates a
 Q-COLD task record with source `task-flow`. Q-COLD-managed agent starts also
 create an ad-hoc task record when the wrapped `c2`, `cc2`, or `codex` command
 contains an explicit prompt argument. Interactive prompts typed later inside an
-already-open terminal remain agent telemetry until a Codex session importer
-promotes them into task records.
+already-open terminal are imported from Codex session JSONL telemetry under
+`~/.codex-accounts/<slot>/sessions` when task records, agent lists, or the web
+dashboard are refreshed. The importer stores the polished first meaningful user
+prompt plus the latest Codex token counters in task metadata.
 
 ## Web interface
 

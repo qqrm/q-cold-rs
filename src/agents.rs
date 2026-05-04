@@ -69,6 +69,7 @@ pub fn run(args: AgentArgs) -> Result<u8> {
 }
 
 pub fn snapshot() -> Result<String> {
+    let _ = crate::sync_codex_task_records();
     let state = AgentState::load()?;
     if state.records.is_empty() {
         return Ok("agents\tcount=0\n".to_string());
@@ -84,6 +85,7 @@ pub fn snapshot_line(record: &AgentRecord) -> String {
 }
 
 pub fn terminal_contexts() -> Result<Vec<TerminalAgentContext>> {
+    let _ = crate::sync_codex_task_records();
     Ok(AgentState::load()?
         .records
         .into_iter()
@@ -681,7 +683,7 @@ fn unescape_field(value: &str) -> String {
     value.replace("\\t", "\t").replace("\\\\", "\\")
 }
 
-fn registry_path() -> Result<PathBuf> {
+pub(crate) fn registry_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("agents.tsv"))
 }
 

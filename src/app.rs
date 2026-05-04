@@ -9,12 +9,14 @@ mod telegram;
 mod webapp;
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use agents::AgentArgs;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use serde_json::Value;
 use telegram::TelegramArgs;
 
 use crate::adapter::{BundleAdapter, ProofAdapter, TaskAdapter};
@@ -285,6 +287,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
 fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
     match args.command {
         TaskRecordSubcommand::List { status, limit } => {
+            sync_codex_task_records()?;
             let records = state::load_task_records(status.as_deref(), limit)?;
             if records.is_empty() {
                 println!("task-records\tcount=0");
@@ -296,6 +299,7 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
             }
         }
         TaskRecordSubcommand::Show { id } => {
+            sync_codex_task_records()?;
             let record = state::get_task_record(&id)?
                 .ok_or_else(|| anyhow::anyhow!("unknown task record: {id}"))?;
             println!("{}", render_task_record(&record));
@@ -416,6 +420,337 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
         Some(metadata.to_string()),
     );
     state::upsert_task_record(&record)
+}
+
+pub(crate) fn sync_codex_task_records() -> Result<usize> {
+    let agent_rows = state::load_agents(&agents::registry_path()?)?;
+    let existing = state::load_task_records(None, 1000)?;
+    let mut synced = 0;
+
+    for agent in agent_rows {
+        let command = agent_command_payload(&agent.command);
+        let Some(account) = codex_account_from_agent_command(&command) else {
+            continue;
+        };
+        let Some(summary) = find_codex_session_summary(&account, agent.started_at)? else {
+            continue;
+        };
+        let description = polish_task_text(&summary.prompt);
+        if description.is_empty() {
+            continue;
+        }
+
+        let existing_record = existing
+            .iter()
+            .find(|record| record.agent_id.as_deref() == Some(agent.id.as_str()));
+        let title = existing_record
+            .map(|record| record.title.clone())
+            .unwrap_or_else(|| title_from_description(&description));
+        let record_id = existing_record
+            .map(|record| record.id.clone())
+            .unwrap_or_else(|| format!("adhoc/{}-{}", agent.started_at, slug_from_title(&title)));
+        let status = existing_record
+            .map(|record| record.status.clone())
+            .unwrap_or_else(|| {
+                if summary.task_complete || !process_running(agent.pid) {
+                    "closed:unknown".to_string()
+                } else {
+                    "open".to_string()
+                }
+            });
+        let source = existing_record
+            .map(|record| record.source.clone())
+            .unwrap_or_else(|| "codex-session".to_string());
+        let record_description = existing_record
+            .map(|record| record.description.clone())
+            .unwrap_or(description);
+        let metadata = serde_json::json!({
+            "kind": "codex-session-import",
+            "agent_id": agent.id.clone(),
+            "track": agent.track.clone(),
+            "command": command,
+            "codex_account": account,
+            "session_path": summary.path.display().to_string(),
+            "codex_thread_id": summary.thread_id,
+            "token_usage": summary.token_usage,
+            "rate_limits": summary.rate_limits,
+            "task_complete": summary.task_complete,
+        });
+        let metadata_json = metadata.to_string();
+        if let Some(existing_record) = existing_record {
+            if existing_record.source == source
+                && existing_record.title == title
+                && existing_record.description == record_description
+                && existing_record.status == status
+                && existing_record.metadata_json.as_deref() == Some(metadata_json.as_str())
+            {
+                continue;
+            }
+        }
+        let record = state::new_task_record(
+            record_id,
+            source,
+            title,
+            record_description,
+            status,
+            repository::active_root()
+                .ok()
+                .map(|path| path.display().to_string()),
+            std::env::current_dir()
+                .ok()
+                .map(|path| path.display().to_string()),
+            Some(agent.id),
+            Some(metadata_json),
+        );
+        state::upsert_task_record(&record)?;
+        synced += 1;
+    }
+
+    Ok(synced)
+}
+
+#[derive(Debug)]
+struct CodexSessionSummary {
+    path: PathBuf,
+    thread_id: Option<String>,
+    prompt: String,
+    token_usage: Option<Value>,
+    rate_limits: Option<Value>,
+    task_complete: bool,
+}
+
+fn codex_account_from_agent_command(command: &str) -> Option<String> {
+    let lower = command.to_lowercase();
+    if !(lower.contains("c2")
+        || lower.contains("cc2")
+        || lower.contains("codex")
+        || lower.contains("code"))
+    {
+        return None;
+    }
+
+    for word in shell_words(command) {
+        let Some(name) = Path::new(&word).file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name == "c2" || name == "cc2" {
+            return Some("2".to_string());
+        }
+        if let Some(suffix) = name.strip_prefix("codex") {
+            if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                return Some(suffix.to_string());
+            }
+        }
+        if let Some(suffix) = name.strip_prefix('c') {
+            if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                return Some(suffix.to_string());
+            }
+        }
+    }
+
+    if lower.contains("codex") {
+        Some("2".to_string())
+    } else {
+        None
+    }
+}
+
+fn find_codex_session_summary(
+    account: &str,
+    agent_started_at: u64,
+) -> Result<Option<CodexSessionSummary>> {
+    let root = codex_sessions_root(account)?;
+    if !root.exists() {
+        return Ok(None);
+    }
+
+    let mut files = Vec::new();
+    collect_session_files(&root, &mut files)?;
+    files.sort_by_key(|path| std::cmp::Reverse(modified_unix(path).unwrap_or(0)));
+    files.retain(|path| {
+        modified_unix(path)
+            .map(|modified| modified >= agent_started_at.saturating_sub(300))
+            .unwrap_or(false)
+    });
+    files.truncate(100);
+
+    for path in files {
+        if let Some(summary) = parse_codex_session_summary(&path)? {
+            return Ok(Some(summary));
+        }
+    }
+    Ok(None)
+}
+
+fn codex_sessions_root(account: &str) -> Result<PathBuf> {
+    if let Ok(home) = std::env::var("HOME") {
+        return Ok(PathBuf::from(home)
+            .join(".codex-accounts")
+            .join(account)
+            .join("sessions"));
+    }
+    anyhow::bail!("HOME is required to locate Codex session telemetry")
+}
+
+fn collect_session_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in fs::read_dir(root)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_session_files(&path, files)?;
+        } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn parse_codex_session_summary(path: &Path) -> Result<Option<CodexSessionSummary>> {
+    let content = fs::read_to_string(path)?;
+    let mut prompt = None;
+    let mut fallback_prompt = None;
+    let mut token_usage = None;
+    let mut rate_limits = None;
+    let mut task_complete = false;
+
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("event_msg") => {
+                let Some(payload) = value.get("payload") else {
+                    continue;
+                };
+                match payload.get("type").and_then(Value::as_str) {
+                    Some("user_message") if prompt.is_none() => {
+                        if let Some(message) = payload.get("message").and_then(Value::as_str) {
+                            if is_meaningful_task_prompt(message) {
+                                prompt = Some(message.trim().to_string());
+                            }
+                        }
+                    }
+                    Some("token_count") => {
+                        if let Some(usage) = token_usage_summary(payload) {
+                            token_usage = Some(usage);
+                            rate_limits = payload.get("rate_limits").cloned();
+                        }
+                    }
+                    Some("task_complete") => task_complete = true,
+                    _ => {}
+                }
+            }
+            Some("response_item") if fallback_prompt.is_none() => {
+                let Some(payload) = value.get("payload") else {
+                    continue;
+                };
+                if payload.get("role").and_then(Value::as_str) == Some("user") {
+                    if let Some(message) = response_item_text(payload) {
+                        if is_meaningful_task_prompt(&message) {
+                            fallback_prompt = Some(message);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let prompt = prompt.or(fallback_prompt);
+    Ok(prompt.map(|prompt| CodexSessionSummary {
+        path: path.to_path_buf(),
+        thread_id: codex_thread_id_from_path(path),
+        prompt,
+        token_usage,
+        rate_limits,
+        task_complete,
+    }))
+}
+
+fn token_usage_summary(payload: &Value) -> Option<Value> {
+    let info = payload.get("info")?;
+    let total = info.get("total_token_usage")?;
+    let input = total.get("input_tokens").and_then(Value::as_u64).unwrap_or(0);
+    let cached = total
+        .get("cached_input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let output = total
+        .get("output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let non_cached_input = input.saturating_sub(cached);
+    Some(serde_json::json!({
+        "input_tokens": input,
+        "cached_input_tokens": cached,
+        "non_cached_input_tokens": non_cached_input,
+        "output_tokens": output,
+        "reasoning_output_tokens": total
+            .get("reasoning_output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0),
+        "total_tokens": total
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(input + output),
+        "displayed_total_tokens": non_cached_input + output,
+        "last_token_usage": info.get("last_token_usage").cloned(),
+        "model_context_window": info.get("model_context_window").cloned(),
+    }))
+}
+
+fn response_item_text(payload: &Value) -> Option<String> {
+    let content = payload.get("content")?.as_array()?;
+    let text = content
+        .iter()
+        .filter(|item| item.get("type").and_then(Value::as_str) == Some("input_text"))
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .filter(|text| !text.contains("<environment_context>"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text.trim().to_string())
+    }
+}
+
+fn is_meaningful_task_prompt(message: &str) -> bool {
+    let text = message.trim();
+    !text.is_empty()
+        && text.chars().count() >= 5
+        && !text.starts_with('/')
+        && !text.starts_with("Token usage:")
+        && !text.starts_with("To continue this session")
+}
+
+fn codex_thread_id_from_path(path: &Path) -> Option<String> {
+    let stem = path.file_stem()?.to_str()?;
+    let id = stem.get(stem.len().saturating_sub(36)..)?;
+    if id.len() == 36
+        && id.chars().enumerate().all(|(index, ch)| {
+            matches!(index, 8 | 13 | 18 | 23) && ch == '-'
+                || !matches!(index, 8 | 13 | 18 | 23) && ch.is_ascii_hexdigit()
+        })
+    {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+fn modified_unix(path: &Path) -> Option<u64> {
+    fs::metadata(path)
+        .ok()?
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn process_running(pid: u32) -> bool {
+    PathBuf::from(format!("/proc/{pid}")).exists()
 }
 
 fn render_task_record(record: &state::TaskRecordRow) -> String {
@@ -645,9 +980,11 @@ fn repository_adapter_for(repo: &RepositoryConfig) -> Result<adapter::XtaskProce
 #[cfg(test)]
 mod tests {
     use super::{
-        cargo_subcommand_args, polish_task_text, prompt_from_agent_command, slug_from_title,
+        cargo_subcommand_args, codex_account_from_agent_command, parse_codex_session_summary,
+        polish_task_text, prompt_from_agent_command, slug_from_title,
     };
     use std::ffi::OsString;
+    use std::fs;
 
     fn os_args(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
@@ -684,6 +1021,46 @@ mod tests {
                 .as_deref(),
             Some("Добавь CRUD для задач")
         );
+    }
+
+    #[test]
+    fn codex_account_is_detected_from_cc2_wrapper() {
+        assert_eq!(
+            codex_account_from_agent_command("/home/qqrm/.local/bin/cc2").as_deref(),
+            Some("2")
+        );
+        assert_eq!(
+            codex_account_from_agent_command("/usr/bin/codex3 exec inspect").as_deref(),
+            Some("3")
+        );
+    }
+
+    #[test]
+    fn codex_session_summary_imports_prompt_and_token_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(
+            "rollout-2026-05-04T09-27-19-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+        );
+        fs::write(
+            &path,
+            concat!(
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"Сделай CRUD для задач\",\"images\":[]}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":9,\"reasoning_output_tokens\":3,\"total_tokens\":109},\"last_token_usage\":{\"input_tokens\":100},\"model_context_window\":258400},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n",
+                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n"
+            ),
+        )
+        .unwrap();
+
+        let summary = parse_codex_session_summary(&path).unwrap().unwrap();
+        assert_eq!(summary.prompt, "Сделай CRUD для задач");
+        assert_eq!(
+            summary.thread_id.as_deref(),
+            Some("019df1ab-7579-7e41-ad71-701b63175455")
+        );
+        assert!(summary.task_complete);
+        let usage = summary.token_usage.unwrap();
+        assert_eq!(usage["non_cached_input_tokens"], 60);
+        assert_eq!(usage["displayed_total_tokens"], 69);
     }
 
     #[test]
