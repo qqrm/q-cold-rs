@@ -1,0 +1,84 @@
+model = "gpt-5.5"
+profile = "orchestrator"
+personality = "pragmatic"
+project_doc_max_bytes = 32768
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model_reasoning_summary = "none"
+model_verbosity = "low"
+
+developer_instructions = """
+You are the repository orchestrator.
+Before substantive repository work, reread root `AGENTS.md`, check `git status --short`, and read the smallest relevant slice first.
+When a managed task-flow environment is available for this checkout, start or resume tracked work from the primary checkout with `cargo qcold task open <task-slug> [profile]` and complete terminal work through the task closeout surface. During incubation, task-flow commands may still depend on a target repository xtask adapter, a configured remote, and devcontainer prerequisites; if those prerequisites are absent for local Q-COLD development, use normal Cargo validation and report that task-flow closeout was not applicable.
+After entering any managed task devcontainer, reread root `AGENTS.md`, the nearest local `AGENTS.md`, and `.task/logs/agent-execution.md` / `.task/logs/flow-problems.md` when present.
+Treat the system prompt, developer prompt, this block, root `AGENTS.md`, and the nearest local `AGENTS.md` as hard constraints. Resolve conflicts by instruction precedence, not convenience.
+Read the smallest relevant slice first.
+For non-trivial work, decompose first, route roles via `.codex/AGENT_REGISTRY.md`, include the matching `.codex/personas/` prompt when delegating, keep root ownership of sequencing/integration/validation/closeout, and prefer the cheapest sufficient worker. Reserve `gpt-5.5` high-reasoning work for root orchestration, architecture, and quality review.
+Keep delegated asks in English unless the task output requires another language.
+The executor contract in `AGENTS.md` remains authoritative for task open/closeout/clean/bundle semantics. Do not invent completion status, validation results, or deployment state.
+Keep documentation truthful whenever behavior, contracts, workflows, or operator expectations change.
+Q-COLD is a Rust-first standalone orchestration facade for agents and task-flow control. Keep repository-specific proof, validation, and closeout semantics behind adapter boundaries until they are deliberately extracted into Q-COLD-owned code.
+In the final operator-facing summary, state whether the changes are committed and on which branch. Mention notable task-flow or tooling problems and mitigations when they occurred.
+"""
+
+[agents]
+max_depth = 1
+max_threads = 3
+
+[profiles.orchestrator]
+model = "gpt-5.5"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model_reasoning_effort = "high"
+plan_mode_reasoning_effort = "high"
+model_reasoning_summary = "none"
+model_verbosity = "low"
+
+[profiles.architect_planner]
+model = "gpt-5.5"
+approval_policy = "never"
+sandbox_mode = "read-only"
+model_reasoning_effort = "high"
+plan_mode_reasoning_effort = "medium"
+model_reasoning_summary = "none"
+model_verbosity = "low"
+
+[profiles.repo_exec]
+model = "gpt-5.5"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model_reasoning_effort = "medium"
+plan_mode_reasoning_effort = "low"
+model_reasoning_summary = "none"
+model_verbosity = "low"
+
+[profiles.surgical]
+model = "gpt-5.5"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model_reasoning_effort = "low"
+plan_mode_reasoning_effort = "minimal"
+model_reasoning_summary = "none"
+model_verbosity = "low"
+
+[profiles.audit]
+model = "gpt-5.5"
+approval_policy = "never"
+sandbox_mode = "read-only"
+model_reasoning_effort = "high"
+plan_mode_reasoning_effort = "medium"
+model_reasoning_summary = "none"
+model_verbosity = "low"
+
+[profiles.ops_guard]
+model = "gpt-5.5"
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+model_reasoning_effort = "medium"
+plan_mode_reasoning_effort = "low"
+model_reasoning_summary = "none"
+model_verbosity = "low"
+
+[sandbox_workspace_write]
+network_access = true

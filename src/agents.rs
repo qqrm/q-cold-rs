@@ -1,0 +1,725 @@
+use std::env;
+use std::fmt::Write as _;
+use std::fs::{self, File, OpenOptions};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{bail, Context, Result};
+use clap::{Args, Subcommand};
+
+use crate::state;
+
+#[derive(Clone, Copy)]
+enum TerminalBackend {
+    Tmux,
+    Zellij,
+}
+
+enum TerminalTarget {
+    Tmux { session: String },
+    Zellij { session: String, pane: String },
+}
+
+#[derive(Args)]
+pub struct AgentArgs {
+    #[command(subcommand)]
+    command: AgentCommand,
+}
+
+#[derive(Subcommand)]
+enum AgentCommand {
+    #[command(about = "Start an agent process under Q-COLD tracking")]
+    Start(StartArgs),
+    #[command(about = "List tracked agent processes")]
+    List,
+}
+
+#[derive(Args)]
+struct StartArgs {
+    #[arg(long)]
+    id: Option<String>,
+    #[arg(long)]
+    track: String,
+    #[arg(long, help = "Run the agent in an attachable tmux terminal session")]
+    terminal: bool,
+    #[arg(long, help = "Attach to the tmux terminal after starting the agent")]
+    attach: bool,
+    #[arg(required = true, trailing_var_arg = true)]
+    command: Vec<String>,
+}
+
+pub fn run(args: AgentArgs) -> Result<u8> {
+    match args.command {
+        AgentCommand::Start(args) => {
+            let record = if args.terminal || args.attach {
+                start_terminal_agent(args.id, &args.track, &shell_join(&args.command))?
+            } else {
+                start_agent(args.id, args.track, args.command)?
+            };
+            println!("{}", render_record(&record));
+            if args.attach {
+                attach_terminal(&record)?;
+            }
+        }
+        AgentCommand::List => print!("{}", snapshot()?),
+    }
+    Ok(0)
+}
+
+pub fn snapshot() -> Result<String> {
+    let state = AgentState::load()?;
+    if state.records.is_empty() {
+        return Ok("agents\tcount=0\n".to_string());
+    }
+
+    let mut lines = vec![format!("agents\tcount={}", state.records.len())];
+    lines.extend(state.records.iter().map(snapshot_line));
+    Ok(format!("{}\n", lines.join("\n")))
+}
+
+pub fn snapshot_line(record: &AgentRecord) -> String {
+    render_record(record)
+}
+
+pub fn terminal_contexts() -> Result<Vec<TerminalAgentContext>> {
+    Ok(AgentState::load()?
+        .records
+        .into_iter()
+        .filter_map(|record| {
+            let target = terminal_target(&record)?;
+            let command = terminal_command_from_record(&record.command);
+            let (session, pane, target) = match target {
+                TerminalTarget::Tmux { session } => {
+                    let target = format!("{session}:0.0");
+                    (session, "0.0".to_string(), target)
+                }
+                TerminalTarget::Zellij { session, pane } => {
+                    let target = format!("zellij:{session}:{pane}");
+                    (session, pane, target)
+                }
+            };
+            Some(TerminalAgentContext {
+                id: record.id,
+                track: record.track,
+                session,
+                pane,
+                target,
+                started_at: record.started_at,
+                command,
+            })
+        })
+        .collect())
+}
+
+pub fn start_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
+    if command.trim().is_empty() {
+        bail!("agent command is empty");
+    }
+    start_agent(
+        None,
+        track.to_string(),
+        vec!["sh".to_string(), "-c".to_string(), command.to_string()],
+    )
+}
+
+pub fn start_terminal_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
+    if command.trim().is_empty() {
+        bail!("agent command is empty");
+    }
+    start_terminal_agent(None, track, command)
+}
+
+fn start_agent(id: Option<String>, track: String, command: Vec<String>) -> Result<AgentRecord> {
+    if track.trim().is_empty() {
+        bail!("agent track is empty");
+    }
+    if command.is_empty() {
+        bail!("agent command is empty");
+    }
+
+    let state = AgentState::load()?;
+    let started_at = unix_now()?;
+    let id = id.unwrap_or_else(|| format!("{}-{started_at}", sanitize_id(&track)));
+    if state.records.iter().any(|record| record.id == id) {
+        bail!("agent id already exists: {id}");
+    }
+
+    let state_dir = state_dir()?;
+    fs::create_dir_all(state_dir.join("logs"))?;
+    let stdout_log_path = log_path(&id, "out")?;
+    let stderr_log_path = log_path(&id, "err")?;
+    let stdout = log_file(&stdout_log_path)?;
+    let stderr = log_file(&stderr_log_path)?;
+    let mut process = Command::new(&command[0]);
+    process.args(&command[1..]);
+    let child = process
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .with_context(|| format!("failed to start agent command: {}", command.join(" ")))?;
+
+    let record = AgentRecord {
+        id,
+        track,
+        pid: child.id(),
+        started_at,
+        command,
+    };
+    state::insert_agent(&state::AgentRow {
+        id: record.id.clone(),
+        track: record.track.clone(),
+        pid: record.pid,
+        started_at: record.started_at,
+        command: record.command.clone(),
+        stdout_log_path: Some(stdout_log_path),
+        stderr_log_path: Some(stderr_log_path),
+    })?;
+    Ok(record)
+}
+
+fn start_terminal_agent(id: Option<String>, track: &str, command: &str) -> Result<AgentRecord> {
+    if track.trim().is_empty() {
+        bail!("agent track is empty");
+    }
+    if command.trim().is_empty() {
+        bail!("agent command is empty");
+    }
+    let state = AgentState::load()?;
+    let started_at = unix_now()?;
+    let id = id.unwrap_or_else(|| format!("{}-{started_at}", sanitize_id(track)));
+    if state.records.iter().any(|record| record.id == id) {
+        bail!("agent id already exists: {id}");
+    }
+
+    let state_dir = state_dir()?;
+    fs::create_dir_all(state_dir.join("logs"))?;
+    let stdout_log_path = log_path(&id, "out")?;
+    let backend = selected_terminal_backend()?;
+    let record = match backend {
+        TerminalBackend::Tmux => {
+            start_tmux_terminal_agent(&id, track, started_at, command, &stdout_log_path)?
+        }
+        TerminalBackend::Zellij => start_zellij_terminal_agent(&id, track, started_at, command)?,
+    };
+    state::insert_agent(&state::AgentRow {
+        id: record.id.clone(),
+        track: record.track.clone(),
+        pid: record.pid,
+        started_at: record.started_at,
+        command: record.command.clone(),
+        stdout_log_path: Some(stdout_log_path),
+        stderr_log_path: None,
+    })?;
+    Ok(record)
+}
+
+fn selected_terminal_backend() -> Result<TerminalBackend> {
+    match env::var("QCOLD_TERMINAL_BACKEND") {
+        Ok(value) if value.eq_ignore_ascii_case("zellij") => Ok(TerminalBackend::Zellij),
+        Ok(value) if value.trim().is_empty() || value.eq_ignore_ascii_case("tmux") => {
+            Ok(TerminalBackend::Tmux)
+        }
+        Ok(value) => bail!("unsupported QCOLD_TERMINAL_BACKEND={value}; use tmux or zellij"),
+        Err(_) => Ok(TerminalBackend::Tmux),
+    }
+}
+
+fn start_tmux_terminal_agent(
+    id: &str,
+    track: &str,
+    started_at: u64,
+    command: &str,
+    stdout_log_path: &Path,
+) -> Result<AgentRecord> {
+    ensure_tmux_available()?;
+    let session = format!("qcold-{id}");
+    let target = format!("{session}:0.0");
+    let wrapped = format!(
+        "{command}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\""
+    );
+    let delayed = format!("sleep 0.1; exec sh -lc {}", shell_quote(&wrapped));
+    let tmux_shell_command = format!("sh -lc {}", shell_quote(&delayed));
+    let status = Command::new("tmux")
+        .args(["new-session", "-d", "-s", &session, &tmux_shell_command])
+        .status()
+        .with_context(|| format!("failed to start tmux session {session}"))?;
+    if !status.success() {
+        bail!("tmux new-session failed with {status}");
+    }
+    set_tmux_option(&session, "remain-on-exit", "off")?;
+    set_tmux_option(&session, "mouse", "off")?;
+    let pipe_command = format!("cat >> {}", shell_quote(&stdout_log_path.display().to_string()));
+    let status = Command::new("tmux")
+        .args(["pipe-pane", "-o", "-t", &target, &pipe_command])
+        .status()
+        .with_context(|| format!("failed to pipe tmux pane {target}"))?;
+    if !status.success() {
+        bail!("tmux pipe-pane failed with {status}");
+    }
+    let pid = tmux_pane_pid(&target)?;
+
+    let record = AgentRecord {
+        id: id.to_string(),
+        track: track.to_string(),
+        pid,
+        started_at,
+        command: vec![
+            "tmux".to_string(),
+            "new-session".to_string(),
+            "-s".to_string(),
+            session,
+            command.to_string(),
+        ],
+    };
+    Ok(record)
+}
+
+fn start_zellij_terminal_agent(
+    id: &str,
+    track: &str,
+    started_at: u64,
+    command: &str,
+) -> Result<AgentRecord> {
+    ensure_zellij_available()?;
+    let session = format!("qcold-{id}");
+    let wrapped = format!(
+        "{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; sleep 0.1; zellij kill-session {} >/dev/null 2>&1 || true; exit \"$status\"",
+        command,
+        shell_quote(&session)
+    );
+    let layout_path = state_dir()?.join("logs").join(format!("{id}.zellij.kdl"));
+    fs::write(&layout_path, zellij_layout(id, &wrapped)?)
+        .with_context(|| format!("failed to write zellij layout {}", layout_path.display()))?;
+
+    let status = Command::new("zellij")
+        .args([
+            "attach",
+            "--create-background",
+            "--forget",
+            &session,
+            "options",
+            "--default-layout",
+            &layout_path.display().to_string(),
+            "--mouse-mode",
+            "false",
+            "--pane-frames",
+            "false",
+            "--show-release-notes",
+            "false",
+            "--show-startup-tips",
+            "false",
+        ])
+        .status()
+        .with_context(|| format!("failed to create zellij session {session}"))?;
+    if !status.success() {
+        bail!("zellij attach --create-background failed with {status}");
+    }
+    let pane = zellij_first_terminal_pane(&session)?;
+    let _ = Command::new("zellij")
+        .args(["--session", &session, "action", "focus-pane-id", &pane])
+        .status();
+    let pid = zellij_session_pid(&session)?;
+
+    Ok(AgentRecord {
+        id: id.to_string(),
+        track: track.to_string(),
+        pid,
+        started_at,
+        command: vec![
+            "zellij".to_string(),
+            "--session".to_string(),
+            session,
+            "pane".to_string(),
+            pane,
+            command.to_string(),
+        ],
+    })
+}
+
+fn zellij_layout(id: &str, wrapped: &str) -> Result<String> {
+    Ok(format!(
+        "layout {{\n    pane name={} command=\"sh\" close_on_exit=true {{\n        args \"-lc\" {}\n    }}\n}}\n",
+        kdl_quote(id)?,
+        kdl_quote(wrapped)?
+    ))
+}
+
+fn kdl_quote(value: &str) -> Result<String> {
+    serde_json::to_string(value).context("failed to quote zellij layout string")
+}
+
+fn zellij_first_terminal_pane(session: &str) -> Result<String> {
+    let mut last_error = None;
+    for _ in 0..20 {
+        match zellij_first_terminal_pane_once(session) {
+            Ok(pane) => return Ok(pane),
+            Err(err) => last_error = Some(err),
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err(last_error
+        .unwrap_or_else(|| anyhow::anyhow!("zellij session {session} has no terminal pane")))
+}
+
+fn zellij_first_terminal_pane_once(session: &str) -> Result<String> {
+    let output = Command::new("zellij")
+        .args(["--session", session, "action", "list-panes"])
+        .output()
+        .with_context(|| format!("failed to list zellij panes for session {session}"))?;
+    if !output.status.success() {
+        bail!("zellij action list-panes failed with {}", output.status);
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .skip(1)
+        .find_map(|line| {
+            let fields = line.split_whitespace().collect::<Vec<_>>();
+            (fields.len() >= 2 && fields[1] == "terminal").then(|| fields[0].to_string())
+        })
+        .with_context(|| format!("zellij session {session} has no terminal pane"))
+}
+
+fn set_tmux_option(session: &str, name: &str, value: &str) -> Result<()> {
+    let status = Command::new("tmux")
+        .args(["set-option", "-t", session, name, value])
+        .status()
+        .with_context(|| format!("failed to configure tmux session {session}"))?;
+    if !status.success() {
+        bail!("tmux set-option {name} failed with {status}");
+    }
+    Ok(())
+}
+
+fn ensure_zellij_available() -> Result<()> {
+    let status = Command::new("zellij")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("zellij is required for QCOLD_TERMINAL_BACKEND=zellij")?;
+    if !status.success() {
+        bail!("zellij is required for QCOLD_TERMINAL_BACKEND=zellij");
+    }
+    Ok(())
+}
+
+fn zellij_session_pid(session: &str) -> Result<u32> {
+    let marker = format!("/zellij/contract_version_1/{session}");
+    let entries = fs::read_dir("/proc").context("failed to inspect /proc for zellij session")?;
+    for entry in entries.filter_map(Result::ok) {
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let Ok(cmdline) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let args = cmdline
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part));
+        if args.into_iter().any(|arg| arg.contains(&marker)) {
+            return Ok(pid);
+        }
+    }
+    bail!("failed to locate zellij server process for session {session}");
+}
+
+fn ensure_tmux_available() -> Result<()> {
+    let status = Command::new("tmux")
+        .arg("-V")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .context("tmux is required for attachable terminal agents")?;
+    if !status.success() {
+        bail!("tmux is required for attachable terminal agents");
+    }
+    Ok(())
+}
+
+fn tmux_pane_pid(target: &str) -> Result<u32> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "-t", target, "#{pane_pid}"])
+        .output()
+        .with_context(|| format!("failed to read tmux pane pid for {target}"))?;
+    if !output.status.success() {
+        bail!("tmux display-message failed with {}", output.status);
+    }
+    let value = String::from_utf8_lossy(&output.stdout);
+    value
+        .trim()
+        .parse()
+        .with_context(|| format!("invalid tmux pane pid for {target}: {value}"))
+}
+
+fn attach_terminal(record: &AgentRecord) -> Result<()> {
+    let target = terminal_target(record).context("agent was not started in a terminal session")?;
+    let (program, args, session) = match target {
+        TerminalTarget::Tmux { session } => (
+            "tmux",
+            vec!["attach-session".to_string(), "-t".to_string(), session.clone()],
+            session,
+        ),
+        TerminalTarget::Zellij { session, .. } => {
+            ("zellij", vec!["attach".to_string(), session.clone()], session)
+        }
+    };
+    let status = Command::new(program)
+        .args(args)
+        .status()
+        .with_context(|| format!("failed to attach terminal session {session}"))?;
+    if !status.success() {
+        bail!("terminal attach failed with {status}");
+    }
+    Ok(())
+}
+
+fn terminal_target(record: &AgentRecord) -> Option<TerminalTarget> {
+    match record.command.as_slice() {
+        [tmux, new_session, flag, session, ..]
+            if tmux == "tmux" && new_session == "new-session" && flag == "-s" =>
+        {
+            Some(TerminalTarget::Tmux {
+                session: session.clone(),
+            })
+        }
+        [zellij, session_flag, session, pane_marker, pane, ..]
+            if zellij == "zellij" && session_flag == "--session" && pane_marker == "pane" =>
+        {
+            Some(TerminalTarget::Zellij {
+                session: session.clone(),
+                pane: pane.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn terminal_command_from_record(command: &[String]) -> String {
+    match command {
+        [tmux, new_session, flag, _session, wrapped, ..]
+            if tmux == "tmux" && new_session == "new-session" && flag == "-s" =>
+        {
+            wrapped.clone()
+        }
+        [zellij, session_flag, _session, pane_marker, _pane, wrapped, ..]
+            if zellij == "zellij" && session_flag == "--session" && pane_marker == "pane" =>
+        {
+            wrapped.clone()
+        }
+        _ => command.join(" "),
+    }
+}
+
+fn render_record(record: &AgentRecord) -> String {
+    let mut line = format!(
+        "agent\t{}\ttrack={}\tpid={}\tstate={}\tstarted_at={}\tcmd={}",
+        record.id,
+        record.track,
+        record.pid,
+        process_state(record.pid),
+        record.started_at,
+        record.command.join(" ")
+    );
+    if let Some(target) = terminal_target(record) {
+        match target {
+            TerminalTarget::Tmux { session } => {
+                let _ = write!(
+                    line,
+                    "\tterminal={session}\ttarget={session}:0.0\tattach=tmux attach-session -t {session}"
+                );
+            }
+            TerminalTarget::Zellij { session, pane } => {
+                let _ = write!(
+                    line,
+                    "\tterminal={session}\ttarget=zellij:{session}:{pane}\tattach=zellij attach {session}"
+                );
+            }
+        }
+    }
+    line
+}
+
+fn process_state(pid: u32) -> &'static str {
+    if PathBuf::from(format!("/proc/{pid}")).exists() {
+        "running"
+    } else {
+        "exited"
+    }
+}
+
+fn log_path(id: &str, stream: &str) -> Result<PathBuf> {
+    Ok(state_dir()?.join("logs").join(format!("{id}.{stream}.log")))
+}
+
+fn log_file(path: &PathBuf) -> Result<File> {
+    OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .with_context(|| format!("failed to open agent log {}", path.display()))
+}
+
+fn sanitize_id(value: &str) -> String {
+    let id: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    id.trim_matches('-').to_string()
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
+fn shell_join(args: &[String]) -> String {
+    args.iter()
+        .map(|arg| shell_quote(arg))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn unix_now() -> Result<u64> {
+    Ok(SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before Unix epoch")?
+        .as_secs())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentRecord {
+    id: String,
+    track: String,
+    pid: u32,
+    started_at: u64,
+    command: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalAgentContext {
+    pub id: String,
+    pub track: String,
+    pub session: String,
+    pub pane: String,
+    pub target: String,
+    pub started_at: u64,
+    pub command: String,
+}
+
+struct AgentState {
+    records: Vec<AgentRecord>,
+}
+
+impl AgentState {
+    fn load() -> Result<Self> {
+        let records = state::load_agents(&registry_path()?)?
+            .into_iter()
+            .map(|row| AgentRecord {
+                id: row.id,
+                track: row.track,
+                pid: row.pid,
+                started_at: row.started_at,
+                command: row.command,
+            })
+            .collect();
+        Ok(Self { records })
+    }
+}
+
+#[cfg(test)]
+fn parse_record(line: &str) -> Result<AgentRecord> {
+    let fields = line.split('\t').collect::<Vec<_>>();
+    if fields.len() != 5 {
+        bail!("invalid agent registry line: {line}");
+    }
+    Ok(AgentRecord {
+        id: unescape_field(fields[0]),
+        track: unescape_field(fields[1]),
+        pid: fields[2]
+            .parse()
+            .with_context(|| format!("invalid agent pid: {}", fields[2]))?,
+        started_at: fields[3]
+            .parse()
+            .with_context(|| format!("invalid agent start time: {}", fields[3]))?,
+        command: unescape_field(fields[4])
+            .split('\u{1f}')
+            .map(ToString::to_string)
+            .collect(),
+    })
+}
+
+#[cfg(test)]
+fn serialize_record(record: &AgentRecord) -> String {
+    [
+        escape_field(&record.id),
+        escape_field(&record.track),
+        record.pid.to_string(),
+        record.started_at.to_string(),
+        escape_field(&record.command.join("\u{1f}")),
+    ]
+    .join("\t")
+}
+
+#[cfg(test)]
+fn escape_field(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\t', "\\t")
+}
+
+#[cfg(test)]
+fn unescape_field(value: &str) -> String {
+    value.replace("\\t", "\t").replace("\\\\", "\\")
+}
+
+fn registry_path() -> Result<PathBuf> {
+    Ok(state_dir()?.join("agents.tsv"))
+}
+
+fn state_dir() -> Result<PathBuf> {
+    if let Ok(path) = env::var("QCOLD_STATE_DIR") {
+        if !path.trim().is_empty() {
+            return Ok(PathBuf::from(path));
+        }
+    }
+    let home = env::var("HOME").context("HOME is required when QCOLD_STATE_DIR is unset")?;
+    Ok(PathBuf::from(home).join(".local/state/qcold"))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn records_round_trip() {
+        let record = AgentRecord {
+            id: "agent-1".to_string(),
+            track: "track".to_string(),
+            pid: 123,
+            started_at: 456,
+            command: vec!["sh".to_string(), "-c".to_string(), "echo hi".to_string()],
+        };
+        assert_eq!(parse_record(&serialize_record(&record)).unwrap(), record);
+    }
+
+    #[test]
+    fn start_shell_agent_records_process() {
+        let temp = tempdir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path());
+        let record = start_shell_agent("unit", "printf ok").unwrap();
+        assert!(record.id.starts_with("unit-"));
+        let snapshot = snapshot().unwrap();
+        assert!(snapshot.contains("agent\tunit-"));
+        env::remove_var("QCOLD_STATE_DIR");
+    }
+}

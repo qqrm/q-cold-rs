@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Q-COLD</title>
+  <script src="https://telegram.org/js/telegram-web-app.js?62"></script>
+  <link rel="stylesheet" href="/assets/app.css">
+
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Q-COLD</h1>
+        <div class="topline">
+          <span id="repo-pill" class="badge">Loading</span>
+          <span id="ready-pill" class="badge">Status</span>
+        </div>
+      </div>
+      <div class="header-actions">
+        <div class="theme-control" aria-label="Theme">
+          <button data-theme-choice="auto" class="active">Auto</button>
+          <button data-theme-choice="dark">Dark</button>
+          <button data-theme-choice="light">Light</button>
+        </div>
+        <span id="live-state" class="badge ready live-indicator">Live</span>
+      </div>
+    </header>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <nav class="nav" aria-label="Dashboard">
+          <button class="active" data-view="chat">Chat <span class="nav-count" id="nav-chat">0</span></button>
+          <button data-view="terminals">Terminals <span class="nav-count" id="nav-terminals">0</span></button>
+          <button data-view="tasks">Tasks <span class="nav-count" id="nav-tasks">0</span></button>
+          <button data-view="agents">Agents <span class="nav-count" id="nav-agents">0</span></button>
+          <button data-view="start">Start <span class="nav-count">+</span></button>
+        </nav>
+      </aside>
+
+      <div>
+        <section class="view active" id="view-chat">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Meta-Agent Chat</h2>
+              <span class="badge ready" id="write-state">local write</span>
+            </div>
+            <div class="chat-log" id="chat-log"></div>
+            <div class="chat-compose">
+              <label>Message or command<textarea id="chat-input" placeholder="/agent_start review-batch :: codex exec ..."></textarea></label>
+              <div class="actions">
+                <button id="send-chat">Send</button>
+                <button class="secondary" id="send-start-command">Send Start Command</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="view" id="view-terminals">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Terminals</h2>
+              <span id="terminal-count" class="badge">0</span>
+            </div>
+            <div id="terminal-list" class="terminal-list"></div>
+          </div>
+        </section>
+
+        <section class="view" id="view-tasks">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Tasks</h2>
+              <div class="toolbar">
+                <span class="badge open" id="open-count">0 open</span>
+                <span class="badge failed" id="failed-count">0 failed</span>
+              </div>
+            </div>
+            <div class="task-list" id="tasks"></div>
+            <details>
+              <summary>Raw task-flow status</summary>
+              <pre id="status"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section class="view" id="view-agents">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Agents</h2>
+              <div class="toolbar">
+                <span id="agent-count" class="badge">0 tracked</span>
+                <span id="host-agent-count" class="badge">0 host</span>
+              </div>
+            </div>
+            <h3>Tracked by Q-COLD</h3>
+            <div id="agent-list"></div>
+            <h3>Discovered on Host</h3>
+            <div id="host-agent-list"></div>
+            <details>
+              <summary>Raw agent registry</summary>
+              <pre id="agents"></pre>
+            </details>
+          </div>
+        </section>
+
+        <section class="view" id="view-start">
+          <div class="panel">
+            <div class="panel-head">
+              <h2>Start Task</h2>
+              <span class="badge warn">Manual approval</span>
+            </div>
+            <div class="form-grid">
+              <label>Track<input id="track" value="review-batch"></label>
+              <label>Slug<input id="slug" value="review-batch-next"></label>
+            </div>
+            <label>Task prompt<textarea id="prompt">Continue the next bounded migration slice.</textarea></label>
+            <textarea id="command" readonly></textarea>
+            <div class="actions">
+              <button id="copy">Copy Command</button>
+              <button class="secondary" id="select-command">Select</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <aside class="system-strip" aria-label="System overview">
+      <div class="strip-main">
+        <span id="strip-terminal" class="badge">Terminal</span>
+        <span id="strip-repo" class="strip-text">repository</span>
+        <span id="strip-tasks" class="strip-text">0 tasks</span>
+        <span id="strip-closeouts" class="strip-text">0 closeouts</span>
+        <span id="strip-agents" class="strip-text">0 agents</span>
+      </div>
+      <div class="status-bar compact" id="task-bar"></div>
+    </aside>
+  </main>
+  <script src="/assets/app.js"></script>
+
+</body>
+</html>
