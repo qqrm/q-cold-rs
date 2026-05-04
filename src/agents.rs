@@ -177,6 +177,7 @@ fn start_agent(id: Option<String>, track: String, command: Vec<String>) -> Resul
         stdout_log_path: Some(stdout_log_path),
         stderr_log_path: Some(stderr_log_path),
     })?;
+    crate::record_agent_task(&record)?;
     Ok(record)
 }
 
@@ -213,6 +214,7 @@ fn start_terminal_agent(id: Option<String>, track: &str, command: &str) -> Resul
         stdout_log_path: Some(stdout_log_path),
         stderr_log_path: None,
     })?;
+    crate::record_agent_task(&record)?;
     Ok(record)
 }
 
@@ -597,11 +599,11 @@ fn unix_now() -> Result<u64> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AgentRecord {
-    id: String,
-    track: String,
-    pid: u32,
-    started_at: u64,
-    command: Vec<String>,
+    pub(crate) id: String,
+    pub(crate) track: String,
+    pub(crate) pid: u32,
+    pub(crate) started_at: u64,
+    pub(crate) command: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

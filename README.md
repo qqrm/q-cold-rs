@@ -24,6 +24,8 @@ qcold repo add target-repo /path/to/target-repo \
   --set-active
 qcold repo list
 qcold status
+qcold task-record create --description "Add task CRUD and automatic capture"
+qcold task-record list
 qcold agent list
 qcold agent start --track audit -- codex exec "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
@@ -36,6 +38,20 @@ qcold task open my-task
 
 `cargo qcold <command>` remains supported for Cargo subcommand compatibility,
 but `qcold <command>` is the primary operator interface.
+
+## Task records
+
+Q-COLD stores lightweight task records in its local SQLite database. Use
+`qcold task-record create`, `list`, `show`, `update`, `close`, and `delete` for
+direct CRUD. Descriptions are normalized before storage so operator phrasing is
+kept as a concise task description instead of a raw chat transcript.
+
+Adapter-backed `qcold task open <slug>` automatically creates or updates a
+Q-COLD task record with source `task-flow`. Q-COLD-managed agent starts also
+create an ad-hoc task record when the wrapped `c2`, `cc2`, or `codex` command
+contains an explicit prompt argument. Interactive prompts typed later inside an
+already-open terminal remain agent telemetry until a Codex session importer
+promotes them into task records.
 
 ## Web interface
 

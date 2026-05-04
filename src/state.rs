@@ -41,6 +41,21 @@ pub struct TaskTopicRow {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct TaskRecordRow {
+    pub id: String,
+    pub source: String,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub repo_root: Option<String>,
+    pub cwd: Option<String>,
+    pub agent_id: Option<String>,
+    pub metadata_json: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct TerminalMetadataRow {
     pub target: String,
     pub name: Option<String>,
@@ -282,6 +297,141 @@ pub fn add_task_topic(record: &TaskTopicRow) -> Result<()> {
     Ok(())
 }
 
+pub fn upsert_task_record(record: &TaskRecordRow) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "insert into tasks
+                 (id, source, title, description, status, created_at_unix, updated_at_unix,
+                  repo_root, cwd, agent_id, metadata_json)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             on conflict(id) do update set
+                 source = excluded.source,
+                 title = excluded.title,
+                 description = excluded.description,
+                 status = excluded.status,
+                 updated_at_unix = excluded.updated_at_unix,
+                 repo_root = coalesce(excluded.repo_root, tasks.repo_root),
+                 cwd = coalesce(excluded.cwd, tasks.cwd),
+                 agent_id = coalesce(excluded.agent_id, tasks.agent_id),
+                 metadata_json = coalesce(excluded.metadata_json, tasks.metadata_json)",
+            params![
+                record.id,
+                record.source,
+                record.title,
+                record.description,
+                record.status,
+                record.created_at,
+                record.updated_at,
+                record.repo_root,
+                record.cwd,
+                record.agent_id,
+                record.metadata_json,
+            ],
+        )
+        .context("failed to upsert task record")?;
+    Ok(())
+}
+
+pub fn load_task_records(status: Option<&str>, limit: usize) -> Result<Vec<TaskRecordRow>> {
+    let connection = open_db()?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let mut records = Vec::new();
+    if let Some(status) = status {
+        let mut statement = connection
+            .prepare(
+                "select id, source, title, description, status, created_at_unix, updated_at_unix,
+                        repo_root, cwd, agent_id, metadata_json
+                 from tasks
+                 where status = ?1
+                 order by updated_at_unix desc, id
+                 limit ?2",
+            )
+            .context("failed to prepare task record query")?;
+        let rows = statement
+            .query_map(params![status, limit], task_record_from_row)
+            .context("failed to query task records")?;
+        for row in rows {
+            records.push(row.context("failed to decode task record")?);
+        }
+    } else {
+        let mut statement = connection
+            .prepare(
+                "select id, source, title, description, status, created_at_unix, updated_at_unix,
+                        repo_root, cwd, agent_id, metadata_json
+                 from tasks
+                 order by updated_at_unix desc, id
+                 limit ?1",
+            )
+            .context("failed to prepare task record query")?;
+        let rows = statement
+            .query_map([limit], task_record_from_row)
+            .context("failed to query task records")?;
+        for row in rows {
+            records.push(row.context("failed to decode task record")?);
+        }
+    }
+    Ok(records)
+}
+
+pub fn get_task_record(id: &str) -> Result<Option<TaskRecordRow>> {
+    let connection = open_db()?;
+    connection
+        .query_row(
+            "select id, source, title, description, status, created_at_unix, updated_at_unix,
+                    repo_root, cwd, agent_id, metadata_json
+             from tasks
+             where id = ?1",
+            [id],
+            task_record_from_row,
+        )
+        .optional()
+        .context("failed to load task record")
+}
+
+pub fn update_task_record(
+    id: &str,
+    title: Option<&str>,
+    description: Option<&str>,
+    status: Option<&str>,
+) -> Result<()> {
+    let mut record = get_task_record(id)?.with_context(|| format!("unknown task record: {id}"))?;
+    if let Some(title) = title {
+        record.title = title.to_string();
+    }
+    if let Some(description) = description {
+        record.description = description.to_string();
+    }
+    if let Some(status) = status {
+        record.status = status.to_string();
+    }
+    record.updated_at = unix_now();
+    upsert_task_record(&record)
+}
+
+pub fn delete_task_record(id: &str) -> Result<()> {
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction()
+        .context("failed to start task delete transaction")?;
+    tx.execute("delete from task_topics where task_id = ?1", [id])
+        .context("failed to delete task topic")?;
+    tx.execute("update history set task_id = null where task_id = ?1", [id])
+        .context("failed to detach task history")?;
+    tx.execute("update events set task_id = null where task_id = ?1", [id])
+        .context("failed to detach task events")?;
+    tx.execute("update claims set task_id = null where task_id = ?1", [id])
+        .context("failed to detach task claims")?;
+    let deleted = tx
+        .execute("delete from tasks where id = ?1", [id])
+        .context("failed to delete task record")?;
+    if deleted == 0 {
+        bail!("unknown task record: {id}");
+    }
+    tx.commit().context("failed to commit task delete")?;
+    Ok(())
+}
+
 pub fn append_event(
     source: &str,
     kind: &str,
@@ -310,6 +460,33 @@ pub fn next_task_id(existing_count: usize) -> Result<String> {
         "qcd-{:04}",
         usize::try_from(count).unwrap_or(existing_count) + 1
     ))
+}
+
+pub fn new_task_record(
+    id: String,
+    source: String,
+    title: String,
+    description: String,
+    status: String,
+    repo_root: Option<String>,
+    cwd: Option<String>,
+    agent_id: Option<String>,
+    metadata_json: Option<String>,
+) -> TaskRecordRow {
+    let now = unix_now();
+    TaskRecordRow {
+        id,
+        source,
+        title,
+        description,
+        status,
+        created_at: now,
+        updated_at: now,
+        repo_root,
+        cwd,
+        agent_id,
+        metadata_json,
+    }
 }
 
 #[allow(
@@ -358,7 +535,11 @@ fn open_db() -> Result<Connection> {
                  description text not null,
                  status text not null,
                  created_at_unix integer not null,
-                 updated_at_unix integer not null
+                 updated_at_unix integer not null,
+                 repo_root text,
+                 cwd text,
+                 agent_id text,
+                 metadata_json text
              );
              create table if not exists task_topics (
                  task_id text primary key references tasks(id),
@@ -429,7 +610,32 @@ fn open_db() -> Result<Connection> {
              pragma user_version = 1;",
         )
         .context("failed to initialize state database")?;
+    migrate_state_schema(&connection)?;
     Ok(connection)
+}
+
+fn migrate_state_schema(connection: &Connection) -> Result<()> {
+    ensure_column(connection, "tasks", "repo_root", "text")?;
+    ensure_column(connection, "tasks", "cwd", "text")?;
+    ensure_column(connection, "tasks", "agent_id", "text")?;
+    ensure_column(connection, "tasks", "metadata_json", "text")?;
+    Ok(())
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<()> {
+    if table_has_column(connection, table, column)? {
+        return Ok(());
+    }
+    let sql = format!("alter table {table} add column {column} {definition}");
+    connection
+        .execute(&sql, [])
+        .with_context(|| format!("failed to add {table}.{column}"))?;
+    Ok(())
 }
 
 fn backfill_history(connection: &Connection) -> Result<()> {
@@ -557,6 +763,22 @@ fn task_topic_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskTopicRow
     })
 }
 
+fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecordRow> {
+    Ok(TaskRecordRow {
+        id: row.get(0)?,
+        source: row.get(1)?,
+        title: row.get(2)?,
+        description: row.get(3)?,
+        status: row.get(4)?,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
+        repo_root: row.get(7)?,
+        cwd: row.get(8)?,
+        agent_id: row.get(9)?,
+        metadata_json: row.get(10)?,
+    })
+}
+
 fn parse_legacy_agent(line: &str, log_dir: &Path) -> Result<AgentRow> {
     let fields = line.split('\t').collect::<Vec<_>>();
     if fields.len() != 5 {
@@ -621,6 +843,21 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool> {
         .optional()
         .map(|value| value.is_some())
         .context("failed to inspect sqlite schema")
+}
+
+fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool> {
+    let mut statement = connection
+        .prepare(&format!("pragma table_info({table})"))
+        .with_context(|| format!("failed to inspect {table} columns"))?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .with_context(|| format!("failed to query {table} columns"))?;
+    for row in rows {
+        if row? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn db_path() -> Result<PathBuf> {

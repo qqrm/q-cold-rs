@@ -37,6 +37,12 @@ repo-local code owns it.
 - `cargo install --path . --locked`
 - `qcold --help`
 - `qcold status`
+- `qcold task-record list`
+- `qcold task-record create --description "<task description>"`
+- `qcold task-record show <task-id>`
+- `qcold task-record update <task-id> [--title "<title>"] [--description "<description>"] [--status <status>]`
+- `qcold task-record close <task-id> [--outcome success|blocked|failed]`
+- `qcold task-record delete <task-id>`
 - `qcold agent list`
 - `qcold agent start --track <track> -- <command>...`
 - `qcold telegram poll`
@@ -46,6 +52,12 @@ repo-local code owns it.
 - `qcold repo set-active <id>`
 - `cargo qcold --help`
 - `cargo qcold status`
+- `cargo qcold task-record list`
+- `cargo qcold task-record create --description "<task description>"`
+- `cargo qcold task-record show <task-id>`
+- `cargo qcold task-record update <task-id> [--title "<title>"] [--description "<description>"] [--status <status>]`
+- `cargo qcold task-record close <task-id> [--outcome success|blocked|failed]`
+- `cargo qcold task-record delete <task-id>`
 - `cargo qcold agent list`
 - `cargo qcold agent start --track <track> -- <command>...`
 - `cargo qcold telegram poll`
