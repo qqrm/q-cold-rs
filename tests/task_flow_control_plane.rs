@@ -95,6 +95,58 @@ fn run_qcold(repo: &Path, fakebin: &Path, args: &[&str]) -> AssertCommand {
     cmd
 }
 
+fn run_qcold_with_registry(
+    repo: &Path,
+    fakebin: &Path,
+    state_dir: &Path,
+    args: &[&str],
+) -> AssertCommand {
+    let original_path = env::var("PATH").unwrap_or_default();
+    let notification_env_file = repo.join(".taskflow-test-notify.env");
+    let mut cmd = AssertCommand::cargo_bin("cargo-qcold").unwrap();
+    cmd.current_dir(repo)
+        .args(args)
+        .env("PATH", format!("{}:{original_path}", fakebin.display()))
+        .env("QCOLD_STATE_DIR", state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .env_remove("QCOLD_XTASK_MANIFEST")
+        .env_remove("QCOLD_TASKFLOW_CONTAINER_ROOT")
+        .env_remove("QCOLD_TASKFLOW_CONTEXT")
+        .env_remove("QCOLD_TASKFLOW_PRIMARY_REPO_PATH")
+        .env_remove("QCOLD_TASKFLOW_TASK_ID")
+        .env_remove("QCOLD_TASKFLOW_TASK_WORKTREE")
+        .env_remove("QCOLD_TASKFLOW_TASK_BRANCH")
+        .env_remove("QCOLD_TASKFLOW_DEVCONTAINER_ID")
+        .env_remove("QCOLD_DEVCONTAINER_PROFILE")
+        .env_remove("QCOLD_TASKFLOW_AGENT_RUNNER")
+        .env_remove("QCOLD_TASKFLOW_AGENT_ID")
+        .env_remove("QCOLD_TASKFLOW_AGENT_MODEL")
+        .env_remove("QCOLD_TASKFLOW_AGENT_STATUS")
+        .env_remove("QCOLD_TASKFLOW_AGENT_REMAINING_CAPACITY")
+        .env_remove("QCOLD_TASKFLOW_USAGE_INPUT_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_CACHED_INPUT_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_OUTPUT_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_TOTAL_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_CREDITS")
+        .env("TELEGRAM_BOT_TOKEN", "")
+        .env("TELEGRAM_CHAT_ID", "")
+        .env_remove("TELEGRAM_API_BASE_URL")
+        .env_remove("TELEGRAM_NOTIFY_TIMEOUT")
+        .env("TELEGRAM_ENV_FILE", &notification_env_file)
+        .env_remove("JIRA_URL")
+        .env_remove("JIRA_PERSONAL_TOKEN")
+        .env_remove("JIRA_PROJECT_KEY")
+        .env_remove("JIRA_ISSUE_TYPE")
+        .env_remove("JIRA_PARENT_KEY")
+        .env_remove("JIRA_DONE_TRANSITION")
+        .env_remove("JIRA_LABELS")
+        .env("JIRA_ENV_FILE", &notification_env_file)
+        .env_remove("JIRA_SYNC")
+        .env_remove("JIRA_DEBUG_TO_TELEGRAM");
+    cmd
+}
+
 fn run_qcold_in_managed_task_devcontainer(
     repo: &Path,
     primary: &Path,
@@ -536,6 +588,52 @@ fn closeout_from_primary_fails_before_session_start_and_does_not_bundle() {
     assert!(parse_value("BUNDLE_PATH", &stdout).is_none());
     assert!(!fixture.primary.join("bundles").exists());
     assert!(worktree.exists());
+}
+
+#[test]
+fn closeout_from_managed_worktree_uses_cwd_before_registered_active_primary() {
+    let fixture = TaskRepoFixture::new();
+    let state_dir = fixture.primary.parent().unwrap().join("qcold-state");
+    run_qcold_with_registry(
+        &fixture.primary,
+        &fixture.fakebin,
+        &state_dir,
+        &[
+            "repo",
+            "add",
+            "fixture",
+            fixture.primary.to_str().unwrap(),
+            "--xtask-manifest",
+            xtask_process_manifest().to_str().unwrap(),
+            "--set-active",
+        ],
+    )
+    .assert()
+    .success();
+
+    let worktree = fixture.create_task_worktree("registered-active-primary");
+    write_file(&worktree.join("note.txt"), "bundle evidence\n");
+
+    let closeout = run_qcold_with_registry(
+        &worktree,
+        &fixture.fakebin,
+        &state_dir,
+        &[
+            "task",
+            "closeout",
+            "--outcome",
+            "blocked",
+            "--reason",
+            "need operator",
+        ],
+    )
+    .assert()
+    .code(10)
+    .stdout(contains("BUNDLE_PATH="));
+    let stdout = String::from_utf8_lossy(&closeout.get_output().stdout);
+    let bundle = PathBuf::from(parse_value("BUNDLE_PATH", &stdout).unwrap());
+    assert!(bundle.exists());
+    assert!(!worktree.exists());
 }
 
 #[test]

@@ -8,6 +8,12 @@ use clap::{Args, Subcommand};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
+#[derive(Clone, Copy)]
+pub enum AdapterContext {
+    ActiveRepository,
+    CwdManagedWorktree,
+}
+
 #[derive(Args)]
 pub struct RepositoryArgs {
     #[command(subcommand)]
@@ -125,11 +131,28 @@ pub fn list() -> Result<Vec<RepositoryConfig>> {
 }
 
 pub fn active() -> Result<RepositoryConfig> {
+    resolve(AdapterContext::ActiveRepository)
+}
+
+pub fn for_adapter_context(context: AdapterContext) -> Result<RepositoryConfig> {
+    resolve(context)
+}
+
+fn resolve(context: AdapterContext) -> Result<RepositoryConfig> {
+    if let Some(root) = optional_env("QCOLD_REPO_ROOT") {
+        let root = canonical_root(Path::new(&root))?;
+        if root.join(".task/task.env").is_file() {
+            return config_for_managed_worktree(&root);
+        }
+        return fallback_for_root(&root);
+    }
     if let Some(id) = optional_env("QCOLD_ACTIVE_REPO") {
         return active_by_id(&id);
     }
-    if let Some(root) = optional_env("QCOLD_REPO_ROOT") {
-        return fallback_for_root(Path::new(&root));
+    if matches!(context, AdapterContext::CwdManagedWorktree) {
+        if let Some(root) = cwd_managed_worktree_root()? {
+            return config_for_managed_worktree(&root);
+        }
     }
 
     let repos = list()?;
@@ -144,6 +167,32 @@ pub fn active() -> Result<RepositoryConfig> {
 
 pub fn active_root() -> Result<PathBuf> {
     Ok(active()?.root)
+}
+
+fn cwd_managed_worktree_root() -> Result<Option<PathBuf>> {
+    match git_root() {
+        Ok(root) if root.join(".task/task.env").is_file() => Ok(Some(canonical_root(&root)?)),
+        Ok(_) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
+fn config_for_managed_worktree(root: &Path) -> Result<RepositoryConfig> {
+    let root = canonical_root(root)?;
+    if let Some(primary) = primary_repo_path(&root)? {
+        if let Some(mut repo) = registered_for_root(&primary)? {
+            repo.id = format!("{}:worktree", repo.id);
+            repo.root = root;
+            repo.active = true;
+            return Ok(repo);
+        }
+    }
+    fallback_for_root(&root)
+}
+
+fn registered_for_root(root: &Path) -> Result<Option<RepositoryConfig>> {
+    let root = canonical_root(root)?;
+    Ok(list()?.into_iter().find(|repo| repo.root == root))
 }
 
 pub fn upsert(repo: &RepositoryConfig) -> Result<()> {
@@ -271,6 +320,36 @@ fn fallback_for_root(root: &Path) -> Result<RepositoryConfig> {
     })
 }
 
+fn primary_repo_path(root: &Path) -> Result<Option<PathBuf>> {
+    let task_env = root.join(".task/task.env");
+    let contents = match std::fs::read_to_string(&task_env) {
+        Ok(contents) => contents,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", task_env.display()))
+        }
+    };
+    let Some(raw) = contents
+        .lines()
+        .find_map(|line| line.strip_prefix("PRIMARY_REPO_PATH="))
+    else {
+        return Ok(None);
+    };
+    let value = unquote_env_value(raw);
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(canonical_root(Path::new(&value))?))
+}
+
+fn unquote_env_value(raw: &str) -> String {
+    if raw.len() >= 2 && raw.starts_with('\'') && raw.ends_with('\'') {
+        raw[1..raw.len() - 1].replace("'\\''", "'")
+    } else {
+        raw.to_string()
+    }
+}
+
 fn canonical_root(root: &Path) -> Result<PathBuf> {
     root.canonicalize()
         .with_context(|| format!("failed to resolve repository root {}", root.display()))
@@ -348,4 +427,73 @@ fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn env_guard() -> MutexGuard<'static, ()> {
+        let guard = ENV_LOCK.lock().unwrap();
+        env::remove_var("QCOLD_ACTIVE_REPO");
+        env::remove_var("QCOLD_REPO_ROOT");
+        env::remove_var("QCOLD_XTASK_MANIFEST");
+        env::remove_var("QCOLD_STATE_DIR");
+        guard
+    }
+
+    #[test]
+    fn managed_worktree_config_reuses_registered_primary_adapter_settings() {
+        let _guard = env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+
+        let primary = temp.path().join("primary");
+        let worktree = temp.path().join("WT/primary/anchor-task");
+        let manifest = temp.path().join("fixtures/xtask/Cargo.toml");
+        std::fs::create_dir_all(&primary).unwrap();
+        std::fs::create_dir_all(worktree.join(".task")).unwrap();
+        std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+        std::fs::write(&manifest, "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n").unwrap();
+        std::fs::write(
+            worktree.join(".task/task.env"),
+            format!("PRIMARY_REPO_PATH='{}'\n", primary.display()),
+        )
+        .unwrap();
+
+        upsert(&RepositoryConfig {
+            id: "primary".to_string(),
+            root: canonical_root(&primary).unwrap(),
+            adapter: "xtask-process".to_string(),
+            xtask_manifest: Some(canonical_existing(&manifest).unwrap()),
+            default_branch: Some("developer".to_string()),
+            active: true,
+        })
+        .unwrap();
+
+        let repo = config_for_managed_worktree(&worktree).unwrap();
+        assert_eq!(repo.id, "primary:worktree");
+        assert_eq!(repo.root, canonical_root(&worktree).unwrap());
+        assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
+        assert_eq!(repo.default_branch.as_deref(), Some("developer"));
+        assert!(repo.active);
+
+        env::set_var("QCOLD_REPO_ROOT", &worktree);
+        let repo = for_adapter_context(AdapterContext::ActiveRepository).unwrap();
+        assert_eq!(repo.root, canonical_root(&worktree).unwrap());
+        assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
+
+        env::remove_var("QCOLD_REPO_ROOT");
+        env::remove_var("QCOLD_STATE_DIR");
+    }
+
+    #[test]
+    fn env_value_parser_handles_single_quoted_paths() {
+        assert_eq!(unquote_env_value("plain"), "plain");
+        assert_eq!(unquote_env_value("'with spaces'"), "with spaces");
+        assert_eq!(unquote_env_value("'it'\\''s'"), "it's");
+    }
 }

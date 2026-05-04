@@ -46,9 +46,12 @@ panes, and a command composer for starting tracked agents.
 `qcold repo add` stores repository connections in the local Q-COLD
 SQLite database. Adapter-backed commands such as `status`, `task`, `verify`,
 `ci`, `build`, `install`, `compat`, and `ffi` use the active repository instead
-of the daemon process cwd. If no repository is registered, Q-COLD falls back to
-the current checkout for development compatibility. `QCOLD_ACTIVE_REPO` and
-`QCOLD_REPO_ROOT` can override the active connection for one process.
+of the daemon process cwd. Worktree-sensitive commands such as `task closeout`,
+`task enter`, `task finalize`, `task iteration-notify`, and validation commands
+run from a managed task worktree use that worktree even when a primary checkout
+is the active repository. If no repository is registered, Q-COLD falls back to
+the current checkout for development compatibility. `QCOLD_REPO_ROOT` and
+`QCOLD_ACTIVE_REPO` can override the resolved connection for one process.
 
 Telegram polling is configured with `TELEGRAM_BOT_TOKEN` plus
 `QCOLD_TELEGRAM_OPERATOR_CHAT_ID` or `TELEGRAM_CHAT_ID`. Command-capable

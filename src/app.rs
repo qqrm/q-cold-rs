@@ -17,7 +17,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use telegram::TelegramArgs;
 
 use crate::adapter::{BundleAdapter, ProofAdapter, TaskAdapter};
-use crate::repository::{RepositoryArgs, RepositoryConfig};
+use crate::repository::{AdapterContext, RepositoryArgs, RepositoryConfig};
 
 fn main() -> ExitCode {
     match run() {
@@ -32,18 +32,18 @@ fn main() -> ExitCode {
 fn run() -> Result<u8> {
     let cli = Cli::parse_from(cargo_subcommand_args(std::env::args_os()));
     match cli.command {
-        TopLevel::Build(args) => adapter_for_active_repo()?.build(&args.args),
-        TopLevel::Install(args) => adapter_for_active_repo()?.install(&args.args),
+        TopLevel::Build(args) => adapter_for_cwd_sensitive_repo()?.build(&args.args),
+        TopLevel::Install(args) => adapter_for_cwd_sensitive_repo()?.install(&args.args),
         TopLevel::Task(cmd) => task_command(cmd),
         TopLevel::Bundle => repo_bundle::run(),
         TopLevel::Status => status::run(),
         TopLevel::Repo(args) => repository::run(args),
         TopLevel::Agent(args) => agents::run(args),
         TopLevel::Telegram(args) => telegram::run(args),
-        TopLevel::Ci(args) => adapter_for_active_repo()?.ci(&args.args),
-        TopLevel::Verify(args) => adapter_for_active_repo()?.verify(&args.args),
-        TopLevel::Compat(args) => adapter_for_active_repo()?.compat(&args.args),
-        TopLevel::Ffi(args) => adapter_for_active_repo()?.ffi(&args.args),
+        TopLevel::Ci(args) => adapter_for_cwd_sensitive_repo()?.ci(&args.args),
+        TopLevel::Verify(args) => adapter_for_cwd_sensitive_repo()?.verify(&args.args),
+        TopLevel::Compat(args) => adapter_for_cwd_sensitive_repo()?.compat(&args.args),
+        TopLevel::Ffi(args) => adapter_for_cwd_sensitive_repo()?.ffi(&args.args),
     }
 }
 
@@ -181,33 +181,50 @@ impl CloseoutOutcome {
 }
 
 fn task_command(args: TaskArgs) -> Result<u8> {
-    let adapter = adapter_for_active_repo()?;
     match args.command {
-        TaskSubcommand::Inspect { topic } => adapter.inspect(topic.as_deref()),
-        TaskSubcommand::Open { task_slug, profile } => adapter.open(&task_slug, profile.as_deref()),
-        TaskSubcommand::Enter => adapter.enter(),
-        TaskSubcommand::List => adapter.list(),
-        TaskSubcommand::TerminalCheck => adapter.terminal_check(),
-        TaskSubcommand::IterationNotify(args) => adapter.iteration_notify(&args.message),
-        TaskSubcommand::Closeout(args) => adapter.closeout(
+        TaskSubcommand::Inspect { topic } => {
+            adapter_for_active_repo()?.inspect(topic.as_deref())
+        }
+        TaskSubcommand::Open { task_slug, profile } => {
+            adapter_for_active_repo()?.open(&task_slug, profile.as_deref())
+        }
+        TaskSubcommand::Enter => adapter_for_cwd_sensitive_repo()?.enter(),
+        TaskSubcommand::List => adapter_for_active_repo()?.list(),
+        TaskSubcommand::TerminalCheck => adapter_for_active_repo()?.terminal_check(),
+        TaskSubcommand::IterationNotify(args) => {
+            adapter_for_cwd_sensitive_repo()?.iteration_notify(&args.message)
+        }
+        TaskSubcommand::Closeout(args) => adapter_for_cwd_sensitive_repo()?.closeout(
             args.outcome.as_str(),
             args.message.as_deref(),
             args.reason.as_deref(),
         ),
-        TaskSubcommand::Finalize(args) => adapter.finalize(&args.message),
-        TaskSubcommand::Bundle { task_id } => adapter.task_bundle(task_id.as_deref()),
-        TaskSubcommand::Clean { task_slug } => adapter.clean(&task_slug),
-        TaskSubcommand::Clear { task_slug } => adapter.clear(&task_slug),
-        TaskSubcommand::ClearAll => adapter.clear_all(),
-        TaskSubcommand::OrphanList => adapter.orphan_list(),
+        TaskSubcommand::Finalize(args) => {
+            adapter_for_cwd_sensitive_repo()?.finalize(&args.message)
+        }
+        TaskSubcommand::Bundle { task_id } => {
+            adapter_for_cwd_sensitive_repo()?.task_bundle(task_id.as_deref())
+        }
+        TaskSubcommand::Clean { task_slug } => adapter_for_active_repo()?.clean(&task_slug),
+        TaskSubcommand::Clear { task_slug } => adapter_for_active_repo()?.clear(&task_slug),
+        TaskSubcommand::ClearAll => adapter_for_active_repo()?.clear_all(),
+        TaskSubcommand::OrphanList => adapter_for_active_repo()?.orphan_list(),
         TaskSubcommand::OrphanClearStale { max_age_hours } => {
-            adapter.orphan_clear_stale(max_age_hours)
+            adapter_for_active_repo()?.orphan_clear_stale(max_age_hours)
         }
     }
 }
 
 fn adapter_for_active_repo() -> Result<adapter::XtaskProcessAdapter> {
-    let repo = repository::active()?;
+    adapter_for_context(AdapterContext::ActiveRepository)
+}
+
+fn adapter_for_cwd_sensitive_repo() -> Result<adapter::XtaskProcessAdapter> {
+    adapter_for_context(AdapterContext::CwdManagedWorktree)
+}
+
+fn adapter_for_context(context: AdapterContext) -> Result<adapter::XtaskProcessAdapter> {
+    let repo = repository::for_adapter_context(context)?;
     repository_adapter_for(&repo)
 }
 
