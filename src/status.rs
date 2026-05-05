@@ -2,11 +2,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
+use serde_json::Value;
 
-use crate::repository;
+use crate::{repository, state};
 
 pub fn run() -> Result<u8> {
+    if let Err(err) = crate::sync_codex_task_records() {
+        eprintln!("warning: failed to refresh Codex task token telemetry: {err:#}");
+    }
     print!("{}", snapshot()?);
+    if let Some(summary) = task_record_token_snapshot()? {
+        print!("{summary}");
+    }
     Ok(0)
 }
 
@@ -183,6 +190,55 @@ fn git_dirty_paths(root: &Path) -> Result<Vec<String>> {
         .filter_map(|line| line.get(3..))
         .map(str::to_string)
         .collect())
+}
+
+fn task_record_token_snapshot() -> Result<Option<String>> {
+    let records = state::load_task_records(None, 1000)?;
+    let mut count = 0u64;
+    let mut displayed = 0u64;
+    let mut total = 0u64;
+    let mut output = 0u64;
+    let mut reasoning = 0u64;
+    let mut model_calls = 0u64;
+    for record in records {
+        let Some(metadata) = record
+            .metadata_json
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        else {
+            continue;
+        };
+        let Some(usage) = metadata.get("token_usage") else {
+            continue;
+        };
+        count += 1;
+        displayed += usage
+            .get("displayed_total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        total += usage
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        output += usage
+            .get("output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        reasoning += usage
+            .get("reasoning_output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        model_calls += usage
+            .get("model_calls")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+    }
+    if count == 0 {
+        return Ok(None);
+    }
+    Ok(Some(format!(
+        "task-record-tokens\trecords={count}\tdisplayed={displayed}\ttotal={total}\toutput={output}\treasoning={reasoning}\tmodel_calls={model_calls}\n"
+    )))
 }
 
 pub fn telegram_snapshot() -> Result<String> {

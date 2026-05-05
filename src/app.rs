@@ -15,7 +15,7 @@ use std::process::ExitCode;
 use std::{cmp::Reverse, collections::HashSet};
 
 use agents::AgentArgs;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::Value;
 use telegram::TelegramArgs;
@@ -264,11 +264,33 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         TaskSubcommand::IterationNotify(args) => {
             adapter_for_cwd_sensitive_repo()?.iteration_notify(&args.message)
         }
-        TaskSubcommand::Closeout(args) => adapter_for_cwd_sensitive_repo()?.closeout(
-            args.outcome.as_str(),
-            args.message.as_deref(),
-            args.reason.as_deref(),
-        ),
+        TaskSubcommand::Closeout(args) => {
+            let cwd = std::env::current_dir().ok();
+            let task_record_id = cwd
+                .as_deref()
+                .and_then(task_record_id_from_worktree);
+            if let Some(worktree) = cwd.as_deref() {
+                if let Err(err) = sync_task_flow_record_for_worktree(worktree, None) {
+                    eprintln!("warning: failed to refresh Codex task token telemetry: {err:#}");
+                }
+            }
+            let code = adapter_for_cwd_sensitive_repo()?.closeout(
+                args.outcome.as_str(),
+                args.message.as_deref(),
+                args.reason.as_deref(),
+            )?;
+            if terminal_closeout_code(args.outcome.as_str(), code) {
+                if let Some(id) = task_record_id {
+                    state::update_task_record(
+                        &id,
+                        None,
+                        None,
+                        Some(&format!("closed:{}", args.outcome.as_str())),
+                    )?;
+                }
+            }
+            Ok(code)
+        }
         TaskSubcommand::Finalize(args) => {
             adapter_for_cwd_sensitive_repo()?.finalize(&args.message)
         }
@@ -527,6 +549,8 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
         synced += 1;
     }
 
+    synced += sync_task_flow_records(&existing)?;
+
     Ok(synced)
 }
 
@@ -542,6 +566,71 @@ struct CodexSessionSummary {
     task_complete: bool,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct CodexTokenUsage {
+    input_tokens: u64,
+    cached_input_tokens: u64,
+    output_tokens: u64,
+    reasoning_output_tokens: u64,
+    total_tokens: u64,
+    model_calls: u64,
+    model_context_window: Option<u64>,
+}
+
+impl CodexTokenUsage {
+    fn add_last_usage(&mut self, info: &Value) -> bool {
+        let Some(last) = info.get("last_token_usage") else {
+            return false;
+        };
+        let input = last
+            .get("input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let cached = last
+            .get("cached_input_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let output = last
+            .get("output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let reasoning = last
+            .get("reasoning_output_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let total = last
+            .get("total_tokens")
+            .and_then(Value::as_u64)
+            .unwrap_or(input + output);
+        self.input_tokens += input;
+        self.cached_input_tokens += cached;
+        self.output_tokens += output;
+        self.reasoning_output_tokens += reasoning;
+        self.total_tokens += total;
+        self.model_calls += 1;
+        if self.model_context_window.is_none() {
+            self.model_context_window = info.get("model_context_window").and_then(Value::as_u64);
+        }
+        true
+    }
+
+    fn as_json(self) -> Value {
+        let non_cached_input = self.input_tokens.saturating_sub(self.cached_input_tokens);
+        serde_json::json!({
+            "input_tokens": self.input_tokens,
+            "cached_input_tokens": self.cached_input_tokens,
+            "non_cached_input_tokens": non_cached_input,
+            "output_tokens": self.output_tokens,
+            "reasoning_output_tokens": self.reasoning_output_tokens,
+            "total_tokens": self.total_tokens,
+            "displayed_total_tokens": non_cached_input + self.output_tokens,
+            "model_calls": self.model_calls,
+            "model_context_window": self.model_context_window,
+            "source": "codex-session-window",
+        })
+    }
+}
+
 fn claimed_codex_session_paths(records: &[state::TaskRecordRow]) -> HashSet<String> {
     records
         .iter()
@@ -555,6 +644,192 @@ fn codex_session_path_from_task_record(record: &state::TaskRecordRow) -> Option<
         .get("session_path")
         .and_then(Value::as_str)
         .map(str::to_string)
+}
+
+fn sync_task_flow_records(records: &[state::TaskRecordRow]) -> Result<usize> {
+    let mut synced = 0;
+    for record in records {
+        if record.source != "task-flow" {
+            continue;
+        }
+        let Some(worktree) = task_flow_worktree_for_record(record) else {
+            continue;
+        };
+        if sync_task_flow_record_for_worktree(&worktree, Some(record.status.as_str()))? {
+            synced += 1;
+        }
+    }
+    Ok(synced)
+}
+
+fn sync_task_flow_record_for_worktree(
+    worktree: &Path,
+    status_override: Option<&str>,
+) -> Result<bool> {
+    let env = parse_task_env(&worktree.join(".task/task.env"))?;
+    let Some(record_id) = env.get("TASK_ID").cloned() else {
+        return Ok(false);
+    };
+    let mut record = state::get_task_record(&record_id)?.unwrap_or_else(|| {
+        let task_name = env
+            .get("TASK_NAME")
+            .cloned()
+            .unwrap_or_else(|| record_id.trim_start_matches("task/").to_string());
+        state::new_task_record(
+            record_id.clone(),
+            "task-flow".to_string(),
+            title_from_slug(&task_name),
+            env.get("TASK_DESCRIPTION")
+                .cloned()
+                .unwrap_or_else(|| format!("Managed task-flow work for {task_name}.")),
+            "open".to_string(),
+            env.get("PRIMARY_REPO_PATH").cloned(),
+            Some(worktree.display().to_string()),
+            None,
+            None,
+        )
+    });
+    let start = env
+        .get("STARTED_AT")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(record.created_at);
+    let task_is_open = env.get("STATUS").is_none_or(|status| status == "open");
+    let finish = if task_is_open {
+        unix_now()
+    } else {
+        env.get("UPDATED_AT")
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or_else(unix_now)
+    };
+    let usage = codex_token_usage_for_worktree(worktree, start, finish)?;
+
+    let mut metadata = record
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    metadata.insert(
+        "kind".to_string(),
+        Value::String("managed-task-flow".to_string()),
+    );
+    if let Some(task_slug) = record_id.strip_prefix("task/") {
+        metadata.insert("task_slug".to_string(), Value::String(task_slug.to_string()));
+    }
+    metadata.insert(
+        "task_worktree".to_string(),
+        Value::String(worktree.display().to_string()),
+    );
+    metadata.insert("task_started_at".to_string(), Value::from(start));
+    if task_is_open {
+        metadata.remove("task_finished_at");
+    } else {
+        metadata.insert("task_finished_at".to_string(), Value::from(finish));
+    }
+    if let Some(usage) = usage {
+        metadata.insert("token_usage".to_string(), usage.as_json());
+    }
+
+    record.cwd = Some(worktree.display().to_string());
+    if let Some(primary) = env.get("PRIMARY_REPO_PATH") {
+        record.repo_root = Some(primary.clone());
+    }
+    if let Some(status) = status_override {
+        record.status = status.to_string();
+    } else if let Some(status) = env.get("STATUS") {
+        record.status = status.clone();
+    }
+    let metadata_json = Value::Object(metadata).to_string();
+    if record.metadata_json.as_deref() == Some(metadata_json.as_str()) {
+        return Ok(false);
+    }
+    record.metadata_json = Some(metadata_json);
+    record.updated_at = unix_now();
+    state::upsert_task_record(&record)?;
+    Ok(true)
+}
+
+fn task_flow_worktree_for_record(record: &state::TaskRecordRow) -> Option<PathBuf> {
+    let metadata = record
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok());
+    if let Some(worktree) = metadata
+        .as_ref()
+        .and_then(|value| value.get("task_worktree"))
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .filter(|path| path.join(".task/task.env").is_file())
+    {
+        return Some(worktree);
+    }
+    let task_slug = metadata
+        .as_ref()
+        .and_then(|value| value.get("task_slug"))
+        .and_then(Value::as_str)
+        .or_else(|| record.id.strip_prefix("task/"))?;
+    let repo_root = record.repo_root.as_deref().map(Path::new)?;
+    let managed_root = managed_root_for(repo_root);
+    let entries = fs::read_dir(managed_root).ok()?;
+    for entry in entries.flatten() {
+        let worktree = entry.path();
+        let Ok(env) = parse_task_env(&worktree.join(".task/task.env")) else {
+            continue;
+        };
+        if env
+            .get("TASK_NAME")
+            .is_some_and(|name| name == task_slug)
+            || env
+                .get("TASK_ID")
+                .is_some_and(|id| id == &format!("task/{task_slug}"))
+        {
+            return Some(worktree);
+        }
+    }
+    None
+}
+
+fn task_record_id_from_worktree(worktree: &Path) -> Option<String> {
+    parse_task_env(&worktree.join(".task/task.env"))
+        .ok()?
+        .get("TASK_ID")
+        .cloned()
+}
+
+fn parse_task_env(path: &Path) -> Result<std::collections::BTreeMap<String, String>> {
+    let content =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let mut entries = std::collections::BTreeMap::new();
+    for line in content.lines() {
+        let Some((key, raw)) = line.split_once('=') else {
+            continue;
+        };
+        let value = if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
+            raw[1..raw.len() - 1].replace("'\\''", "'")
+        } else {
+            raw.to_string()
+        };
+        entries.insert(key.to_string(), value);
+    }
+    Ok(entries)
+}
+
+fn managed_root_for(primary_root: &Path) -> PathBuf {
+    primary_root.parent().map_or_else(
+        || primary_root.join("WT"),
+        |parent| {
+            parent
+                .join("WT")
+                .join(primary_root.file_name().unwrap_or_default())
+        },
+    )
+}
+
+fn terminal_closeout_code(outcome: &str, code: u8) -> bool {
+    matches!(
+        (outcome, code),
+        ("success", 0) | ("blocked", 10) | ("failed", 11)
+    )
 }
 
 fn codex_account_from_agent_command(command: &str) -> Option<String> {
@@ -606,6 +881,87 @@ fn find_codex_session_summary(
         claimed_session_paths,
         preferred_cwd,
     )
+}
+
+fn codex_token_usage_for_worktree(
+    worktree: &Path,
+    started_at: u64,
+    finished_at: u64,
+) -> Result<Option<CodexTokenUsage>> {
+    codex_token_usage_for_worktree_in_roots(worktree, started_at, finished_at, &codex_session_roots()?)
+}
+
+fn codex_token_usage_for_worktree_in_roots(
+    worktree: &Path,
+    started_at: u64,
+    finished_at: u64,
+    roots: &[PathBuf],
+) -> Result<Option<CodexTokenUsage>> {
+    let mut files = Vec::new();
+    for root in roots {
+        if root.is_dir() {
+            collect_session_files(root, &mut files)?;
+        }
+    }
+    let worktree_text = worktree.display().to_string();
+    let mut usage = CodexTokenUsage::default();
+    for path in files {
+        let Some(modified) = modified_unix(&path) else {
+            continue;
+        };
+        if modified < started_at.saturating_sub(300) || modified > finished_at.saturating_add(900)
+        {
+            continue;
+        }
+        let content = fs::read_to_string(&path)?;
+        if !content.contains(&worktree_text) {
+            continue;
+        }
+        for line in content.lines() {
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let Some(timestamp) = value
+                .get("timestamp")
+                .and_then(Value::as_str)
+                .and_then(parse_rfc3339_unix)
+            else {
+                continue;
+            };
+            if timestamp < started_at || timestamp > finished_at {
+                continue;
+            }
+            let Some(payload) = value.get("payload") else {
+                continue;
+            };
+            if value.get("type").and_then(Value::as_str) == Some("event_msg")
+                && payload.get("type").and_then(Value::as_str) == Some("token_count")
+            {
+                if let Some(info) = payload.get("info") {
+                    usage.add_last_usage(info);
+                }
+            }
+        }
+    }
+    Ok((usage.model_calls > 0).then_some(usage))
+}
+
+fn codex_session_roots() -> Result<Vec<PathBuf>> {
+    if let Ok(home) = std::env::var("CODEX_HOME") {
+        return Ok(vec![PathBuf::from(home).join("sessions")]);
+    }
+    let home = std::env::var("HOME").context("HOME is required to locate Codex session telemetry")?;
+    let accounts = PathBuf::from(home).join(".codex-accounts");
+    let mut roots = Vec::new();
+    if accounts.is_dir() {
+        for entry in fs::read_dir(accounts)? {
+            let path = entry?.path().join("sessions");
+            if path.is_dir() {
+                roots.push(path);
+            }
+        }
+    }
+    Ok(roots)
 }
 
 fn find_codex_session_summary_in_root(
@@ -1140,14 +1496,15 @@ fn repository_adapter_for(repo: &RepositoryConfig) -> Result<adapter::XtaskProce
 #[cfg(test)]
 mod tests {
     use super::{
+        codex_token_usage_for_worktree_in_roots,
         cargo_subcommand_args, codex_account_from_agent_command,
         find_codex_session_summary_in_root, parse_codex_session_summary, parse_rfc3339_unix,
         polish_task_text, prompt_from_agent_command, slug_from_title,
     };
+    use std::collections::HashSet;
     use std::ffi::OsString;
     use std::fs;
     use std::path::Path;
-    use std::collections::HashSet;
 
     fn os_args(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
@@ -1230,6 +1587,40 @@ mod tests {
         let usage = summary.token_usage.unwrap();
         assert_eq!(usage["non_cached_input_tokens"], 60);
         assert_eq!(usage["displayed_total_tokens"], 69);
+    }
+
+    #[test]
+    fn codex_token_usage_for_worktree_sums_last_usage_window() {
+        let temp = tempfile::tempdir().unwrap();
+        let session_dir = temp.path().join("sessions/2026/05/06");
+        let worktree = temp.path().join("WT/qcold/anchor-token-task");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(
+            session_dir.join(
+                "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+            ),
+            format!(
+                "{{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"{}\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"arguments\":\"{{\\\"workdir\\\":\\\"{}\\\"}}\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12}},\"model_context_window\":258400}}}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":7,\"cached_input_tokens\":5,\"output_tokens\":3,\"reasoning_output_tokens\":2,\"total_tokens\":10}},\"model_context_window\":258400}}}}}}\n",
+                worktree.display(),
+                worktree.display()
+            ),
+        )
+        .unwrap();
+
+        let usage =
+            codex_token_usage_for_worktree_in_roots(&worktree, 0, u64::MAX, &[temp.path().join("sessions")])
+                .unwrap()
+                .unwrap();
+        assert_eq!(usage.model_calls, 2);
+        assert_eq!(usage.input_tokens, 17);
+        assert_eq!(usage.cached_input_tokens, 9);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(usage.reasoning_output_tokens, 3);
+        assert_eq!(usage.total_tokens, 22);
     }
 
     #[test]

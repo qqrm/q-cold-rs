@@ -59,6 +59,13 @@ account `2`. The importer reads Codex `session_meta`, matches sessions to the
 Q-COLD agent start time and active repository cwd, and does not assign a
 claimed `session_path` to another agent. It stores the polished first
 meaningful user prompt plus the latest Codex token counters in task metadata.
+For adapter-backed task-flow records, Q-COLD also refreshes Codex token
+telemetry from matching session JSONL files while task records or the dashboard
+are loaded. It matches the managed worktree and task time window, sums Codex
+`last_token_usage` samples into per-task `token_usage` metadata, and refreshes
+that metadata before terminal `task closeout` updates the record status.
+`qcold status` also triggers the refresh and prints a compact
+`task-record-tokens` aggregate when task records contain imported token data.
 
 ## Web interface
 
