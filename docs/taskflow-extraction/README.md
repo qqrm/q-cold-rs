@@ -22,3 +22,5 @@ implemented.
 
 Use [roadmap.md](roadmap.md) as the sequencing guide. The numbered files define
 the work packages; the roadmap defines dependency order and parallel lanes.
+For a bounded breakdown of the remaining migration work, see
+[execution-slices.md](execution-slices.md).
