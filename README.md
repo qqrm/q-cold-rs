@@ -66,6 +66,8 @@ are loaded. It matches the managed worktree and task time window, sums Codex
 that metadata before terminal `task closeout` updates the record status.
 `qcold status` also triggers the refresh and prints a compact
 `task-record-tokens` aggregate when task records contain imported token data.
+`qcold task-record show <task-id>` prints a `token-usage` line for the selected
+record when that per-task telemetry is available.
 
 ## Web interface
 

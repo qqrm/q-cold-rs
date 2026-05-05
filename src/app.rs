@@ -329,6 +329,9 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
             if !record.description.is_empty() {
                 println!("description\t{}", record.description);
             }
+            if let Some(line) = render_task_record_token_usage(&record) {
+                println!("{line}");
+            }
         }
         TaskRecordSubcommand::Create(args) => {
             let record = task_record_from_create_args(args)?;
@@ -1283,6 +1286,46 @@ fn render_task_record(record: &state::TaskRecordRow) -> String {
     )
 }
 
+fn render_task_record_token_usage(record: &state::TaskRecordRow) -> Option<String> {
+    let metadata = record
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())?;
+    render_token_usage(metadata.get("token_usage")?)
+}
+
+fn render_token_usage(usage: &Value) -> Option<String> {
+    let object = usage.as_object()?;
+    let field = |name: &str| {
+        object
+            .get(name)
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+    };
+    let context = object
+        .get("model_context_window")
+        .and_then(Value::as_u64)
+        .map(|value| value.to_string())
+        .unwrap_or_default();
+    let source = object
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    Some(format!(
+        "token-usage\tinput={}\tcached_input={}\tnon_cached_input={}\toutput={}\treasoning={}\ttotal={}\tdisplayed={}\tmodel_calls={}\tcontext={}\tsource={}",
+        field("input_tokens"),
+        field("cached_input_tokens"),
+        field("non_cached_input_tokens"),
+        field("output_tokens"),
+        field("reasoning_output_tokens"),
+        field("total_tokens"),
+        field("displayed_total_tokens"),
+        field("model_calls"),
+        context,
+        source
+    ))
+}
+
 fn agent_command_payload(command: &[String]) -> String {
     match command {
         [tmux, new_session, flag, _session, wrapped, ..]
@@ -1499,7 +1542,7 @@ mod tests {
         codex_token_usage_for_worktree_in_roots,
         cargo_subcommand_args, codex_account_from_agent_command,
         find_codex_session_summary_in_root, parse_codex_session_summary, parse_rfc3339_unix,
-        polish_task_text, prompt_from_agent_command, slug_from_title,
+        polish_task_text, prompt_from_agent_command, render_token_usage, slug_from_title,
     };
     use std::collections::HashSet;
     use std::ffi::OsString;
@@ -1621,6 +1664,26 @@ mod tests {
         assert_eq!(usage.output_tokens, 5);
         assert_eq!(usage.reasoning_output_tokens, 3);
         assert_eq!(usage.total_tokens, 22);
+    }
+
+    #[test]
+    fn token_usage_renderer_prints_task_record_fields() {
+        let usage = serde_json::json!({
+            "input_tokens": 17,
+            "cached_input_tokens": 9,
+            "non_cached_input_tokens": 8,
+            "output_tokens": 5,
+            "reasoning_output_tokens": 3,
+            "total_tokens": 22,
+            "displayed_total_tokens": 13,
+            "model_calls": 2,
+            "model_context_window": 258400,
+            "source": "codex-session-window",
+        });
+        assert_eq!(
+            render_token_usage(&usage).as_deref(),
+            Some("token-usage\tinput=17\tcached_input=9\tnon_cached_input=8\toutput=5\treasoning=3\ttotal=22\tdisplayed=13\tmodel_calls=2\tcontext=258400\tsource=codex-session-window")
+        );
     }
 
     #[test]
