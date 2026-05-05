@@ -1,3 +1,4 @@
 target/
 bundles/
+.task/
 .env*.local

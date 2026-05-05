@@ -54,8 +54,11 @@ create an ad-hoc task record when the wrapped `c2`, `cc2`, or `codex` command
 contains an explicit prompt argument. Interactive prompts typed later inside an
 already-open terminal are imported from Codex session JSONL telemetry under
 `~/.codex-accounts/<slot>/sessions` when task records, agent lists, or the web
-dashboard are refreshed. The importer stores the polished first meaningful user
-prompt plus the latest Codex token counters in task metadata.
+dashboard are refreshed. Local `cc2` and `c2` wrappers are treated as Codex
+account `2`. The importer reads Codex `session_meta`, matches sessions to the
+Q-COLD agent start time and active repository cwd, and does not assign a
+claimed `session_path` to another agent. It stores the polished first
+meaningful user prompt plus the latest Codex token counters in task metadata.
 
 ## Web interface
 

@@ -12,6 +12,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::{cmp::Reverse, collections::HashSet};
 
 use agents::AgentArgs;
 use anyhow::Result;
@@ -425,6 +426,9 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
 pub(crate) fn sync_codex_task_records() -> Result<usize> {
     let agent_rows = state::load_agents(&agents::registry_path()?)?;
     let existing = state::load_task_records(None, 1000)?;
+    let preferred_cwd = repository::active_root()
+        .ok()
+        .or_else(|| std::env::current_dir().ok());
     let mut synced = 0;
 
     for agent in agent_rows {
@@ -432,7 +436,25 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
         let Some(account) = codex_account_from_agent_command(&command) else {
             continue;
         };
-        let Some(summary) = find_codex_session_summary(&account, agent.started_at)? else {
+        let existing_record = existing
+            .iter()
+            .find(|record| record.agent_id.as_deref() == Some(agent.id.as_str()));
+        let mut claimed_session_paths = claimed_codex_session_paths(&existing);
+        if let Some(path) = existing_record.and_then(codex_session_path_from_task_record) {
+            claimed_session_paths.remove(&path);
+        }
+        let summary =
+            if let Some(path) = existing_record.and_then(codex_session_path_from_task_record) {
+                parse_codex_session_summary(Path::new(&path))?
+            } else {
+                find_codex_session_summary(
+                    &account,
+                    agent.started_at,
+                    &claimed_session_paths,
+                    preferred_cwd.as_deref(),
+                )?
+            };
+        let Some(summary) = summary else {
             continue;
         };
         let description = polish_task_text(&summary.prompt);
@@ -440,9 +462,6 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             continue;
         }
 
-        let existing_record = existing
-            .iter()
-            .find(|record| record.agent_id.as_deref() == Some(agent.id.as_str()));
         let title = existing_record
             .map(|record| record.title.clone())
             .unwrap_or_else(|| title_from_description(&description));
@@ -472,6 +491,8 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             "codex_account": account,
             "session_path": summary.path.display().to_string(),
             "codex_thread_id": summary.thread_id,
+            "codex_started_at": summary.started_at,
+            "codex_cwd": summary.cwd,
             "token_usage": summary.token_usage,
             "rate_limits": summary.rate_limits,
             "task_complete": summary.task_complete,
@@ -513,10 +534,27 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
 struct CodexSessionSummary {
     path: PathBuf,
     thread_id: Option<String>,
+    started_at: Option<u64>,
+    cwd: Option<String>,
     prompt: String,
     token_usage: Option<Value>,
     rate_limits: Option<Value>,
     task_complete: bool,
+}
+
+fn claimed_codex_session_paths(records: &[state::TaskRecordRow]) -> HashSet<String> {
+    records
+        .iter()
+        .filter_map(codex_session_path_from_task_record)
+        .collect()
+}
+
+fn codex_session_path_from_task_record(record: &state::TaskRecordRow) -> Option<String> {
+    let metadata = serde_json::from_str::<Value>(record.metadata_json.as_deref()?).ok()?;
+    metadata
+        .get("session_path")
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn codex_account_from_agent_command(command: &str) -> Option<String> {
@@ -558,8 +596,24 @@ fn codex_account_from_agent_command(command: &str) -> Option<String> {
 fn find_codex_session_summary(
     account: &str,
     agent_started_at: u64,
+    claimed_session_paths: &HashSet<String>,
+    preferred_cwd: Option<&Path>,
 ) -> Result<Option<CodexSessionSummary>> {
     let root = codex_sessions_root(account)?;
+    find_codex_session_summary_in_root(
+        &root,
+        agent_started_at,
+        claimed_session_paths,
+        preferred_cwd,
+    )
+}
+
+fn find_codex_session_summary_in_root(
+    root: &Path,
+    agent_started_at: u64,
+    claimed_session_paths: &HashSet<String>,
+    preferred_cwd: Option<&Path>,
+) -> Result<Option<CodexSessionSummary>> {
     if !root.exists() {
         return Ok(None);
     }
@@ -568,18 +622,35 @@ fn find_codex_session_summary(
     collect_session_files(&root, &mut files)?;
     files.sort_by_key(|path| std::cmp::Reverse(modified_unix(path).unwrap_or(0)));
     files.retain(|path| {
+        let path_display = path.display().to_string();
+        if claimed_session_paths.contains(&path_display) {
+            return false;
+        }
         modified_unix(path)
             .map(|modified| modified >= agent_started_at.saturating_sub(300))
             .unwrap_or(false)
     });
     files.truncate(100);
 
+    let mut candidates = Vec::new();
     for path in files {
         if let Some(summary) = parse_codex_session_summary(&path)? {
-            return Ok(Some(summary));
+            if !codex_session_start_matches_agent(summary.started_at, agent_started_at) {
+                continue;
+            }
+            let cwd_mismatch = !codex_session_cwd_matches(summary.cwd.as_deref(), preferred_cwd);
+            let start_distance = summary
+                .started_at
+                .map(|started_at| started_at.abs_diff(agent_started_at))
+                .unwrap_or(u64::MAX);
+            let modified = modified_unix(&summary.path).unwrap_or(0);
+            candidates.push((cwd_mismatch, start_distance, Reverse(modified), summary));
         }
     }
-    Ok(None)
+    candidates.sort_by_key(|(cwd_mismatch, start_distance, modified, _)| {
+        (*cwd_mismatch, *start_distance, *modified)
+    });
+    Ok(candidates.into_iter().next().map(|(_, _, _, summary)| summary))
 }
 
 fn codex_sessions_root(account: &str) -> Result<PathBuf> {
@@ -607,6 +678,9 @@ fn collect_session_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
 
 fn parse_codex_session_summary(path: &Path) -> Result<Option<CodexSessionSummary>> {
     let content = fs::read_to_string(path)?;
+    let mut thread_id = None;
+    let mut started_at = None;
+    let mut cwd = None;
     let mut prompt = None;
     let mut fallback_prompt = None;
     let mut token_usage = None;
@@ -618,6 +692,29 @@ fn parse_codex_session_summary(path: &Path) -> Result<Option<CodexSessionSummary
             continue;
         };
         match value.get("type").and_then(Value::as_str) {
+            Some("session_meta") => {
+                let Some(payload) = value.get("payload") else {
+                    continue;
+                };
+                if thread_id.is_none() {
+                    thread_id = payload
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+                if started_at.is_none() {
+                    started_at = payload
+                        .get("timestamp")
+                        .and_then(Value::as_str)
+                        .and_then(parse_rfc3339_unix);
+                }
+                if cwd.is_none() {
+                    cwd = payload
+                        .get("cwd")
+                        .and_then(Value::as_str)
+                        .map(str::to_string);
+                }
+            }
             Some("event_msg") => {
                 let Some(payload) = value.get("payload") else {
                     continue;
@@ -659,12 +756,33 @@ fn parse_codex_session_summary(path: &Path) -> Result<Option<CodexSessionSummary
     let prompt = prompt.or(fallback_prompt);
     Ok(prompt.map(|prompt| CodexSessionSummary {
         path: path.to_path_buf(),
-        thread_id: codex_thread_id_from_path(path),
+        thread_id: thread_id.or_else(|| codex_thread_id_from_path(path)),
+        started_at,
+        cwd,
         prompt,
         token_usage,
         rate_limits,
         task_complete,
     }))
+}
+
+fn codex_session_start_matches_agent(session_started_at: Option<u64>, agent_started_at: u64) -> bool {
+    session_started_at
+        .map(|started_at| {
+            started_at >= agent_started_at.saturating_sub(300)
+                && started_at <= agent_started_at.saturating_add(900)
+        })
+        .unwrap_or(true)
+}
+
+fn codex_session_cwd_matches(session_cwd: Option<&str>, preferred_cwd: Option<&Path>) -> bool {
+    let Some(preferred_cwd) = preferred_cwd else {
+        return true;
+    };
+    let Some(session_cwd) = session_cwd else {
+        return true;
+    };
+    Path::new(session_cwd) == preferred_cwd
 }
 
 fn token_usage_summary(payload: &Value) -> Option<Value> {
@@ -737,6 +855,48 @@ fn codex_thread_id_from_path(path: &Path) -> Option<String> {
     } else {
         None
     }
+}
+
+fn parse_rfc3339_unix(value: &str) -> Option<u64> {
+    let (date, time) = value.split_once('T')?;
+    let time = time.strip_suffix('Z')?;
+    let mut date_parts = date.split('-');
+    let year = date_parts.next()?.parse::<i64>().ok()?;
+    let month = date_parts.next()?.parse::<i64>().ok()?;
+    let day = date_parts.next()?.parse::<i64>().ok()?;
+    if date_parts.next().is_some() {
+        return None;
+    }
+
+    let time = time.split_once('.').map_or(time, |(whole, _)| whole);
+    let mut time_parts = time.split(':');
+    let hour = time_parts.next()?.parse::<u64>().ok()?;
+    let minute = time_parts.next()?.parse::<u64>().ok()?;
+    let second = time_parts.next()?.parse::<u64>().ok()?;
+    if time_parts.next().is_some()
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let days = days_from_civil(year, month, day);
+    if days < 0 {
+        return None;
+    }
+    Some(days as u64 * 86_400 + hour * 3_600 + minute * 60 + second)
+}
+
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month_prime = month + if month > 2 { -3 } else { 9 };
+    let day_of_year = (153 * month_prime + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    era * 146_097 + day_of_era - 719_468
 }
 
 fn modified_unix(path: &Path) -> Option<u64> {
@@ -980,11 +1140,14 @@ fn repository_adapter_for(repo: &RepositoryConfig) -> Result<adapter::XtaskProce
 #[cfg(test)]
 mod tests {
     use super::{
-        cargo_subcommand_args, codex_account_from_agent_command, parse_codex_session_summary,
+        cargo_subcommand_args, codex_account_from_agent_command,
+        find_codex_session_summary_in_root, parse_codex_session_summary, parse_rfc3339_unix,
         polish_task_text, prompt_from_agent_command, slug_from_title,
     };
     use std::ffi::OsString;
     use std::fs;
+    use std::path::Path;
+    use std::collections::HashSet;
 
     fn os_args(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
@@ -1044,6 +1207,7 @@ mod tests {
         fs::write(
             &path,
             concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"2026-05-04T09:27:19Z\",\"cwd\":\"/workspace/repo\"}}\n",
                 "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"Сделай CRUD для задач\",\"images\":[]}}\n",
                 "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":9,\"reasoning_output_tokens\":3,\"total_tokens\":109},\"last_token_usage\":{\"input_tokens\":100},\"model_context_window\":258400},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n",
                 "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n"
@@ -1058,14 +1222,67 @@ mod tests {
             Some("019df1ab-7579-7e41-ad71-701b63175455")
         );
         assert!(summary.task_complete);
+        assert_eq!(
+            summary.started_at,
+            Some(parse_rfc3339_unix("2026-05-04T09:27:19Z").unwrap())
+        );
+        assert_eq!(summary.cwd.as_deref(), Some("/workspace/repo"));
         let usage = summary.token_usage.unwrap();
         assert_eq!(usage["non_cached_input_tokens"], 60);
         assert_eq!(usage["displayed_total_tokens"], 69);
     }
 
     #[test]
+    fn codex_session_matcher_uses_session_start_and_claims() {
+        let dir = tempfile::tempdir().unwrap();
+        let claimed = dir.path().join(
+            "rollout-1970-01-01T00-00-10-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+        );
+        let selected = dir.path().join(
+            "rollout-1970-01-01T00-00-11-019df1ab-7579-7e41-ad71-701b63175456.jsonl",
+        );
+        let stale = dir.path().join(
+            "rollout-1970-01-01T00-30-00-019df1ab-7579-7e41-ad71-701b63175457.jsonl",
+        );
+        write_session(&claimed, "1970-01-01T00:00:10Z", "/workspace/repo", "claimed");
+        write_session(&selected, "1970-01-01T00:00:11Z", "/workspace/repo", "selected");
+        write_session(&stale, "1970-01-01T00:30:00Z", "/workspace/repo", "stale");
+
+        let claimed_paths = HashSet::from([claimed.display().to_string()]);
+        let summary = find_codex_session_summary_in_root(
+            dir.path(),
+            10,
+            &claimed_paths,
+            Some(Path::new("/workspace/repo")),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(summary.path, selected);
+        assert_eq!(summary.prompt, "selected");
+    }
+
+    #[test]
+    fn rfc3339_timestamp_parser_handles_codex_session_meta() {
+        assert_eq!(
+            parse_rfc3339_unix("1970-01-02T00:00:01.123Z"),
+            Some(86_401)
+        );
+    }
+
+    #[test]
     fn task_slug_is_ascii_and_stable() {
         assert_eq!(slug_from_title("Fix task CRUD flow"), "fix-task-crud-flow");
         assert_eq!(slug_from_title("Задача"), "task");
+    }
+
+    fn write_session(path: &Path, timestamp: &str, cwd: &str, prompt: &str) {
+        fs::write(
+            path,
+            format!(
+                "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"{timestamp}\",\"cwd\":\"{cwd}\"}}}}\n\
+                 {{\"type\":\"event_msg\",\"payload\":{{\"type\":\"user_message\",\"message\":\"{prompt}\",\"images\":[]}}}}\n"
+            ),
+        )
+        .unwrap();
     }
 }
