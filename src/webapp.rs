@@ -822,7 +822,7 @@ fn dashboard_state() -> DashboardState {
 
 fn task_record_snapshot() -> TaskRecordSnapshot {
     let sync_error = crate::sync_codex_task_records().err().map(|err| format!("{err:#}"));
-    match state::load_task_records(None, 100) {
+    match state::load_task_records(None, 250) {
         Ok(rows) => TaskRecordSnapshot::from_rows(rows, sync_error),
         Err(err) => TaskRecordSnapshot {
             count: 0,

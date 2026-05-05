@@ -230,7 +230,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function renderTasks() {
       const snapshot = model.taskRecords;
       const items = snapshot.records || [];
-      document.getElementById('open-count').textContent = `${snapshot.open || 0} open`;
+      const openItems = items.filter((task) => task.status === 'open');
+      const historyItems = items.filter((task) => task.status !== 'open');
+      document.getElementById('open-count').textContent = `${openItems.length} open`;
       document.getElementById('failed-count').textContent = `${snapshot.failed || 0} failed`;
       document.getElementById('nav-tasks').textContent = String(snapshot.count || 0);
       renderTaskStats(snapshot);
@@ -245,42 +247,33 @@ const tg = window.Telegram && window.Telegram.WebApp;
         tasks.innerHTML = '<div class="empty">No task records yet.</div>';
         return;
       }
-      tasks.replaceChildren(...items.map((task) => {
-        const node = document.createElement('article');
-        node.className = 'task-card task-record-card';
-        const title = document.createElement('div');
-        title.innerHTML = '<div class="task-title"></div><div class="task-description"></div><div class="task-path"></div>';
-        title.children[0].textContent = task.title || task.id;
-        title.children[1].textContent = task.description || '';
-        title.children[2].textContent = task.cwd || task.repo_root || task.session_path || '';
-        const stateCell = document.createElement('div');
-        stateCell.appendChild(badge(task.status));
-        const meta = document.createElement('div');
-        meta.className = 'task-meta-stack';
-        meta.appendChild(badge(task.source || 'task'));
-        if (task.agent_id) meta.appendChild(badge(`agent ${task.agent_id.slice(0, 8)}`));
-        if (task.kind) meta.appendChild(badge(task.kind));
-        const usage = document.createElement('div');
-        usage.className = 'task-usage';
-        const tokenUsage = task.token_usage;
-        usage.innerHTML = tokenUsage
-          ? `<strong>${formatNumber(tokenUsage.displayed_total_tokens)}</strong><span>tokens</span><small>${formatNumber(tokenUsage.output_tokens)} out / ${formatNumber(tokenUsage.reasoning_output_tokens)} reasoning</small>`
-          : '<strong>-</strong><span>tokens</span><small>no telemetry</small>';
-        const dates = document.createElement('div');
-        dates.className = 'task-path';
-        dates.textContent = `updated ${formatTime(task.updated_at)}`;
-        meta.appendChild(dates);
-        node.append(title, stateCell, meta, usage);
-        return node;
-      }));
+      tasks.replaceChildren(
+        taskSection('Active Records', `${openItems.length} currently open`, openItems),
+        taskSection('History', `${historyItems.length} previous records`, historyItems),
+      );
     }
 
     function renderTaskStats(snapshot) {
       const stats = document.getElementById('task-stats');
+      const records = snapshot.records || [];
+      const closed = records.filter((task) => task.status.startsWith('closed'));
+      const withTelemetry = records.filter((task) => task.token_usage);
+      const closedWithTelemetry = closed.filter((task) => task.token_usage);
+      const lastDayCutoff = Math.floor(Date.now() / 1000) - 86400;
+      const lastDay = records.filter((task) => (task.updated_at || 0) >= lastDayCutoff);
+      const lastDayTokens = sumTokens(lastDay);
+      const averageClosedTokens = closedWithTelemetry.length
+        ? Math.round(sumTokens(closedWithTelemetry) / closedWithTelemetry.length)
+        : 0;
       const values = [
         ['Records', snapshot.count || 0],
-        ['Closed', snapshot.closed || 0],
+        ['Previous', records.length - (snapshot.open || 0)],
+        ['Closed', closed.length],
+        ['With telemetry', withTelemetry.length],
         ['Displayed tokens', formatNumber(snapshot.total_displayed_tokens || 0)],
+        ['Avg closed tokens', formatNumber(averageClosedTokens)],
+        ['Last 24h records', lastDay.length],
+        ['Last 24h tokens', formatNumber(lastDayTokens)],
         ['Output tokens', formatNumber(snapshot.total_output_tokens || 0)],
         ['Reasoning', formatNumber(snapshot.total_reasoning_tokens || 0)],
       ];
@@ -294,6 +287,66 @@ const tg = window.Telegram && window.Telegram.WebApp;
         node.append(valueNode, labelNode);
         return node;
       }));
+    }
+
+    function taskSection(title, subtitle, items) {
+      const section = document.createElement('section');
+      section.className = 'task-section';
+      const head = document.createElement('div');
+      head.className = 'task-section-head';
+      const heading = document.createElement('h3');
+      heading.textContent = title;
+      const summary = document.createElement('span');
+      summary.className = 'badge';
+      summary.textContent = subtitle;
+      head.append(heading, summary);
+      const list = document.createElement('div');
+      list.className = 'task-list';
+      if (items.length) {
+        list.replaceChildren(...items.map(taskCard));
+      } else {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = title === 'Active Records' ? 'No open task records.' : 'No previous task records yet.';
+        list.append(empty);
+      }
+      section.append(head, list);
+      return section;
+    }
+
+    function taskCard(task) {
+      const node = document.createElement('article');
+      node.className = 'task-card task-record-card';
+      const title = document.createElement('div');
+      title.innerHTML = '<div class="task-title"></div><div class="task-description"></div><div class="task-path"></div>';
+      title.children[0].textContent = task.title || task.id;
+      title.children[1].textContent = task.description || '';
+      title.children[2].textContent = task.cwd || task.repo_root || task.session_path || '';
+      const stateCell = document.createElement('div');
+      stateCell.appendChild(badge(task.status));
+      const meta = document.createElement('div');
+      meta.className = 'task-meta-stack';
+      meta.appendChild(badge(task.source || 'task'));
+      if (task.agent_id) meta.appendChild(badge(`agent ${task.agent_id.slice(0, 8)}`));
+      if (task.kind) meta.appendChild(badge(task.kind));
+      const usage = document.createElement('div');
+      usage.className = 'task-usage';
+      const tokenUsage = task.token_usage;
+      usage.innerHTML = tokenUsage
+        ? `<strong>${formatNumber(tokenUsage.displayed_total_tokens)}</strong><span>tokens</span><small>${formatNumber(tokenUsage.output_tokens)} out / ${formatNumber(tokenUsage.reasoning_output_tokens)} reasoning</small>`
+        : '<strong>-</strong><span>tokens</span><small>no telemetry</small>';
+      const dates = document.createElement('div');
+      dates.className = 'task-path';
+      dates.textContent = `created ${formatTime(task.created_at)} / updated ${formatTime(task.updated_at)}`;
+      meta.appendChild(dates);
+      node.append(title, stateCell, meta, usage);
+      return node;
+    }
+
+    function sumTokens(records) {
+      return records
+        .map((task) => task.token_usage?.displayed_total_tokens || 0)
+        .reduce((sum, value) => sum + value, 0);
     }
 
     function renderAgents() {

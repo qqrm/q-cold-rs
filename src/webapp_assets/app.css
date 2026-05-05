@@ -200,6 +200,23 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .task-section {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .task-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+    }
+    .task-section-head h3 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.2;
+    }
     .task-list { display: grid; gap: 8px; }
     .task-card {
       display: grid;
