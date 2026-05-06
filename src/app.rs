@@ -335,7 +335,7 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
         }
         TaskRecordSubcommand::Create(args) => {
             let record = task_record_from_create_args(args)?;
-            state::upsert_task_record(&record)?;
+            let record = state::upsert_task_record(&record)?;
             println!("{}", render_task_record(&record));
         }
         TaskRecordSubcommand::Update(args) => {
@@ -412,7 +412,7 @@ fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<()> {
         None,
         Some(metadata.to_string()),
     );
-    state::upsert_task_record(&record)
+    state::upsert_task_record(&record).map(|_| ())
 }
 
 pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
@@ -445,7 +445,7 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
         Some(record.id.clone()),
         Some(metadata.to_string()),
     );
-    state::upsert_task_record(&record)
+    state::upsert_task_record(&record).map(|_| ())
 }
 
 pub(crate) fn sync_codex_task_records() -> Result<usize> {
@@ -1274,8 +1274,9 @@ fn process_running(pid: u32) -> bool {
 
 fn render_task_record(record: &state::TaskRecordRow) -> String {
     format!(
-        "task-record\t{}\tstatus={}\tsource={}\ttitle={}\trepo={}\tcwd={}\tagent={}\tupdated_at={}",
+        "task-record\t{}\tsequence={}\tstatus={}\tsource={}\ttitle={}\trepo={}\tcwd={}\tagent={}\tupdated_at={}",
         record.id,
+        record.sequence.map(|value| value.to_string()).unwrap_or_default(),
         record.status,
         record.source,
         record.title,

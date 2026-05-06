@@ -327,6 +327,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const meta = document.createElement('div');
       meta.className = 'task-meta-stack';
       meta.appendChild(badge(task.source || 'task'));
+      if (task.sequence) meta.appendChild(badge(`#${String(task.sequence).padStart(6, '0')}`));
       if (task.agent_id) meta.appendChild(badge(`agent ${task.agent_id.slice(0, 8)}`));
       if (task.kind) meta.appendChild(badge(task.kind));
       const usage = document.createElement('div');

@@ -1,0 +1,51 @@
+#![allow(
+    missing_docs,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    reason = "integration tests exercise command output contracts"
+)]
+
+use assert_cmd::Command as AssertCommand;
+use tempfile::tempdir;
+
+fn task_record_create(state_dir: &std::path::Path, id: &str, repo_root: &str) -> String {
+    let output = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "create",
+            "--id",
+            id,
+            "--description",
+            "sequence task",
+            "--repo-root",
+            repo_root,
+        ])
+        .env("QCOLD_STATE_DIR", state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    String::from_utf8(output).unwrap()
+}
+
+#[test]
+fn task_record_create_assigns_stable_repo_scoped_sequence() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let repo_a = temp.path().join("repo-a");
+    let repo_b = temp.path().join("repo-b");
+
+    let first = task_record_create(&state_dir, "task/first", &repo_a.display().to_string());
+    let second = task_record_create(&state_dir, "task/second", &repo_a.display().to_string());
+    let repeated = task_record_create(&state_dir, "task/first", &repo_a.display().to_string());
+    let other_repo = task_record_create(&state_dir, "task/other", &repo_b.display().to_string());
+
+    assert!(first.contains("\tsequence=1\t"));
+    assert!(second.contains("\tsequence=2\t"));
+    assert!(repeated.contains("\tsequence=1\t"));
+    assert!(other_repo.contains("\tsequence=1\t"));
+}

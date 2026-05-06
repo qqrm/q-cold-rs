@@ -1414,6 +1414,7 @@ impl TaskRecordSnapshot {
 struct WebTaskRecord {
     id: String,
     source: String,
+    sequence: Option<u64>,
     title: String,
     description: String,
     status: String,
@@ -1456,6 +1457,7 @@ impl WebTaskRecord {
         Self {
             id: row.id,
             source: row.source,
+            sequence: row.sequence,
             title: row.title,
             description: row.description,
             status: row.status,

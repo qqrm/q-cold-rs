@@ -44,6 +44,7 @@ pub struct TaskTopicRow {
 pub struct TaskRecordRow {
     pub id: String,
     pub source: String,
+    pub sequence: Option<u64>,
     pub title: String,
     pub description: String,
     pub status: String,
@@ -297,14 +298,59 @@ pub fn add_task_topic(record: &TaskTopicRow) -> Result<()> {
     Ok(())
 }
 
-pub fn upsert_task_record(record: &TaskRecordRow) -> Result<()> {
-    let connection = open_db()?;
-    connection
-        .execute(
+pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction()
+        .context("failed to start task record transaction")?;
+    let existing = tx
+        .query_row(
+            "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
+                    repo_root, cwd, agent_id, metadata_json
+             from tasks
+             where id = ?1",
+            [record.id.as_str()],
+            task_record_from_row,
+        )
+        .optional()
+        .context("failed to load existing task record")?;
+    let repo_root = record
+        .repo_root
+        .clone()
+        .or_else(|| existing.as_ref().and_then(|row| row.repo_root.clone()));
+    let sequence = match (
+        record.sequence,
+        existing.as_ref().and_then(|row| row.sequence),
+        repo_root.as_deref(),
+    ) {
+        (Some(sequence), _, _) | (_, Some(sequence), _) => Some(sequence),
+        (None, None, Some(repo_root)) if !repo_root.trim().is_empty() => {
+            Some(allocate_task_sequence(&tx, repo_root)?)
+        }
+        _ => None,
+    };
+    let created_at = existing
+        .as_ref()
+        .map(|row| row.created_at)
+        .unwrap_or(record.created_at);
+    let cwd = record
+        .cwd
+        .clone()
+        .or_else(|| existing.as_ref().and_then(|row| row.cwd.clone()));
+    let agent_id = record
+        .agent_id
+        .clone()
+        .or_else(|| existing.as_ref().and_then(|row| row.agent_id.clone()));
+    let metadata_json = record
+        .metadata_json
+        .clone()
+        .or_else(|| existing.as_ref().and_then(|row| row.metadata_json.clone()));
+
+    tx.execute(
             "insert into tasks
                  (id, source, title, description, status, created_at_unix, updated_at_unix,
-                  repo_root, cwd, agent_id, metadata_json)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                  repo_root, cwd, agent_id, metadata_json, sequence)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              on conflict(id) do update set
                  source = excluded.source,
                  title = excluded.title,
@@ -314,23 +360,36 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<()> {
                  repo_root = coalesce(excluded.repo_root, tasks.repo_root),
                  cwd = coalesce(excluded.cwd, tasks.cwd),
                  agent_id = coalesce(excluded.agent_id, tasks.agent_id),
-                 metadata_json = coalesce(excluded.metadata_json, tasks.metadata_json)",
+                 metadata_json = coalesce(excluded.metadata_json, tasks.metadata_json),
+                 sequence = coalesce(tasks.sequence, excluded.sequence)",
             params![
                 record.id,
                 record.source,
                 record.title,
                 record.description,
                 record.status,
-                record.created_at,
+                created_at,
                 record.updated_at,
-                record.repo_root,
-                record.cwd,
-                record.agent_id,
-                record.metadata_json,
+                repo_root,
+                cwd,
+                agent_id,
+                metadata_json,
+                sequence,
             ],
         )
         .context("failed to upsert task record")?;
-    Ok(())
+    let stored = tx
+        .query_row(
+            "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
+                    repo_root, cwd, agent_id, metadata_json
+             from tasks
+             where id = ?1",
+            [record.id.as_str()],
+            task_record_from_row,
+        )
+        .context("failed to reload task record")?;
+    tx.commit().context("failed to commit task record")?;
+    Ok(stored)
 }
 
 pub fn load_task_records(status: Option<&str>, limit: usize) -> Result<Vec<TaskRecordRow>> {
@@ -340,7 +399,7 @@ pub fn load_task_records(status: Option<&str>, limit: usize) -> Result<Vec<TaskR
     if let Some(status) = status {
         let mut statement = connection
             .prepare(
-                "select id, source, title, description, status, created_at_unix, updated_at_unix,
+                "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
                         repo_root, cwd, agent_id, metadata_json
                  from tasks
                  where status = ?1
@@ -357,7 +416,7 @@ pub fn load_task_records(status: Option<&str>, limit: usize) -> Result<Vec<TaskR
     } else {
         let mut statement = connection
             .prepare(
-                "select id, source, title, description, status, created_at_unix, updated_at_unix,
+                "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
                         repo_root, cwd, agent_id, metadata_json
                  from tasks
                  order by updated_at_unix desc, id
@@ -378,7 +437,7 @@ pub fn get_task_record(id: &str) -> Result<Option<TaskRecordRow>> {
     let connection = open_db()?;
     connection
         .query_row(
-            "select id, source, title, description, status, created_at_unix, updated_at_unix,
+            "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
                     repo_root, cwd, agent_id, metadata_json
              from tasks
              where id = ?1",
@@ -406,7 +465,7 @@ pub fn update_task_record(
         record.status = status.to_string();
     }
     record.updated_at = unix_now();
-    upsert_task_record(&record)
+    upsert_task_record(&record).map(|_| ())
 }
 
 pub fn delete_task_record(id: &str) -> Result<()> {
@@ -477,6 +536,7 @@ pub fn new_task_record(
     TaskRecordRow {
         id,
         source,
+        sequence: None,
         title,
         description,
         status,
@@ -539,7 +599,8 @@ fn open_db() -> Result<Connection> {
                  repo_root text,
                  cwd text,
                  agent_id text,
-                 metadata_json text
+                 metadata_json text,
+                 sequence integer
              );
              create table if not exists task_topics (
                  task_id text primary key references tasks(id),
@@ -619,6 +680,16 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
     ensure_column(connection, "tasks", "cwd", "text")?;
     ensure_column(connection, "tasks", "agent_id", "text")?;
     ensure_column(connection, "tasks", "metadata_json", "text")?;
+    ensure_column(connection, "tasks", "sequence", "integer")?;
+    connection
+        .execute(
+            "create unique index if not exists tasks_repo_sequence
+             on tasks(repo_root, sequence)
+             where repo_root is not null and sequence is not null",
+            [],
+        )
+        .context("failed to create task sequence index")?;
+    backfill_task_sequences(connection)?;
     Ok(())
 }
 
@@ -635,6 +706,47 @@ fn ensure_column(
     connection
         .execute(&sql, [])
         .with_context(|| format!("failed to add {table}.{column}"))?;
+    Ok(())
+}
+
+fn allocate_task_sequence(connection: &Connection, repo_root: &str) -> Result<u64> {
+    let next: i64 = connection
+        .query_row(
+            "select coalesce(max(sequence), 0) + 1 from tasks where repo_root = ?1",
+            [repo_root],
+            |row| row.get(0),
+        )
+        .context("failed to allocate task sequence")?;
+    u64::try_from(next).context("task sequence overflow")
+}
+
+fn backfill_task_sequences(connection: &Connection) -> Result<()> {
+    let mut statement = connection
+        .prepare(
+            "select id, repo_root
+             from tasks
+             where repo_root is not null and trim(repo_root) != '' and sequence is null
+             order by repo_root, created_at_unix, id",
+        )
+        .context("failed to prepare task sequence backfill")?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .context("failed to query task sequence backfill")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode task sequence backfill rows")?;
+    drop(statement);
+
+    for (id, repo_root) in rows {
+        let sequence = allocate_task_sequence(connection, &repo_root)?;
+        connection
+            .execute(
+                "update tasks set sequence = ?1 where id = ?2 and sequence is null",
+                params![sequence, id],
+            )
+            .with_context(|| format!("failed to backfill task sequence for {id}"))?;
+    }
     Ok(())
 }
 
@@ -767,15 +879,16 @@ fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecordR
     Ok(TaskRecordRow {
         id: row.get(0)?,
         source: row.get(1)?,
-        title: row.get(2)?,
-        description: row.get(3)?,
-        status: row.get(4)?,
-        created_at: row.get(5)?,
-        updated_at: row.get(6)?,
-        repo_root: row.get(7)?,
-        cwd: row.get(8)?,
-        agent_id: row.get(9)?,
-        metadata_json: row.get(10)?,
+        sequence: row.get(2)?,
+        title: row.get(3)?,
+        description: row.get(4)?,
+        status: row.get(5)?,
+        created_at: row.get(6)?,
+        updated_at: row.get(7)?,
+        repo_root: row.get(8)?,
+        cwd: row.get(9)?,
+        agent_id: row.get(10)?,
+        metadata_json: row.get(11)?,
     })
 }
 

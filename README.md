@@ -45,8 +45,11 @@ but `qcold <command>` is the primary operator interface.
 
 Q-COLD stores lightweight task records in its local SQLite database. Use
 `qcold task-record create`, `list`, `show`, `update`, `close`, and `delete` for
-direct CRUD. Descriptions are normalized before storage so operator phrasing is
-kept as a concise task description instead of a raw chat transcript.
+direct CRUD. When a record has a repository root, `create` assigns a stable
+repo-scoped `sequence` number and returns the existing number on later
+idempotent creates for the same task id. Descriptions are normalized before
+storage so operator phrasing is kept as a concise task description instead of
+a raw chat transcript.
 
 Adapter-backed `qcold task open <slug>` automatically creates or updates a
 Q-COLD task record with source `task-flow`. Q-COLD-managed agent starts also
