@@ -40,6 +40,9 @@ qcold task open my-task
 
 `cargo qcold <command>` remains supported for Cargo subcommand compatibility,
 but `qcold <command>` is the primary operator interface.
+Use `qcold --version` or `cargo qcold --version` to check the installed
+operator binary. The reported version includes the Cargo package version plus
+the Git commit hash embedded when that binary was built.
 
 ## Task records
 
@@ -52,7 +55,10 @@ storage so operator phrasing is kept as a concise task description instead of
 a raw chat transcript.
 
 Adapter-backed `qcold task open <slug>` automatically creates or updates a
-Q-COLD task record with source `task-flow`. Q-COLD-managed agent starts also
+Q-COLD task record with source `task-flow`. When that record has a repo-scoped
+`sequence`, Q-COLD passes it to the repository adapter as
+`QCOLD_TASK_SEQUENCE` so managed task anchors can use an operator-sortable
+monotonic number instead of a random-looking suffix. Q-COLD-managed agent starts also
 create an ad-hoc task record when the wrapped `c2`, `cc2`, or `codex` command
 contains an explicit prompt argument. Interactive prompts typed later inside an
 already-open terminal are imported from Codex session JSONL telemetry under

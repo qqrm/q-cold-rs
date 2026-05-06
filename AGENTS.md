@@ -36,6 +36,7 @@ repo-local code owns it.
 ## Public Command Surface
 
 - `cargo install --path . --locked`
+- `qcold --version`
 - `qcold --help`
 - `qcold status`
 - `qcold task-record list`
@@ -52,6 +53,7 @@ repo-local code owns it.
 - `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>] [--set-active]`
 - `qcold repo set-active <id>`
 - `cargo qcold --help`
+- `cargo qcold --version`
 - `cargo qcold status`
 - `cargo qcold task-record list`
 - `cargo qcold task-record create --description "<task description>"`

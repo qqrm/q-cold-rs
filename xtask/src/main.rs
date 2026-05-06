@@ -150,7 +150,8 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     let base_head = git_output(&repo, ["rev-parse", "HEAD"])?;
     let base_branch = git_output(&repo, ["branch", "--show-current"])?;
     let branch = format!("task/{task_slug}");
-    let worktree = managed_root(&repo)?.join(format!("{}-{task_slug}", short_anchor()));
+    let execution_anchor = task_execution_anchor();
+    let worktree = managed_root(&repo)?.join(format!("{execution_anchor}-{task_slug}"));
     if worktree.exists() {
         bail!(
             "managed task worktree already exists: {}",
@@ -178,11 +179,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         task_id: branch.clone(),
         task_name: task_slug.to_string(),
         task_branch: branch.clone(),
-        task_execution_anchor: worktree
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or(task_slug)
-            .to_string(),
+        task_execution_anchor: execution_anchor,
         task_description: format!("Q-COLD self-hosted task {task_slug}"),
         task_worktree: worktree.clone(),
         task_profile: profile.unwrap_or("default").to_string(),
@@ -670,6 +667,18 @@ fn run_required(program: &str, args: Vec<OsString>) -> Result<()> {
     }
 }
 
+fn task_execution_anchor() -> String {
+    std::env::var("QCOLD_TASK_SEQUENCE")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(sequence_anchor)
+        .unwrap_or_else(short_anchor)
+}
+
+fn sequence_anchor(sequence: u64) -> Option<String> {
+    (sequence > 0).then(|| format!("{sequence:03}"))
+}
+
 fn short_anchor() -> String {
     format!("{:x}", unix_now())
 }
@@ -699,6 +708,19 @@ fn shell_quote(value: &str) -> String {
         value.to_string()
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sequence_anchor_is_zero_padded_operator_order() {
+        assert_eq!(sequence_anchor(1).as_deref(), Some("001"));
+        assert_eq!(sequence_anchor(42).as_deref(), Some("042"));
+        assert_eq!(sequence_anchor(1001).as_deref(), Some("1001"));
+        assert_eq!(sequence_anchor(0), None);
     }
 }
 

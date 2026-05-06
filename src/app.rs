@@ -23,6 +23,8 @@ use telegram::TelegramArgs;
 use crate::adapter::{BundleAdapter, ProofAdapter, TaskAdapter};
 use crate::repository::{AdapterContext, RepositoryArgs, RepositoryConfig};
 
+const QCOLD_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " ", env!("QCOLD_BUILD_GIT_HASH"));
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
@@ -73,6 +75,7 @@ where
 #[derive(Parser)]
 #[command(
     name = "qcold",
+    version = QCOLD_VERSION,
     about = "Q-COLD orchestration facade over adapter-backed task flow",
     after_help = "Examples:\n  qcold repo list\n  qcold repo add target-repo /path/to/target-repo --xtask-manifest /path/to/target-repo/xtask/Cargo.toml --set-active\n  qcold status\n  qcold task-record create --description \"Add task CRUD and automatic capture\"\n  qcold task-record list\n  qcold agent list\n  qcold agent start --track audit -- codex exec \"inspect repo\"\n  qcold telegram poll\n  qcold bundle\n  qcold task inspect runtime-audit\n  qcold task open my-task\n  qcold task enter\n  qcold task iteration-notify --message \"waiting for direction\"\n  qcold task closeout --outcome success --message \"docs: update truth\"\n  qcold verify fast\n  qcold ci matrix rust-all-on --jobs 4\n\nCargo subcommand compatibility is also supported: cargo qcold <command>."
 )]
@@ -255,8 +258,8 @@ fn task_command(args: TaskArgs) -> Result<u8> {
             adapter_for_active_repo()?.inspect(topic.as_deref())
         }
         TaskSubcommand::Open { task_slug, profile } => {
-            record_task_open(&task_slug, profile.as_deref())?;
-            adapter_for_active_repo()?.open(&task_slug, profile.as_deref())
+            let record = record_task_open(&task_slug, profile.as_deref())?;
+            adapter_for_active_repo()?.open(&task_slug, profile.as_deref(), record.sequence)
         }
         TaskSubcommand::Enter => adapter_for_cwd_sensitive_repo()?.enter(),
         TaskSubcommand::List => adapter_for_active_repo()?.list(),
@@ -390,7 +393,7 @@ fn task_record_from_create_args(args: TaskRecordCreateArgs) -> Result<state::Tas
     ))
 }
 
-fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<()> {
+fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<state::TaskRecordRow> {
     let repo = repository::for_adapter_context(AdapterContext::ActiveRepository)?;
     let title = title_from_slug(task_slug);
     let description = format!("Open managed task-flow work for {title}.");
@@ -412,7 +415,7 @@ fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<()> {
         None,
         Some(metadata.to_string()),
     );
-    state::upsert_task_record(&record).map(|_| ())
+    state::upsert_task_record(&record)
 }
 
 pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {

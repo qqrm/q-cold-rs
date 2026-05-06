@@ -15,7 +15,8 @@ pub trait RepoAdapter {
 
 pub trait TaskAdapter {
     fn inspect(&self, topic: Option<&str>) -> Result<u8>;
-    fn open(&self, task_slug: &str, profile: Option<&str>) -> Result<u8>;
+    fn open(&self, task_slug: &str, profile: Option<&str>, task_sequence: Option<u64>)
+        -> Result<u8>;
     fn enter(&self) -> Result<u8>;
     fn list(&self) -> Result<u8>;
     fn terminal_check(&self) -> Result<u8>;
@@ -85,8 +86,11 @@ impl XtaskProcessAdapter {
     }
 
     fn run(&self, args: &[OsString]) -> Result<u8> {
-        let status = self
-            .command(args)?
+        self.run_command(self.command(args)?, args)
+    }
+
+    fn run_command(&self, mut command: Command, args: &[OsString]) -> Result<u8> {
+        let status = command
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
@@ -159,10 +163,17 @@ impl TaskAdapter for XtaskProcessAdapter {
         self.run(&args)
     }
 
-    fn open(&self, task_slug: &str, profile: Option<&str>) -> Result<u8> {
+    fn open(
+        &self,
+        task_slug: &str,
+        profile: Option<&str>,
+        task_sequence: Option<u64>,
+    ) -> Result<u8> {
         let mut args = os_args(&["task", "open", task_slug]);
         push_optional(&mut args, profile);
-        self.run(&args)
+        let mut command = self.command(&args)?;
+        apply_task_sequence_env(&mut command, task_sequence);
+        self.run_command(command, &args)
     }
 
     fn enter(&self) -> Result<u8> {
@@ -287,6 +298,42 @@ fn display_args(args: &[OsString]) -> String {
         .map(|arg| arg.to_string_lossy())
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn apply_task_sequence_env(command: &mut Command, task_sequence: Option<u64>) {
+    if let Some(sequence) = task_sequence {
+        command.env("QCOLD_TASK_SEQUENCE", sequence.to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(
+        clippy::unwrap_used,
+        reason = "unit tests assert a narrow command environment contract"
+    )]
+
+    use super::*;
+
+    #[test]
+    fn task_open_passes_qcold_sequence_to_adapter_process() {
+        let mut command = Command::new("cargo");
+        apply_task_sequence_env(&mut command, Some(42));
+
+        let sequence = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "QCOLD_TASK_SEQUENCE").then(|| {
+                    value
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+            })
+            .unwrap();
+
+        assert_eq!(sequence, "42");
+    }
 }
 
 fn manifest_binary(manifest: &Path) -> Result<PathBuf> {
