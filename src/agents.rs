@@ -177,6 +177,7 @@ fn start_agent(
     let mut process = Command::new(&launch.command[0]);
     process.args(&launch.command[1..]);
     process.current_dir(&launch.cwd);
+    apply_qcold_launch_env(&mut process, &launch.cwd);
     let child = process
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
@@ -485,9 +486,10 @@ fn start_tmux_terminal_agent(
     ensure_tmux_available()?;
     let session = format!("qcold-{id}");
     let target = format!("{session}:0.0");
+    let env_prefix = terminal_qcold_env_prefix(&launch.cwd)?;
     let wrapped = format!(
-        "{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\"",
-        launch.command
+        "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\"",
+        launch.command,
     );
     let delayed = format!("sleep 0.1; exec sh -lc {}", shell_quote(&wrapped));
     let tmux_shell_command = format!("sh -lc {}", shell_quote(&delayed));
@@ -543,8 +545,9 @@ fn start_zellij_terminal_agent(
 ) -> Result<AgentRecord> {
     ensure_zellij_available()?;
     let session = format!("qcold-{id}");
+    let env_prefix = terminal_qcold_env_prefix(&launch.cwd)?;
     let wrapped = format!(
-        "{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; sleep 0.1; zellij kill-session {} >/dev/null 2>&1 || true; exit \"$status\"",
+        "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; sleep 0.1; zellij kill-session {} >/dev/null 2>&1 || true; exit \"$status\"",
         launch.command,
         shell_quote(&session)
     );
@@ -622,6 +625,22 @@ fn zellij_first_terminal_pane(session: &str) -> Result<String> {
     }
     Err(last_error
         .unwrap_or_else(|| anyhow::anyhow!("zellij session {session} has no terminal pane")))
+}
+
+fn apply_qcold_launch_env(command: &mut Command, cwd: &Path) {
+    if let Some(root) = managed_task_root_for(cwd) {
+        command.env("QCOLD_REPO_ROOT", root);
+    }
+}
+
+fn terminal_qcold_env_prefix(cwd: &Path) -> Result<String> {
+    let Some(root) = managed_task_root_for(cwd) else {
+        return Ok(String::new());
+    };
+    Ok(format!(
+        "export QCOLD_REPO_ROOT={}; ",
+        shell_quote(&root.display().to_string())
+    ))
 }
 
 fn zellij_first_terminal_pane_once(session: &str) -> Result<String> {

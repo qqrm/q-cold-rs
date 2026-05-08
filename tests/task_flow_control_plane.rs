@@ -366,6 +366,22 @@ fn terminal_check_reports_open_tasks_and_clear_restores_terminal_state() {
 }
 
 #[test]
+fn status_from_managed_worktree_without_registered_repo_uses_primary_inventory() {
+    let fixture = TaskRepoFixture::new();
+    let state_dir = fixture.primary.parent().unwrap().join("empty-qcold-state");
+    let worktree = fixture.create_task_worktree("agent-context");
+    fixture.create_task_worktree("peer-agent");
+
+    run_qcold_with_registry(&worktree, &fixture.fakebin, &state_dir, &["status"])
+        .assert()
+        .success()
+        .stdout(contains("qcold-status\tterminal_ready=no\topen_tasks=2"))
+        .stdout(contains(format!("primary\t{}", fixture.primary.display())))
+        .stdout(contains("task\tagent-context\topen"))
+        .stdout(contains("task\tpeer-agent\topen"));
+}
+
+#[test]
 fn terminal_check_flags_incomplete_failed_closeout_task_residue() {
     let fixture = TaskRepoFixture::new();
     let worktree = fixture.create_task_worktree("tail");

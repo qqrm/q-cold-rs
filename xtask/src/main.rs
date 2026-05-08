@@ -211,7 +211,7 @@ fn enter_command() -> Result<u8> {
 }
 
 fn list_command() -> Result<u8> {
-    let tasks = open_tasks(&repo_root()?)?;
+    let tasks = open_tasks(&task_inventory_repo_root()?)?;
     println!("tasks\tcount={}", tasks.len());
     for task in tasks {
         println!(
@@ -225,7 +225,7 @@ fn list_command() -> Result<u8> {
 }
 
 fn terminal_check_command() -> Result<u8> {
-    let repo = repo_root()?;
+    let repo = task_inventory_repo_root()?;
     let tasks = open_tasks(&repo)?;
     if tasks.is_empty() {
         let branch = git_output(&repo, ["branch", "--show-current"]).unwrap_or_default();
@@ -343,7 +343,7 @@ fn bundle_command(task_id: Option<&str>) -> Result<u8> {
 }
 
 fn clean_command(task_slug: &str, force: bool) -> Result<u8> {
-    let repo = repo_root()?;
+    let repo = task_inventory_repo_root()?;
     let Some(task) = find_task(&repo, task_slug)? else {
         println!("task-clear\tmissing task={task_slug}");
         return Ok(0);
@@ -366,7 +366,7 @@ fn clean_command(task_slug: &str, force: bool) -> Result<u8> {
 }
 
 fn clear_all_command() -> Result<u8> {
-    let repo = repo_root()?;
+    let repo = task_inventory_repo_root()?;
     for task in open_tasks(&repo)? {
         run_git(
             &repo,
@@ -595,6 +595,22 @@ fn repo_root() -> Result<PathBuf> {
         bail!("not inside a git checkout");
     }
     Ok(PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string()).canonicalize()?)
+}
+
+fn task_inventory_repo_root() -> Result<PathBuf> {
+    let root = repo_root()?;
+    let env_path = root.join(".task/task.env");
+    if !env_path.is_file() {
+        return Ok(root);
+    }
+    let task = parse_task_env(&env_path)?;
+    if task.primary_repo_path.as_os_str().is_empty() {
+        return Ok(root);
+    }
+    Ok(task
+        .primary_repo_path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", task.primary_repo_path.display()))?)
 }
 
 fn managed_root(repo: &Path) -> Result<PathBuf> {

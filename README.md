@@ -174,9 +174,13 @@ Q-COLD first opens a managed task worktree for that agent, initializes Git
 submodules with `git submodule update --init --recursive` when `.gitmodules`
 is present, and then starts the agent from that worktree. This keeps Codex
 resume and context-compaction fallbacks anchored in the agent's isolated
-worktree instead of the primary checkout. Use `--cwd <path>` to choose the
-launch context explicitly. Set `QCOLD_AGENT_MANAGED_WORKTREE=0` only for
-debugging when this automatic isolation should be bypassed.
+worktree instead of the primary checkout. Q-COLD also exports the managed
+worktree as `QCOLD_REPO_ROOT` for the launched agent, so active inventory
+commands such as `qcold task list` resolve through the task's primary checkout
+while closeout and other worktree-sensitive commands still run against the
+agent worktree. Use `--cwd <path>` to choose the launch context explicitly.
+Set `QCOLD_AGENT_MANAGED_WORKTREE=0` only for debugging when this automatic
+isolation should be bypassed.
 When the wrapped agent exits, the terminal session exits too, so `/q` in an
 attached agent returns to the parent terminal without an extra shell prompt.
 Terminal backend follow-up work is tracked in

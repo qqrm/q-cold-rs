@@ -142,7 +142,10 @@ fn resolve(context: AdapterContext) -> Result<RepositoryConfig> {
     if let Some(root) = optional_env("QCOLD_REPO_ROOT") {
         let root = canonical_root(Path::new(&root))?;
         if root.join(".task/task.env").is_file() {
-            return config_for_managed_worktree(&root);
+            return match context {
+                AdapterContext::ActiveRepository => config_for_managed_worktree_primary(&root),
+                AdapterContext::CwdManagedWorktree => config_for_managed_worktree(&root),
+            };
         }
         return fallback_for_root(&root);
     }
@@ -157,6 +160,9 @@ fn resolve(context: AdapterContext) -> Result<RepositoryConfig> {
 
     let repos = list()?;
     if repos.is_empty() {
+        if let Some(root) = cwd_managed_worktree_root()? {
+            return config_for_managed_worktree_primary(&root);
+        }
         return fallback();
     }
     if let Some(repo) = repos.iter().find(|repo| repo.active) {
@@ -188,6 +194,18 @@ fn config_for_managed_worktree(root: &Path) -> Result<RepositoryConfig> {
         }
     }
     fallback_for_root(&root)
+}
+
+fn config_for_managed_worktree_primary(root: &Path) -> Result<RepositoryConfig> {
+    let root = canonical_root(root)?;
+    let Some(primary) = primary_repo_path(&root)? else {
+        return fallback_for_root(&root);
+    };
+    if let Some(mut repo) = registered_for_root(&primary)? {
+        repo.active = true;
+        return Ok(repo);
+    }
+    fallback_for_root(&primary)
 }
 
 fn registered_for_root(root: &Path) -> Result<Option<RepositoryConfig>> {
@@ -483,10 +501,49 @@ mod tests {
 
         env::set_var("QCOLD_REPO_ROOT", &worktree);
         let repo = for_adapter_context(AdapterContext::ActiveRepository).unwrap();
+        assert_eq!(repo.root, canonical_root(&primary).unwrap());
+        assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
+
+        let repo = for_adapter_context(AdapterContext::CwdManagedWorktree).unwrap();
         assert_eq!(repo.root, canonical_root(&worktree).unwrap());
         assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
 
         env::remove_var("QCOLD_REPO_ROOT");
+        env::remove_var("QCOLD_STATE_DIR");
+    }
+
+    #[test]
+    fn active_fallback_from_managed_worktree_uses_primary_root() {
+        let _guard = env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        let original_cwd = env::current_dir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+
+        let primary = temp.path().join("primary");
+        let worktree = temp.path().join("WT/primary/anchor-task");
+        std::fs::create_dir_all(primary.join("xtask")).unwrap();
+        std::fs::create_dir_all(worktree.join(".task")).unwrap();
+        let status = Command::new("git")
+            .arg("init")
+            .current_dir(&worktree)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::write(primary.join("xtask/Cargo.toml"), "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n").unwrap();
+        std::fs::write(
+            worktree.join(".task/task.env"),
+            format!("PRIMARY_REPO_PATH='{}'\n", primary.display()),
+        )
+        .unwrap();
+
+        env::set_current_dir(&worktree).unwrap();
+        let repo = for_adapter_context(AdapterContext::ActiveRepository).unwrap();
+        assert_eq!(repo.root, canonical_root(&primary).unwrap());
+
+        let repo = for_adapter_context(AdapterContext::CwdManagedWorktree).unwrap();
+        assert_eq!(repo.root, canonical_root(&worktree).unwrap());
+
+        env::set_current_dir(original_cwd).unwrap();
         env::remove_var("QCOLD_STATE_DIR");
     }
 
