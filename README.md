@@ -176,7 +176,9 @@ Q-COLD first creates a persistent agent-owned Git worktree under
 `.gitmodules` is present, and
 then starts the agent from that worktree. This keeps Codex resume and
 context-compaction fallbacks anchored in the agent's isolated workspace instead
-of the primary checkout, while task worktrees opened later by the agent remain
+of the primary checkout. The agent-owned worktree is a host-side home base, not
+a task devcontainer; the agent should enter a devcontainer only after opening a
+specific managed task worktree. Task worktrees opened later by the agent remain
 separate and can be closed without deleting the agent workspace. Q-COLD exports
 the primary checkout as `QCOLD_REPO_ROOT` and the agent-owned worktree as
 `QCOLD_AGENT_WORKTREE` for the launched agent, so active inventory commands

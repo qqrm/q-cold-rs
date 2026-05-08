@@ -817,11 +817,15 @@ fn dashboard_state() -> DashboardState {
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),
         commands: CommandTemplates {
-            agent_start_template: format!(
-                "/agent_start <track> :: codex exec \"Use the launched agent workspace as your home base for {root}. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree/devcontainer, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\""
-            ),
+            agent_start_template: agent_start_template(&root),
         },
     }
+}
+
+fn agent_start_template(root: &str) -> String {
+    format!(
+        "/agent_start <track> :: codex exec \"Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\""
+    )
 }
 
 fn task_record_snapshot(repo_root: &str) -> TaskRecordSnapshot {
@@ -1765,6 +1769,14 @@ mod tests {
             default_meta_agent_command(Path::new("/workspace/repo")),
             "c1 exec --ephemeral --cd '/workspace/repo' -"
         );
+    }
+
+    #[test]
+    fn agent_start_template_keeps_agent_workspace_host_side() {
+        let template = agent_start_template("/workspace/repo");
+        assert!(template.contains("host-side agent workspace"));
+        assert!(template.contains("do not enter a devcontainer from $QCOLD_AGENT_WORKTREE"));
+        assert!(template.contains("enter that managed task worktree and its devcontainer"));
     }
 
     #[test]

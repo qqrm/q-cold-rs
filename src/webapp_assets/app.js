@@ -644,7 +644,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       renderAgents();
       renderTerminals();
       const root = state.repository.root;
-      const nextCommand = `/agent_start ${track.value.trim()} :: codex exec "Use the launched agent workspace as your home base for ${root}. Start managed task ${slug.value.trim()} with cargo qcold task open ${slug.value.trim()}, enter that managed task worktree/devcontainer, reread AGENTS.md and task logs, then do: ${prompt.value.trim()} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task."`;
+      const nextCommand = `/agent_start ${track.value.trim()} :: codex exec "Use the launched host-side agent workspace as your home base for ${root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task ${slug.value.trim()} with cargo qcold task open ${slug.value.trim()}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: ${prompt.value.trim()} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task."`;
       if (document.activeElement !== command) {
         command.value = nextCommand;
       }
