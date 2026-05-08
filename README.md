@@ -172,7 +172,8 @@ and `codexN`) from an explicit launch directory instead of inheriting the
 daemon cwd. If the launch directory is not already a managed task worktree,
 Q-COLD first creates a persistent agent-owned Git worktree under
 `../WT/<repo>/agents/<agent-id>/`, initializes Git submodules with
-`git submodule update --init --recursive` when `.gitmodules` is present, and
+`git -c protocol.file.allow=always submodule update --init --recursive` when
+`.gitmodules` is present, and
 then starts the agent from that worktree. This keeps Codex resume and
 context-compaction fallbacks anchored in the agent's isolated workspace instead
 of the primary checkout, while task worktrees opened later by the agent remain

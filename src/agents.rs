@@ -445,7 +445,14 @@ fn ensure_worktree_submodules(worktree: &Path) -> Result<()> {
     }
     let output = Command::new("git")
         .current_dir(worktree)
-        .args(["submodule", "update", "--init", "--recursive"])
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "update",
+            "--init",
+            "--recursive",
+        ])
         .output()
         .with_context(|| format!("failed to initialize submodules in {}", worktree.display()))?;
     if output.status.success() {
@@ -1037,6 +1044,30 @@ mod tests {
     use super::*;
     use tempfile::tempdir;
 
+    fn git_ok(cwd: &Path, args: &[&str]) {
+        assert!(
+            Command::new("git")
+                .current_dir(cwd)
+                .args(args)
+                .status()
+                .unwrap()
+                .success(),
+            "git command failed in {}: {:?}",
+            cwd.display(),
+            args
+        );
+    }
+
+    fn seed_git_repo(path: &Path) {
+        fs::create_dir_all(path).unwrap();
+        git_ok(path, &["init"]);
+        git_ok(path, &["config", "user.name", "tester"]);
+        git_ok(path, &["config", "user.email", "tester@example.com"]);
+        fs::write(path.join("README.md"), "seed\n").unwrap();
+        git_ok(path, &["add", "README.md"]);
+        git_ok(path, &["commit", "-m", "seed"]);
+    }
+
     #[test]
     fn records_round_trip() {
         let record = AgentRecord {
@@ -1081,38 +1112,7 @@ mod tests {
     fn agent_worktree_creation_does_not_create_task_env() {
         let temp = tempdir().unwrap();
         let primary = temp.path().join("repo");
-        fs::create_dir_all(&primary).unwrap();
-        assert!(Command::new("git")
-            .current_dir(&primary)
-            .args(["init"])
-            .status()
-            .unwrap()
-            .success());
-        assert!(Command::new("git")
-            .current_dir(&primary)
-            .args(["config", "user.name", "tester"])
-            .status()
-            .unwrap()
-            .success());
-        assert!(Command::new("git")
-            .current_dir(&primary)
-            .args(["config", "user.email", "tester@example.com"])
-            .status()
-            .unwrap()
-            .success());
-        fs::write(primary.join("README.md"), "seed\n").unwrap();
-        assert!(Command::new("git")
-            .current_dir(&primary)
-            .args(["add", "README.md"])
-            .status()
-            .unwrap()
-            .success());
-        assert!(Command::new("git")
-            .current_dir(&primary)
-            .args(["commit", "-m", "seed"])
-            .status()
-            .unwrap()
-            .success());
+        seed_git_repo(&primary);
 
         let context = open_agent_worktree("c1-123", "c1", 123, &primary).unwrap();
         assert_eq!(context.qcold_repo_root.as_deref(), Some(primary.as_path()));
@@ -1121,6 +1121,32 @@ mod tests {
             .strip_prefix(temp.path().join("WT/repo/agents"))
             .is_ok());
         assert!(!context.cwd.join(".task/task.env").exists());
+    }
+
+    #[test]
+    fn agent_worktree_initializes_local_file_submodules() {
+        let temp = tempdir().unwrap();
+        let submodule = temp.path().join("json11-src");
+        seed_git_repo(&submodule);
+
+        let primary = temp.path().join("repo");
+        seed_git_repo(&primary);
+        let submodule_arg = submodule.display().to_string();
+        git_ok(
+            &primary,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &submodule_arg,
+                "json11",
+            ],
+        );
+        git_ok(&primary, &["commit", "-m", "add json11 submodule"]);
+
+        let context = open_agent_worktree("c1-submodule", "c1", 456, &primary).unwrap();
+        assert!(context.cwd.join("json11/README.md").is_file());
     }
 
     #[test]
