@@ -12,7 +12,10 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::{cmp::Reverse, collections::HashSet};
+use std::{
+    cmp::Reverse,
+    collections::{HashMap, HashSet},
+};
 
 use agents::AgentArgs;
 use anyhow::{Context, Result};
@@ -24,6 +27,9 @@ use crate::adapter::{BundleAdapter, ProofAdapter, TaskAdapter};
 use crate::repository::{AdapterContext, RepositoryArgs, RepositoryConfig};
 
 const QCOLD_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " ", env!("QCOLD_BUILD_GIT_HASH"));
+const DEFAULT_CODEX_TELEMETRY_RETENTION_HOURS: u64 = 48;
+const LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD: u64 = 5_000;
+const MAX_TOOL_OUTPUT_SAMPLES: usize = 5;
 
 fn main() -> ExitCode {
     match run() {
@@ -335,6 +341,9 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
             if let Some(line) = render_task_record_token_usage(&record) {
                 println!("{line}");
             }
+            if let Some(line) = render_task_record_token_efficiency(&record) {
+                println!("{line}");
+            }
         }
         TaskRecordSubcommand::Create(args) => {
             let record = task_record_from_create_args(args)?;
@@ -583,6 +592,75 @@ struct CodexTokenUsage {
     model_context_window: Option<u64>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CodexToolOutputStats {
+    calls: u64,
+    original_tokens: u64,
+    large_calls: u64,
+    large_original_tokens: u64,
+    samples: Vec<CodexToolOutputSample>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodexToolOutputSample {
+    original_tokens: u64,
+    session: String,
+    command: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct CodexTaskTelemetry {
+    usage: CodexTokenUsage,
+    session_count: u64,
+    matched_by_worktree: u64,
+    matched_by_task: u64,
+    retention_hours: u64,
+    tool_outputs: CodexToolOutputStats,
+}
+
+impl CodexToolOutputStats {
+    fn add_sample(&mut self, sample: CodexToolOutputSample) {
+        self.calls += 1;
+        self.original_tokens += sample.original_tokens;
+        if sample.original_tokens >= LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD {
+            self.large_calls += 1;
+            self.large_original_tokens += sample.original_tokens;
+        }
+        self.samples.push(sample);
+        self.samples
+            .sort_by_key(|sample| Reverse(sample.original_tokens));
+        self.samples.truncate(MAX_TOOL_OUTPUT_SAMPLES);
+    }
+}
+
+impl CodexTaskTelemetry {
+    fn efficiency_json(&self, captured_at: u64, started_at: u64, finished_at: u64) -> Value {
+        serde_json::json!({
+            "source": "codex-session-window",
+            "schema_version": 1,
+            "captured_at": captured_at,
+            "window_started_at": started_at,
+            "window_finished_at": finished_at,
+            "retention_hours": self.retention_hours,
+            "session_count": self.session_count,
+            "matched_by_worktree": self.matched_by_worktree,
+            "matched_by_task": self.matched_by_task,
+            "tool_output_calls": self.tool_outputs.calls,
+            "tool_output_original_tokens": self.tool_outputs.original_tokens,
+            "large_tool_output_threshold": LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD,
+            "large_tool_output_calls": self.tool_outputs.large_calls,
+            "large_tool_output_original_tokens": self.tool_outputs.large_original_tokens,
+            "top_tool_outputs": self.tool_outputs.samples.iter().map(|sample| {
+                serde_json::json!({
+                    "original_tokens": sample.original_tokens,
+                    "session": sample.session,
+                    "command": sample.command,
+                })
+            }).collect::<Vec<_>>(),
+        })
+    }
+}
+
 impl CodexTokenUsage {
     fn add_last_usage(&mut self, info: &Value) -> bool {
         let Some(last) = info.get("last_token_usage") else {
@@ -707,7 +785,8 @@ fn sync_task_flow_record_for_worktree(
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or_else(unix_now)
     };
-    let usage = codex_token_usage_for_worktree(worktree, start, finish)?;
+    let task_slug = record_id.strip_prefix("task/").map(str::to_string);
+    let telemetry = codex_task_telemetry_for_worktree(worktree, task_slug.as_deref(), start, finish)?;
 
     let mut metadata = record
         .metadata_json
@@ -719,7 +798,7 @@ fn sync_task_flow_record_for_worktree(
         "kind".to_string(),
         Value::String("managed-task-flow".to_string()),
     );
-    if let Some(task_slug) = record_id.strip_prefix("task/") {
+    if let Some(task_slug) = task_slug.as_deref() {
         metadata.insert("task_slug".to_string(), Value::String(task_slug.to_string()));
     }
     metadata.insert(
@@ -732,8 +811,12 @@ fn sync_task_flow_record_for_worktree(
     } else {
         metadata.insert("task_finished_at".to_string(), Value::from(finish));
     }
-    if let Some(usage) = usage {
-        metadata.insert("token_usage".to_string(), usage.as_json());
+    if let Some(telemetry) = telemetry {
+        metadata.insert("token_usage".to_string(), telemetry.usage.as_json());
+        metadata.insert(
+            "token_efficiency".to_string(),
+            telemetry.efficiency_json(unix_now(), start, finish),
+        );
     }
 
     record.cwd = Some(worktree.display().to_string());
@@ -889,20 +972,30 @@ fn find_codex_session_summary(
     )
 }
 
-fn codex_token_usage_for_worktree(
+fn codex_task_telemetry_for_worktree(
     worktree: &Path,
+    task_slug: Option<&str>,
     started_at: u64,
     finished_at: u64,
-) -> Result<Option<CodexTokenUsage>> {
-    codex_token_usage_for_worktree_in_roots(worktree, started_at, finished_at, &codex_session_roots()?)
+) -> Result<Option<CodexTaskTelemetry>> {
+    codex_task_telemetry_for_worktree_in_roots(
+        worktree,
+        task_slug,
+        started_at,
+        finished_at,
+        &codex_session_roots()?,
+        Some(codex_telemetry_retention_cutoff(unix_now())),
+    )
 }
 
-fn codex_token_usage_for_worktree_in_roots(
+fn codex_task_telemetry_for_worktree_in_roots(
     worktree: &Path,
+    task_slug: Option<&str>,
     started_at: u64,
     finished_at: u64,
     roots: &[PathBuf],
-) -> Result<Option<CodexTokenUsage>> {
+    retention_cutoff: Option<u64>,
+) -> Result<Option<CodexTaskTelemetry>> {
     let mut files = Vec::new();
     for root in roots {
         if root.is_dir() {
@@ -910,31 +1003,67 @@ fn codex_token_usage_for_worktree_in_roots(
         }
     }
     let worktree_text = worktree.display().to_string();
+    let task_terms = task_slug
+        .into_iter()
+        .flat_map(|slug| [slug.to_string(), format!("task/{slug}")])
+        .collect::<Vec<_>>();
     let mut usage = CodexTokenUsage::default();
+    let mut telemetry = CodexTaskTelemetry {
+        retention_hours: codex_telemetry_retention_hours(),
+        ..CodexTaskTelemetry::default()
+    };
+    let scan_started_at = retention_cutoff
+        .unwrap_or(0)
+        .max(started_at.saturating_sub(300));
     for path in files {
         let Some(modified) = modified_unix(&path) else {
             continue;
         };
-        if modified < started_at.saturating_sub(300) || modified > finished_at.saturating_add(900)
-        {
+        if modified < scan_started_at || modified > finished_at.saturating_add(900) {
             continue;
         }
         let content = fs::read_to_string(&path)?;
-        if !content.contains(&worktree_text) {
+        let worktree_match = content.contains(&worktree_text);
+        let task_match = task_terms.iter().any(|term| content.contains(term));
+        if !worktree_match && !task_match {
             continue;
         }
+        telemetry.session_count += 1;
+        if worktree_match {
+            telemetry.matched_by_worktree += 1;
+        }
+        if task_match {
+            telemetry.matched_by_task += 1;
+        }
+        let session_name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("session.jsonl")
+            .to_string();
+        let mut calls = HashMap::new();
         for line in content.lines() {
             let Ok(value) = serde_json::from_str::<Value>(line) else {
                 continue;
             };
-            let Some(timestamp) = value
+            let timestamp = value
                 .get("timestamp")
                 .and_then(Value::as_str)
-                .and_then(parse_rfc3339_unix)
-            else {
-                continue;
-            };
-            if timestamp < started_at || timestamp > finished_at {
+                .and_then(parse_rfc3339_unix);
+            let within_window = timestamp.is_some_and(|timestamp| {
+                timestamp >= started_at && timestamp <= finished_at
+            });
+            if value.get("type").and_then(Value::as_str) == Some("response_item") {
+                if let Some(payload) = value.get("payload") {
+                    collect_tool_output_stats(
+                        payload,
+                        &session_name,
+                        &mut calls,
+                        &mut telemetry,
+                        within_window,
+                    );
+                }
+            }
+            if !within_window {
                 continue;
             }
             let Some(payload) = value.get("payload") else {
@@ -949,7 +1078,99 @@ fn codex_token_usage_for_worktree_in_roots(
             }
         }
     }
-    Ok((usage.model_calls > 0).then_some(usage))
+    telemetry.usage = usage;
+    Ok((telemetry.usage.model_calls > 0 || telemetry.tool_outputs.calls > 0).then_some(telemetry))
+}
+
+fn codex_telemetry_retention_hours() -> u64 {
+    std::env::var("QCOLD_CODEX_TELEMETRY_RETENTION_HOURS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_CODEX_TELEMETRY_RETENTION_HOURS)
+}
+
+fn codex_telemetry_retention_cutoff(now: u64) -> u64 {
+    now.saturating_sub(codex_telemetry_retention_hours().saturating_mul(60 * 60))
+}
+
+fn collect_tool_output_stats(
+    payload: &Value,
+    session_name: &str,
+    calls: &mut HashMap<String, String>,
+    telemetry: &mut CodexTaskTelemetry,
+    count_output: bool,
+) {
+    match payload.get("type").and_then(Value::as_str) {
+        Some("function_call") => {
+            if let Some(call_id) = payload.get("call_id").and_then(Value::as_str) {
+                calls.insert(call_id.to_string(), compact_function_call(payload));
+            }
+        }
+        Some("function_call_output") => {
+            if !count_output {
+                return;
+            }
+            let Some(output) = payload.get("output").and_then(Value::as_str) else {
+                return;
+            };
+            let Some(tokens) = original_token_count(output) else {
+                return;
+            };
+            let command = payload
+                .get("call_id")
+                .and_then(Value::as_str)
+                .and_then(|call_id| calls.get(call_id))
+                .cloned()
+                .unwrap_or_else(|| "unknown tool call".to_string());
+            telemetry.tool_outputs.add_sample(CodexToolOutputSample {
+                original_tokens: tokens,
+                session: session_name.to_string(),
+                command,
+            });
+        }
+        _ => {}
+    }
+}
+
+fn compact_function_call(payload: &Value) -> String {
+    let name = payload
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("function_call");
+    let arguments = payload
+        .get("arguments")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .replace(['\n', '\r', '\t'], " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    compact_text(&format!("{name} {arguments}"), 180)
+}
+
+fn compact_text(value: &str, max_chars: usize) -> String {
+    let mut text = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if text.chars().count() <= max_chars {
+        return text;
+    }
+    text = text.chars().take(max_chars.saturating_sub(3)).collect();
+    text.push_str("...");
+    text
+}
+
+fn original_token_count(output: &str) -> Option<u64> {
+    output
+        .split("Original token count:")
+        .nth(1)?
+        .trim_start()
+        .split_whitespace()
+        .next()?
+        .parse::<u64>()
+        .ok()
 }
 
 fn codex_session_roots() -> Result<Vec<PathBuf>> {
@@ -1298,6 +1519,14 @@ fn render_task_record_token_usage(record: &state::TaskRecordRow) -> Option<Strin
     render_token_usage(metadata.get("token_usage")?)
 }
 
+fn render_task_record_token_efficiency(record: &state::TaskRecordRow) -> Option<String> {
+    let metadata = record
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())?;
+    render_token_efficiency(metadata.get("token_efficiency")?)
+}
+
 fn render_token_usage(usage: &Value) -> Option<String> {
     let object = usage.as_object()?;
     let field = |name: &str| {
@@ -1327,6 +1556,30 @@ fn render_token_usage(usage: &Value) -> Option<String> {
         field("model_calls"),
         context,
         source
+    ))
+}
+
+fn render_token_efficiency(efficiency: &Value) -> Option<String> {
+    let object = efficiency.as_object()?;
+    let field = |name: &str| {
+        object
+            .get(name)
+            .and_then(Value::as_u64)
+            .unwrap_or_default()
+    };
+    Some(format!(
+        "token-efficiency\tsessions={}\tmatched_worktree={}\tmatched_task={}\ttool_output_tokens={}\tlarge_tool_outputs={}\tlarge_tool_output_tokens={}\tretention_hours={}\tsource={}",
+        field("session_count"),
+        field("matched_by_worktree"),
+        field("matched_by_task"),
+        field("tool_output_original_tokens"),
+        field("large_tool_output_calls"),
+        field("large_tool_output_original_tokens"),
+        field("retention_hours"),
+        object
+            .get("source")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
     ))
 }
 
@@ -1543,10 +1796,11 @@ fn repository_adapter_for(repo: &RepositoryConfig) -> Result<adapter::XtaskProce
 #[cfg(test)]
 mod tests {
     use super::{
-        codex_token_usage_for_worktree_in_roots,
         cargo_subcommand_args, codex_account_from_agent_command,
+        codex_task_telemetry_for_worktree_in_roots,
         find_codex_session_summary_in_root, parse_codex_session_summary, parse_rfc3339_unix,
-        polish_task_text, prompt_from_agent_command, render_token_usage, slug_from_title,
+        polish_task_text, prompt_from_agent_command, render_token_efficiency, render_token_usage,
+        slug_from_title, unix_now,
     };
     use std::collections::HashSet;
     use std::ffi::OsString;
@@ -1658,16 +1912,99 @@ mod tests {
         )
         .unwrap();
 
-        let usage =
-            codex_token_usage_for_worktree_in_roots(&worktree, 0, u64::MAX, &[temp.path().join("sessions")])
-                .unwrap()
-                .unwrap();
+        let usage = codex_task_telemetry_for_worktree_in_roots(
+            &worktree,
+            None,
+            0,
+            u64::MAX,
+            &[temp.path().join("sessions")],
+            Some(0),
+        )
+        .unwrap()
+        .unwrap()
+        .usage;
         assert_eq!(usage.model_calls, 2);
         assert_eq!(usage.input_tokens, 17);
         assert_eq!(usage.cached_input_tokens, 9);
         assert_eq!(usage.output_tokens, 5);
         assert_eq!(usage.reasoning_output_tokens, 3);
         assert_eq!(usage.total_tokens, 22);
+    }
+
+    #[test]
+    fn codex_task_telemetry_matches_task_slug_and_records_tool_output_stats() {
+        let temp = tempfile::tempdir().unwrap();
+        let session_dir = temp.path().join("sessions/2026/05/06");
+        let worktree = temp.path().join("WT/qcold/anchor-token-task");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(
+            session_dir.join(
+                "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+            ),
+            concat!(
+                "{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"/workspace/repo\"}}\n",
+                "{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"rg -n token src\\\",\\\"workdir\\\":\\\"/workspace/repo\\\"}\",\"call_id\":\"call_big\"}}\n",
+                "{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call_big\",\"output\":\"Chunk ID: abc\\nOriginal token count: 6001\\nOutput:\\ntask/token-task\\n\"}}\n",
+                "{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12},\"model_context_window\":258400}}}\n"
+            ),
+        )
+        .unwrap();
+
+        let telemetry = codex_task_telemetry_for_worktree_in_roots(
+            &worktree,
+            Some("token-task"),
+            0,
+            u64::MAX,
+            &[temp.path().join("sessions")],
+            Some(0),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(telemetry.session_count, 1);
+        assert_eq!(telemetry.matched_by_worktree, 0);
+        assert_eq!(telemetry.matched_by_task, 1);
+        assert_eq!(telemetry.usage.model_calls, 1);
+        assert_eq!(telemetry.tool_outputs.calls, 1);
+        assert_eq!(telemetry.tool_outputs.original_tokens, 6001);
+        assert_eq!(telemetry.tool_outputs.large_calls, 1);
+        assert!(
+            telemetry.tool_outputs.samples[0]
+                .command
+                .contains("rg -n token src")
+        );
+    }
+
+    #[test]
+    fn codex_task_telemetry_retention_cutoff_skips_old_sessions() {
+        let temp = tempfile::tempdir().unwrap();
+        let session_dir = temp.path().join("sessions/2026/05/06");
+        let worktree = temp.path().join("WT/qcold/anchor-token-task");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        let session_path = session_dir.join(
+            "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+        );
+        fs::write(
+            &session_path,
+            format!(
+                "{{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:02Z\",\"cwd\":\"{}\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"total_tokens\":10}}}}}}}}\n",
+                worktree.display()
+            ),
+        )
+        .unwrap();
+
+        let telemetry = codex_task_telemetry_for_worktree_in_roots(
+            &worktree,
+            Some("token-task"),
+            0,
+            u64::MAX,
+            &[temp.path().join("sessions")],
+            Some(unix_now().saturating_add(1)),
+        )
+        .unwrap();
+        assert!(telemetry.is_none());
     }
 
     #[test]
@@ -1687,6 +2024,24 @@ mod tests {
         assert_eq!(
             render_token_usage(&usage).as_deref(),
             Some("token-usage\tinput=17\tcached_input=9\tnon_cached_input=8\toutput=5\treasoning=3\ttotal=22\tdisplayed=13\tmodel_calls=2\tcontext=258400\tsource=codex-session-window")
+        );
+    }
+
+    #[test]
+    fn token_efficiency_renderer_prints_compact_fields() {
+        let efficiency = serde_json::json!({
+            "source": "codex-session-window",
+            "session_count": 2,
+            "matched_by_worktree": 1,
+            "matched_by_task": 1,
+            "tool_output_original_tokens": 7000,
+            "large_tool_output_calls": 1,
+            "large_tool_output_original_tokens": 6001,
+            "retention_hours": 48,
+        });
+        assert_eq!(
+            render_token_efficiency(&efficiency).as_deref(),
+            Some("token-efficiency\tsessions=2\tmatched_worktree=1\tmatched_task=1\ttool_output_tokens=7000\tlarge_tool_outputs=1\tlarge_tool_output_tokens=6001\tretention_hours=48\tsource=codex-session-window")
         );
     }
 

@@ -832,6 +832,8 @@ fn task_record_snapshot() -> TaskRecordSnapshot {
             total_displayed_tokens: 0,
             total_output_tokens: 0,
             total_reasoning_tokens: 0,
+            total_tool_output_tokens: 0,
+            total_large_tool_outputs: 0,
             records: Vec::new(),
             error: Some(format!("{err:#}")),
         },
@@ -1361,6 +1363,8 @@ struct TaskRecordSnapshot {
     total_displayed_tokens: u64,
     total_output_tokens: u64,
     total_reasoning_tokens: u64,
+    total_tool_output_tokens: u64,
+    total_large_tool_outputs: u64,
     records: Vec<WebTaskRecord>,
     error: Option<String>,
 }
@@ -1396,6 +1400,16 @@ impl TaskRecordSnapshot {
             .filter_map(|record| record.token_usage.as_ref())
             .map(|usage| usage.reasoning_output_tokens)
             .sum();
+        let total_tool_output_tokens = records
+            .iter()
+            .filter_map(|record| record.token_efficiency.as_ref())
+            .map(|efficiency| efficiency.tool_output_original_tokens)
+            .sum();
+        let total_large_tool_outputs = records
+            .iter()
+            .filter_map(|record| record.token_efficiency.as_ref())
+            .map(|efficiency| efficiency.large_tool_output_calls)
+            .sum();
         Self {
             count,
             open,
@@ -1404,6 +1418,8 @@ impl TaskRecordSnapshot {
             total_displayed_tokens,
             total_output_tokens,
             total_reasoning_tokens,
+            total_tool_output_tokens,
+            total_large_tool_outputs,
             records,
             error,
         }
@@ -1427,6 +1443,7 @@ struct WebTaskRecord {
     codex_thread_id: Option<String>,
     session_path: Option<String>,
     token_usage: Option<TaskTokenUsage>,
+    token_efficiency: Option<TaskTokenEfficiency>,
 }
 
 impl WebTaskRecord {
@@ -1439,6 +1456,10 @@ impl WebTaskRecord {
             .as_ref()
             .and_then(|value| value.get("token_usage"))
             .map(TaskTokenUsage::from_value);
+        let token_efficiency = metadata
+            .as_ref()
+            .and_then(|value| value.get("token_efficiency"))
+            .map(TaskTokenEfficiency::from_value);
         let kind = metadata
             .as_ref()
             .and_then(|value| value.get("kind"))
@@ -1470,6 +1491,7 @@ impl WebTaskRecord {
             codex_thread_id,
             session_path,
             token_usage,
+            token_efficiency,
         }
     }
 }
@@ -1496,6 +1518,26 @@ impl TaskTokenUsage {
             reasoning_output_tokens: number("reasoning_output_tokens"),
             total_tokens: number("total_tokens"),
             displayed_total_tokens: number("displayed_total_tokens"),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct TaskTokenEfficiency {
+    session_count: u64,
+    tool_output_original_tokens: u64,
+    large_tool_output_calls: u64,
+    large_tool_output_original_tokens: u64,
+}
+
+impl TaskTokenEfficiency {
+    fn from_value(value: &Value) -> Self {
+        let number = |key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
+        Self {
+            session_count: number("session_count"),
+            tool_output_original_tokens: number("tool_output_original_tokens"),
+            large_tool_output_calls: number("large_tool_output_calls"),
+            large_tool_output_original_tokens: number("large_tool_output_original_tokens"),
         }
     }
 }

@@ -125,6 +125,10 @@ fixture or debugging task explicitly needs them.
   already the active registered repo, and close out from the managed worktree.
   If managed task-flow prerequisites are absent or failing, commit after normal
   Cargo validation and report that task-flow closeout was not applicable.
+- Do not perform final operator installation from a task branch or managed task
+  worktree. After successful integration into `main`, rebuild and install
+  Q-COLD only from the primary checkout so the installed binary reflects landed
+  repository state.
 
 ## Validation Authority
 

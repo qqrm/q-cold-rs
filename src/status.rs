@@ -200,6 +200,11 @@ fn task_record_token_snapshot() -> Result<Option<String>> {
     let mut output = 0u64;
     let mut reasoning = 0u64;
     let mut model_calls = 0u64;
+    let mut efficiency_count = 0u64;
+    let mut sessions = 0u64;
+    let mut tool_output_tokens = 0u64;
+    let mut large_tool_outputs = 0u64;
+    let mut large_tool_output_tokens = 0u64;
     for record in records {
         let Some(metadata) = record
             .metadata_json
@@ -232,13 +237,38 @@ fn task_record_token_snapshot() -> Result<Option<String>> {
             .get("model_calls")
             .and_then(Value::as_u64)
             .unwrap_or(0);
+        if let Some(efficiency) = metadata.get("token_efficiency") {
+            efficiency_count += 1;
+            sessions += efficiency
+                .get("session_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            tool_output_tokens += efficiency
+                .get("tool_output_original_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            large_tool_outputs += efficiency
+                .get("large_tool_output_calls")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            large_tool_output_tokens += efficiency
+                .get("large_tool_output_original_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+        }
     }
     if count == 0 {
         return Ok(None);
     }
-    Ok(Some(format!(
-        "task-record-tokens\trecords={count}\tdisplayed={displayed}\ttotal={total}\toutput={output}\treasoning={reasoning}\tmodel_calls={model_calls}\n"
-    )))
+    let mut lines = vec![format!(
+        "task-record-tokens\trecords={count}\tdisplayed={displayed}\ttotal={total}\toutput={output}\treasoning={reasoning}\tmodel_calls={model_calls}"
+    )];
+    if efficiency_count > 0 {
+        lines.push(format!(
+            "task-record-efficiency\trecords={efficiency_count}\tsessions={sessions}\ttool_output_tokens={tool_output_tokens}\tlarge_tool_outputs={large_tool_outputs}\tlarge_tool_output_tokens={large_tool_output_tokens}"
+        ));
+    }
+    Ok(Some(format!("{}\n", lines.join("\n"))))
 }
 
 pub fn telegram_snapshot() -> Result<String> {

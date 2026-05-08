@@ -68,15 +68,21 @@ account `2`. The importer reads Codex `session_meta`, matches sessions to the
 Q-COLD agent start time and active repository cwd, and does not assign a
 claimed `session_path` to another agent. It stores the polished first
 meaningful user prompt plus the latest Codex token counters in task metadata.
-For adapter-backed task-flow records, Q-COLD also refreshes Codex token
+For adapter-backed task-flow records, Q-COLD also refreshes compact Codex token
 telemetry from matching session JSONL files while task records or the dashboard
-are loaded. It matches the managed worktree and task time window, sums Codex
-`last_token_usage` samples into per-task `token_usage` metadata, and refreshes
-that metadata before terminal `task closeout` updates the record status.
-`qcold status` also triggers the refresh and prints a compact
-`task-record-tokens` aggregate when task records contain imported token data.
-`qcold task-record show <task-id>` prints a `token-usage` line for the selected
-record when that per-task telemetry is available.
+are loaded. It matches the managed worktree or task slug and task time window,
+sums Codex `last_token_usage` samples into per-task `token_usage` metadata, and
+stores bounded `token_efficiency` metadata for session counts plus the largest
+tool outputs by reported `Original token count`. Q-COLD keeps only metadata,
+not raw tool output, and limits task-flow session import to the recent Codex
+telemetry window. The default retention window is 48 hours; set
+`QCOLD_CODEX_TELEMETRY_RETENTION_HOURS` to another positive hour count for one
+process. The metadata is refreshed before terminal `task closeout` updates the
+record status. `qcold status` also triggers the refresh and prints compact
+`task-record-tokens` and `task-record-efficiency` aggregates when task records
+contain imported telemetry. `qcold task-record show <task-id>` prints
+`token-usage` and `token-efficiency` lines for the selected record when that
+per-task telemetry is available.
 
 ## Web interface
 

@@ -276,6 +276,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         ['Last 24h tokens', formatNumber(lastDayTokens)],
         ['Output tokens', formatNumber(snapshot.total_output_tokens || 0)],
         ['Reasoning', formatNumber(snapshot.total_reasoning_tokens || 0)],
+        ['Tool output tokens', formatNumber(snapshot.total_tool_output_tokens || 0)],
+        ['Large outputs', formatNumber(snapshot.total_large_tool_outputs || 0)],
       ];
       stats.replaceChildren(...values.map(([label, value]) => {
         const node = document.createElement('div');
@@ -336,6 +338,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
       usage.innerHTML = tokenUsage
         ? `<strong>${formatNumber(tokenUsage.displayed_total_tokens)}</strong><span>tokens</span><small>${formatNumber(tokenUsage.output_tokens)} out / ${formatNumber(tokenUsage.reasoning_output_tokens)} reasoning</small>`
         : '<strong>-</strong><span>tokens</span><small>no telemetry</small>';
+      const efficiency = task.token_efficiency;
+      if (efficiency) {
+        const detail = document.createElement('small');
+        detail.textContent = `${formatNumber(efficiency.tool_output_original_tokens)} tool output / ${formatNumber(efficiency.large_tool_output_calls)} large`;
+        usage.appendChild(detail);
+      }
       const dates = document.createElement('div');
       dates.className = 'task-path';
       dates.textContent = `created ${formatTime(task.created_at)} / updated ${formatTime(task.updated_at)}`;
