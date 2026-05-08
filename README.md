@@ -154,12 +154,12 @@ programs such as `xtask` are not counted as agents.
 The Terminals view exposes attachable terminal panes for agent programs,
 captures recent pane output with ANSI color/style attributes, and sends input
 from each terminal card through backend-native paste plus a submit key. The
-view gives Q-COLD-started terminals short generated names such as `Alex` or
-`Fedor` and keeps them unique among running agents. Existing discoverable
-terminals fall back to their session and current command. Click a terminal
-title in the browser to override its name or set a short scope label such as
-`refactoring`; those overrides are stored in Q-COLD state. The default backend
-is `tmux`.
+view gives Q-COLD-started terminals short generated Greek philosopher names
+such as `Socrates` or `Diogenes` and keeps them unique among running agents.
+Existing discoverable terminals fall back to their session and current
+command. Click a terminal title in the browser to override its name or set a
+short scope label such as `refactoring`; those overrides are stored in Q-COLD
+state. The default backend is `tmux`.
 Set `QCOLD_TERMINAL_BACKEND=zellij` to start new Q-COLD terminal agents through
 `zellij` instead; the GUI discovers both Q-COLD `tmux` and `zellij` sessions.
 Plain processes started in a non-multiplexed console are visible as host

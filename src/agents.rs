@@ -12,7 +12,18 @@ use clap::{Args, Subcommand};
 
 use crate::state;
 
-const AGENT_DISPLAY_NAMES: &[&str] = &["Alex", "Fedor", "Ilya", "Kirill", "Maxim"];
+const AGENT_DISPLAY_NAMES: &[&str] = &[
+    "Socrates",
+    "Plato",
+    "Aristotle",
+    "Diogenes",
+    "Epicurus",
+    "Zeno",
+    "Thales",
+    "Pythagoras",
+    "Democritus",
+    "Heraclitus",
+];
 
 #[derive(Clone, Copy)]
 enum TerminalBackend {
@@ -1308,11 +1319,9 @@ mod tests {
     #[test]
     fn agent_display_name_uses_unused_pool_name() {
         let mut used = HashSet::new();
-        used.insert(normalize_display_name("Alex"));
-        used.insert(normalize_display_name("Fedor"));
-        used.insert(normalize_display_name("Ilya"));
-        used.insert(normalize_display_name("Kirill"));
-        used.insert(normalize_display_name("Maxim"));
+        for name in AGENT_DISPLAY_NAMES {
+            used.insert(normalize_display_name(name));
+        }
 
         let name = choose_agent_display_name("c1-1234", &used);
         assert!(name.ends_with(" 2"));
@@ -1340,13 +1349,13 @@ mod tests {
             "qcold-c1-1234:0.0".to_string(),
             state::TerminalMetadataRow {
                 target: "qcold-c1-1234:0.0".to_string(),
-                name: Some("Alex".to_string()),
+                name: Some("Socrates".to_string()),
                 scope: None,
                 updated_at: 123,
             },
         );
 
-        assert!(render_record(&record, &metadata).contains("\tname=Alex\t"));
+        assert!(render_record(&record, &metadata).contains("\tname=Socrates\t"));
     }
 
     #[test]
