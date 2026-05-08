@@ -23,6 +23,7 @@ pub struct AgentRow {
     pub pid: u32,
     pub started_at: u64,
     pub command: Vec<String>,
+    pub cwd: Option<PathBuf>,
     pub stdout_log_path: Option<PathBuf>,
     pub stderr_log_path: Option<PathBuf>,
 }
@@ -144,7 +145,7 @@ pub fn load_agents(legacy_path: &Path) -> Result<Vec<AgentRow>> {
     backfill_agents(&connection, legacy_path)?;
     let mut statement = connection
         .prepare(
-            "select id, track, pid, started_at_unix, command_json, stdout_log_path, stderr_log_path
+            "select id, track, pid, started_at_unix, command_json, cwd, stdout_log_path, stderr_log_path
              from agents
              order by started_at_unix, id",
         )
@@ -165,8 +166,9 @@ pub fn load_agents(legacy_path: &Path) -> Result<Vec<AgentRow>> {
                 pid: u32::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
                 started_at: row.get(3)?,
                 command,
-                stdout_log_path: row.get::<_, Option<String>>(5)?.map(PathBuf::from),
-                stderr_log_path: row.get::<_, Option<String>>(6)?.map(PathBuf::from),
+                cwd: row.get::<_, Option<String>>(5)?.map(PathBuf::from),
+                stdout_log_path: row.get::<_, Option<String>>(6)?.map(PathBuf::from),
+                stderr_log_path: row.get::<_, Option<String>>(7)?.map(PathBuf::from),
             })
         })
         .context("failed to query agents")?
@@ -180,14 +182,15 @@ pub fn insert_agent(agent: &AgentRow) -> Result<()> {
     connection
         .execute(
             "insert into agents
-                 (id, track, pid, started_at_unix, command_json, stdout_log_path, stderr_log_path, created_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?4)",
+                 (id, track, pid, started_at_unix, command_json, cwd, stdout_log_path, stderr_log_path, created_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?4)",
             params![
                 agent.id,
                 agent.track,
                 agent.pid,
                 agent.started_at,
                 serde_json::to_string(&agent.command)?,
+                agent.cwd.as_ref().map(|path| path.display().to_string()),
                 agent.stdout_log_path.as_ref().map(|path| path.display().to_string()),
                 agent.stderr_log_path.as_ref().map(|path| path.display().to_string()),
             ],
@@ -571,6 +574,7 @@ fn open_db() -> Result<Connection> {
                  pid integer not null,
                  started_at_unix integer not null,
                  command_json text not null,
+                 cwd text,
                  stdout_log_path text,
                  stderr_log_path text,
                  created_at_unix integer not null
@@ -681,6 +685,7 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
     ensure_column(connection, "tasks", "agent_id", "text")?;
     ensure_column(connection, "tasks", "metadata_json", "text")?;
     ensure_column(connection, "tasks", "sequence", "integer")?;
+    ensure_column(connection, "agents", "cwd", "text")?;
     connection
         .execute(
             "create unique index if not exists tasks_repo_sequence
@@ -778,8 +783,8 @@ fn backfill_agents(connection: &Connection, legacy_path: &Path) -> Result<()> {
         let row = parse_legacy_agent(line, &log_dir)?;
         connection.execute(
             "insert or ignore into agents
-                 (id, track, pid, started_at_unix, command_json, stdout_log_path, stderr_log_path, created_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?4)",
+                 (id, track, pid, started_at_unix, command_json, cwd, stdout_log_path, stderr_log_path, created_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?4)",
             params![
                 row.id,
                 row.track,
@@ -906,6 +911,7 @@ fn parse_legacy_agent(line: &str, log_dir: &Path) -> Result<AgentRow> {
             .split('\u{1f}')
             .map(ToString::to_string)
             .collect(),
+        cwd: None,
         stdout_log_path: Some(log_dir.join(format!("{id}.out.log"))),
         stderr_log_path: Some(log_dir.join(format!("{id}.err.log"))),
         id,

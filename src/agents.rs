@@ -22,6 +22,16 @@ enum TerminalTarget {
     Zellij { session: String, pane: String },
 }
 
+struct Launch {
+    command: Vec<String>,
+    cwd: PathBuf,
+}
+
+struct TerminalLaunch {
+    command: String,
+    cwd: PathBuf,
+}
+
 #[derive(Args)]
 pub struct AgentArgs {
     #[command(subcommand)]
@@ -42,6 +52,8 @@ struct StartArgs {
     id: Option<String>,
     #[arg(long)]
     track: String,
+    #[arg(long, help = "Directory used as the agent launch context")]
+    cwd: Option<PathBuf>,
     #[arg(long, help = "Run the agent in an attachable tmux terminal session")]
     terminal: bool,
     #[arg(long, help = "Attach to the tmux terminal after starting the agent")]
@@ -54,9 +66,9 @@ pub fn run(args: AgentArgs) -> Result<u8> {
     match args.command {
         AgentCommand::Start(args) => {
             let record = if args.terminal || args.attach {
-                start_terminal_agent(args.id, &args.track, &shell_join(&args.command))?
+                start_terminal_agent(args.id, &args.track, &shell_join(&args.command), args.cwd)?
             } else {
-                start_agent(args.id, args.track, args.command)?
+                start_agent(args.id, args.track, args.command, args.cwd)?
             };
             println!("{}", render_record(&record));
             if args.attach {
@@ -119,10 +131,12 @@ pub fn start_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
     if command.trim().is_empty() {
         bail!("agent command is empty");
     }
+    let cwd = None;
     start_agent(
         None,
         track.to_string(),
         vec!["sh".to_string(), "-c".to_string(), command.to_string()],
+        cwd,
     )
 }
 
@@ -130,10 +144,15 @@ pub fn start_terminal_shell_agent(track: &str, command: &str) -> Result<AgentRec
     if command.trim().is_empty() {
         bail!("agent command is empty");
     }
-    start_terminal_agent(None, track, command)
+    start_terminal_agent(None, track, command, None)
 }
 
-fn start_agent(id: Option<String>, track: String, command: Vec<String>) -> Result<AgentRecord> {
+fn start_agent(
+    id: Option<String>,
+    track: String,
+    command: Vec<String>,
+    requested_cwd: Option<PathBuf>,
+) -> Result<AgentRecord> {
     if track.trim().is_empty() {
         bail!("agent track is empty");
     }
@@ -154,8 +173,10 @@ fn start_agent(id: Option<String>, track: String, command: Vec<String>) -> Resul
     let stderr_log_path = log_path(&id, "err")?;
     let stdout = log_file(&stdout_log_path)?;
     let stderr = log_file(&stderr_log_path)?;
-    let mut process = Command::new(&command[0]);
-    process.args(&command[1..]);
+    let launch = prepare_launch(&id, &track, started_at, requested_cwd.as_deref(), &command)?;
+    let mut process = Command::new(&launch.command[0]);
+    process.args(&launch.command[1..]);
+    process.current_dir(&launch.cwd);
     let child = process
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
@@ -168,7 +189,8 @@ fn start_agent(id: Option<String>, track: String, command: Vec<String>) -> Resul
         track,
         pid: child.id(),
         started_at,
-        command,
+        command: launch.command,
+        cwd: Some(launch.cwd),
     };
     state::insert_agent(&state::AgentRow {
         id: record.id.clone(),
@@ -176,6 +198,7 @@ fn start_agent(id: Option<String>, track: String, command: Vec<String>) -> Resul
         pid: record.pid,
         started_at: record.started_at,
         command: record.command.clone(),
+        cwd: record.cwd.clone(),
         stdout_log_path: Some(stdout_log_path),
         stderr_log_path: Some(stderr_log_path),
     })?;
@@ -183,7 +206,12 @@ fn start_agent(id: Option<String>, track: String, command: Vec<String>) -> Resul
     Ok(record)
 }
 
-fn start_terminal_agent(id: Option<String>, track: &str, command: &str) -> Result<AgentRecord> {
+fn start_terminal_agent(
+    id: Option<String>,
+    track: &str,
+    command: &str,
+    requested_cwd: Option<PathBuf>,
+) -> Result<AgentRecord> {
     if track.trim().is_empty() {
         bail!("agent track is empty");
     }
@@ -200,12 +228,19 @@ fn start_terminal_agent(id: Option<String>, track: &str, command: &str) -> Resul
     let state_dir = state_dir()?;
     fs::create_dir_all(state_dir.join("logs"))?;
     let stdout_log_path = log_path(&id, "out")?;
+    let launch = prepare_terminal_launch(
+        &id,
+        track,
+        started_at,
+        requested_cwd.as_deref(),
+        command,
+    )?;
     let backend = selected_terminal_backend()?;
     let record = match backend {
         TerminalBackend::Tmux => {
-            start_tmux_terminal_agent(&id, track, started_at, command, &stdout_log_path)?
+            start_tmux_terminal_agent(&id, track, started_at, &launch, &stdout_log_path)?
         }
-        TerminalBackend::Zellij => start_zellij_terminal_agent(&id, track, started_at, command)?,
+        TerminalBackend::Zellij => start_zellij_terminal_agent(&id, track, started_at, &launch)?,
     };
     state::insert_agent(&state::AgentRow {
         id: record.id.clone(),
@@ -213,6 +248,7 @@ fn start_terminal_agent(id: Option<String>, track: &str, command: &str) -> Resul
         pid: record.pid,
         started_at: record.started_at,
         command: record.command.clone(),
+        cwd: record.cwd.clone(),
         stdout_log_path: Some(stdout_log_path),
         stderr_log_path: None,
     })?;
@@ -231,23 +267,240 @@ fn selected_terminal_backend() -> Result<TerminalBackend> {
     }
 }
 
+fn prepare_launch(
+    id: &str,
+    track: &str,
+    started_at: u64,
+    requested_cwd: Option<&Path>,
+    command: &[String],
+) -> Result<Launch> {
+    let command_text = shell_join(command);
+    let cwd = prepare_launch_cwd(id, track, started_at, requested_cwd, &command_text)?;
+    Ok(Launch {
+        command: command.to_vec(),
+        cwd,
+    })
+}
+
+fn prepare_terminal_launch(
+    id: &str,
+    track: &str,
+    started_at: u64,
+    requested_cwd: Option<&Path>,
+    command: &str,
+) -> Result<TerminalLaunch> {
+    Ok(TerminalLaunch {
+        command: command.to_string(),
+        cwd: prepare_launch_cwd(id, track, started_at, requested_cwd, command)?,
+    })
+}
+
+fn prepare_launch_cwd(
+    id: &str,
+    track: &str,
+    started_at: u64,
+    requested_cwd: Option<&Path>,
+    command: &str,
+) -> Result<PathBuf> {
+    let codex_like = command_contains_codex_agent(command);
+    let cwd = if let Some(cwd) = requested_cwd {
+        canonical_dir(cwd)?
+    } else if codex_like {
+        resolve_codex_launch_cwd()?
+    } else {
+        env::current_dir().context("failed to read current directory")?
+    };
+    if !should_open_managed_worktree(codex_like, &cwd) {
+        return Ok(cwd);
+    }
+
+    open_agent_worktree(id, track, started_at, &cwd)
+}
+
+fn resolve_codex_launch_cwd() -> Result<PathBuf> {
+    let current = env::current_dir().context("failed to read current directory")?;
+    if managed_task_root_for(&current).is_some() {
+        return Ok(current);
+    }
+
+    let Ok(active_root) = crate::repository::active_root() else {
+        return Ok(current);
+    };
+    if current.starts_with(&active_root) {
+        Ok(current)
+    } else {
+        Ok(active_root)
+    }
+}
+
+fn canonical_dir(path: &Path) -> Result<PathBuf> {
+    let path = path
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", path.display()))?;
+    if !path.is_dir() {
+        bail!("agent cwd is not a directory: {}", path.display());
+    }
+    Ok(path)
+}
+
+fn command_contains_codex_agent(command: &str) -> bool {
+    shell_words(command)
+        .iter()
+        .filter_map(|word| Path::new(word).file_name().and_then(|name| name.to_str()))
+        .any(is_codex_agent_command)
+}
+
+fn should_open_managed_worktree(codex_like: bool, cwd: &Path) -> bool {
+    codex_like && agent_managed_worktree_enabled() && managed_task_root_for(cwd).is_none()
+}
+
+fn agent_managed_worktree_enabled() -> bool {
+    env::var("QCOLD_AGENT_MANAGED_WORKTREE")
+        .map(|value| !matches!(value.as_str(), "0" | "false" | "no" | "off"))
+        .unwrap_or(true)
+}
+
+fn is_codex_agent_command(name: &str) -> bool {
+    matches!(name, "c1" | "cc1" | "c2" | "cc2" | "codex")
+        || name
+            .strip_prefix("codex")
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn managed_task_root_for(cwd: &Path) -> Option<PathBuf> {
+    git_root_for(cwd)
+        .ok()
+        .filter(|root| root.join(".task/task.env").is_file())
+}
+
+fn git_root_for(cwd: &Path) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .current_dir(cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .with_context(|| format!("failed to inspect git root for {}", cwd.display()))?;
+    if !output.status.success() {
+        bail!("not a git worktree: {}", cwd.display());
+    }
+    Ok(PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+}
+
+fn open_agent_worktree(
+    id: &str,
+    track: &str,
+    started_at: u64,
+    requested_cwd: &Path,
+) -> Result<PathBuf> {
+    let primary_root = git_root_for(requested_cwd)?;
+    let relative_cwd = requested_cwd.strip_prefix(&primary_root).unwrap_or(Path::new(""));
+    let task_slug = agent_task_slug(id, track, started_at);
+    let executable = env::current_exe().context("failed to locate current Q-COLD executable")?;
+    let output = Command::new(executable)
+        .current_dir(&primary_root)
+        .args(["task", "open", &task_slug])
+        .env("QCOLD_REPO_ROOT", &primary_root)
+        .output()
+        .with_context(|| format!("failed to open managed agent worktree for {task_slug}"))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "failed to open managed agent worktree {task_slug}: {}\n{}",
+            output.status,
+            format_command_output(&stdout, &stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let worktree = parse_task_worktree(&stdout)
+        .with_context(|| format!("task open did not report TASK_WORKTREE for {task_slug}"))?;
+    ensure_worktree_submodules(&worktree)?;
+    let cwd = worktree.join(relative_cwd);
+    if cwd.is_dir() {
+        Ok(cwd)
+    } else {
+        Ok(worktree)
+    }
+}
+
+fn ensure_worktree_submodules(worktree: &Path) -> Result<()> {
+    if !worktree.join(".gitmodules").is_file() {
+        return Ok(());
+    }
+    let output = Command::new("git")
+        .current_dir(worktree)
+        .args(["submodule", "update", "--init", "--recursive"])
+        .output()
+        .with_context(|| format!("failed to initialize submodules in {}", worktree.display()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    bail!(
+        "failed to initialize submodules in {}: {}\n{}",
+        worktree.display(),
+        output.status,
+        format_command_output(&stdout, &stderr)
+    );
+}
+
+fn agent_task_slug(id: &str, track: &str, started_at: u64) -> String {
+    let id = sanitize_id(id);
+    let track = sanitize_id(track);
+    let base = if id.is_empty() {
+        format!("agent-{track}-{started_at}")
+    } else {
+        format!("agent-{id}")
+    };
+    if base == "agent--" || base == "agent-" {
+        format!("agent-{started_at}")
+    } else {
+        base
+    }
+}
+
+fn parse_task_worktree(output: &str) -> Option<PathBuf> {
+    output
+        .lines()
+        .find_map(|line| line.strip_prefix("TASK_WORKTREE="))
+        .map(PathBuf::from)
+}
+
+fn format_command_output(stdout: &str, stderr: &str) -> String {
+    match (stdout.trim(), stderr.trim()) {
+        ("", "") => "no output".to_string(),
+        (stdout, "") => stdout.to_string(),
+        ("", stderr) => stderr.to_string(),
+        (stdout, stderr) => format!("{stdout}\n{stderr}"),
+    }
+}
+
 fn start_tmux_terminal_agent(
     id: &str,
     track: &str,
     started_at: u64,
-    command: &str,
+    launch: &TerminalLaunch,
     stdout_log_path: &Path,
 ) -> Result<AgentRecord> {
     ensure_tmux_available()?;
     let session = format!("qcold-{id}");
     let target = format!("{session}:0.0");
     let wrapped = format!(
-        "{command}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\""
+        "{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\"",
+        launch.command
     );
     let delayed = format!("sleep 0.1; exec sh -lc {}", shell_quote(&wrapped));
     let tmux_shell_command = format!("sh -lc {}", shell_quote(&delayed));
     let status = Command::new("tmux")
-        .args(["new-session", "-d", "-s", &session, &tmux_shell_command])
+        .args([
+            "new-session",
+            "-d",
+            "-s",
+            &session,
+            "-c",
+            &launch.cwd.display().to_string(),
+            &tmux_shell_command,
+        ])
         .status()
         .with_context(|| format!("failed to start tmux session {session}"))?;
     if !status.success() {
@@ -275,8 +528,9 @@ fn start_tmux_terminal_agent(
             "new-session".to_string(),
             "-s".to_string(),
             session,
-            command.to_string(),
+            launch.command.clone(),
         ],
+        cwd: Some(launch.cwd.clone()),
     };
     Ok(record)
 }
@@ -285,13 +539,13 @@ fn start_zellij_terminal_agent(
     id: &str,
     track: &str,
     started_at: u64,
-    command: &str,
+    launch: &TerminalLaunch,
 ) -> Result<AgentRecord> {
     ensure_zellij_available()?;
     let session = format!("qcold-{id}");
     let wrapped = format!(
         "{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; sleep 0.1; zellij kill-session {} >/dev/null 2>&1 || true; exit \"$status\"",
-        command,
+        launch.command,
         shell_quote(&session)
     );
     let layout_path = state_dir()?.join("logs").join(format!("{id}.zellij.kdl"));
@@ -299,6 +553,7 @@ fn start_zellij_terminal_agent(
         .with_context(|| format!("failed to write zellij layout {}", layout_path.display()))?;
 
     let status = Command::new("zellij")
+        .current_dir(&launch.cwd)
         .args([
             "attach",
             "--create-background",
@@ -338,8 +593,9 @@ fn start_zellij_terminal_agent(
             session,
             "pane".to_string(),
             pane,
-            command.to_string(),
+            launch.command.clone(),
         ],
+        cwd: Some(launch.cwd.clone()),
     })
 }
 
@@ -528,6 +784,9 @@ fn render_record(record: &AgentRecord) -> String {
         record.started_at,
         record.command.join(" ")
     );
+    if let Some(cwd) = &record.cwd {
+        let _ = write!(line, "\tcwd={}", cwd.display());
+    }
     if let Some(target) = terminal_target(record) {
         match target {
             TerminalTarget::Tmux { session } => {
@@ -592,6 +851,39 @@ fn shell_join(args: &[String]) -> String {
         .join(" ")
 }
 
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escape = false;
+    for ch in command.chars() {
+        if escape {
+            current.push(ch);
+            escape = false;
+            continue;
+        }
+        if ch == '\\' {
+            escape = true;
+            continue;
+        }
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '\'' || ch == '"' => quote = Some(ch),
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
 fn unix_now() -> Result<u64> {
     Ok(SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -606,6 +898,7 @@ pub struct AgentRecord {
     pub(crate) pid: u32,
     pub(crate) started_at: u64,
     pub(crate) command: Vec<String>,
+    pub(crate) cwd: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -633,6 +926,7 @@ impl AgentState {
                 pid: row.pid,
                 started_at: row.started_at,
                 command: row.command,
+                cwd: row.cwd,
             })
             .collect();
         Ok(Self { records })
@@ -658,6 +952,7 @@ fn parse_record(line: &str) -> Result<AgentRecord> {
             .split('\u{1f}')
             .map(ToString::to_string)
             .collect(),
+        cwd: None,
     })
 }
 
@@ -712,8 +1007,30 @@ mod tests {
             pid: 123,
             started_at: 456,
             command: vec!["sh".to_string(), "-c".to_string(), "echo hi".to_string()],
+            cwd: None,
         };
         assert_eq!(parse_record(&serialize_record(&record)).unwrap(), record);
+    }
+
+    #[test]
+    fn codex_wrappers_use_managed_worktree_launch_cwd() {
+        let temp = tempdir().unwrap();
+        assert!(command_contains_codex_agent("cc1 \"inspect submodules\""));
+        assert!(command_contains_codex_agent(
+            "/home/qqrm/.local/bin/cc2 \"fix context reset\""
+        ));
+        assert!(command_contains_codex_agent("codex3 exec \"audit\""));
+        assert!(!command_contains_codex_agent("printf ok"));
+        assert!(should_open_managed_worktree(true, temp.path()));
+        assert!(!should_open_managed_worktree(false, temp.path()));
+    }
+
+    #[test]
+    fn task_open_output_reports_agent_worktree() {
+        assert_eq!(
+            parse_task_worktree("task-opened\tx\t/tmp/wt\nTASK_WORKTREE=/tmp/wt\n").as_deref(),
+            Some(Path::new("/tmp/wt"))
+        );
     }
 
     #[test]

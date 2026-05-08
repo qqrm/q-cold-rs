@@ -437,23 +437,29 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
         return Ok(());
     }
     let title = title_from_description(&description);
+    let cwd = record.cwd.clone().or_else(|| std::env::current_dir().ok());
+    let managed_task_record_id = cwd.as_deref().and_then(task_record_id_from_worktree);
     let metadata = serde_json::json!({
-        "kind": "agent-ad-hoc",
+        "kind": if managed_task_record_id.is_some() { "managed-agent-task-flow" } else { "agent-ad-hoc" },
         "track": record.track,
         "command": command,
     });
     let record = state::new_task_record(
-        format!("adhoc/{}-{}", record.started_at, slug_from_title(&title)),
-        "agent".to_string(),
+        managed_task_record_id
+            .clone()
+            .unwrap_or_else(|| format!("adhoc/{}-{}", record.started_at, slug_from_title(&title))),
+        if managed_task_record_id.is_some() {
+            "task-flow".to_string()
+        } else {
+            "agent".to_string()
+        },
         title,
         description,
         "open".to_string(),
         repository::active_root()
             .ok()
             .map(|path| path.display().to_string()),
-        std::env::current_dir()
-            .ok()
-            .map(|path| path.display().to_string()),
+        cwd.map(|path| path.display().to_string()),
         Some(record.id.clone()),
         Some(metadata.to_string()),
     );
@@ -480,6 +486,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
         if let Some(path) = existing_record.and_then(codex_session_path_from_task_record) {
             claimed_session_paths.remove(&path);
         }
+        let agent_preferred_cwd = agent.cwd.as_deref().or(preferred_cwd.as_deref());
         let summary =
             if let Some(path) = existing_record.and_then(codex_session_path_from_task_record) {
                 parse_codex_session_summary(Path::new(&path))?
@@ -488,7 +495,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
                     &account,
                     agent.started_at,
                     &claimed_session_paths,
-                    preferred_cwd.as_deref(),
+                    agent_preferred_cwd,
                 )?
             };
         let Some(summary) = summary else {
@@ -520,6 +527,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
         let record_description = existing_record
             .map(|record| record.description.clone())
             .unwrap_or(description);
+        let cwd = agent.cwd.clone().or_else(|| std::env::current_dir().ok());
         let metadata = serde_json::json!({
             "kind": "codex-session-import",
             "agent_id": agent.id.clone(),
@@ -554,9 +562,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             repository::active_root()
                 .ok()
                 .map(|path| path.display().to_string()),
-            std::env::current_dir()
-                .ok()
-                .map(|path| path.display().to_string()),
+            cwd.map(|path| path.display().to_string()),
             Some(agent.id),
             Some(metadata_json),
         );

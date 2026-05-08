@@ -163,6 +163,16 @@ processes but are not safely attachable after the fact. Start agents with
 the same session in the local terminal and in the Q-COLD Terminals view. For a
 local `c2` wrapper, use the command shape
 `qcold agent start --terminal --attach --track c2 -- c2 "<prompt>"`.
+Q-COLD starts Codex-like agent commands (`c1`, `cc1`, `c2`, `cc2`, `codex`,
+and `codexN`) from an explicit launch directory instead of inheriting the
+daemon cwd. If the launch directory is not already a managed task worktree,
+Q-COLD first opens a managed task worktree for that agent, initializes Git
+submodules with `git submodule update --init --recursive` when `.gitmodules`
+is present, and then starts the agent from that worktree. This keeps Codex
+resume and context-compaction fallbacks anchored in the agent's isolated
+worktree instead of the primary checkout. Use `--cwd <path>` to choose the
+launch context explicitly. Set `QCOLD_AGENT_MANAGED_WORKTREE=0` only for
+debugging when this automatic isolation should be bypassed.
 When the wrapped agent exits, the terminal session exits too, so `/q` in an
 attached agent returns to the parent terminal without an extra shell prompt.
 Terminal backend follow-up work is tracked in
