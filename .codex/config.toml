@@ -1,5 +1,4 @@
 model = "gpt-5.5"
-profile = "orchestrator"
 personality = "pragmatic"
 project_doc_max_bytes = 32768
 approval_policy = "never"
@@ -25,60 +24,6 @@ In the final operator-facing summary, state whether the changes are committed an
 [agents]
 max_depth = 1
 max_threads = 3
-
-[profiles.orchestrator]
-model = "gpt-5.5"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-model_reasoning_effort = "high"
-plan_mode_reasoning_effort = "high"
-model_reasoning_summary = "none"
-model_verbosity = "low"
-
-[profiles.architect_planner]
-model = "gpt-5.5"
-approval_policy = "never"
-sandbox_mode = "read-only"
-model_reasoning_effort = "high"
-plan_mode_reasoning_effort = "medium"
-model_reasoning_summary = "none"
-model_verbosity = "low"
-
-[profiles.repo_exec]
-model = "gpt-5.5"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-model_reasoning_effort = "medium"
-plan_mode_reasoning_effort = "low"
-model_reasoning_summary = "none"
-model_verbosity = "low"
-
-[profiles.surgical]
-model = "gpt-5.5"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-model_reasoning_effort = "low"
-plan_mode_reasoning_effort = "minimal"
-model_reasoning_summary = "none"
-model_verbosity = "low"
-
-[profiles.audit]
-model = "gpt-5.5"
-approval_policy = "never"
-sandbox_mode = "read-only"
-model_reasoning_effort = "high"
-plan_mode_reasoning_effort = "medium"
-model_reasoning_summary = "none"
-model_verbosity = "low"
-
-[profiles.ops_guard]
-model = "gpt-5.5"
-approval_policy = "never"
-sandbox_mode = "danger-full-access"
-model_reasoning_effort = "medium"
-plan_mode_reasoning_effort = "low"
-model_reasoning_summary = "none"
-model_verbosity = "low"
 
 [sandbox_workspace_write]
 network_access = true
