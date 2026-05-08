@@ -147,6 +147,11 @@ fn resolve(context: AdapterContext) -> Result<RepositoryConfig> {
                 AdapterContext::CwdManagedWorktree => config_for_managed_worktree(&root),
             };
         }
+        if matches!(context, AdapterContext::CwdManagedWorktree) {
+            if let Some(root) = cwd_managed_worktree_root()? {
+                return config_for_managed_worktree(&root);
+            }
+        }
         return fallback_for_root(&root);
     }
     if let Some(id) = optional_env("QCOLD_ACTIVE_REPO") {
@@ -542,6 +547,14 @@ mod tests {
 
         let repo = for_adapter_context(AdapterContext::CwdManagedWorktree).unwrap();
         assert_eq!(repo.root, canonical_root(&worktree).unwrap());
+
+        env::set_var("QCOLD_REPO_ROOT", &primary);
+        let repo = for_adapter_context(AdapterContext::ActiveRepository).unwrap();
+        assert_eq!(repo.root, canonical_root(&primary).unwrap());
+
+        let repo = for_adapter_context(AdapterContext::CwdManagedWorktree).unwrap();
+        assert_eq!(repo.root, canonical_root(&worktree).unwrap());
+        env::remove_var("QCOLD_REPO_ROOT");
 
         env::set_current_dir(original_cwd).unwrap();
         env::remove_var("QCOLD_STATE_DIR");

@@ -170,16 +170,19 @@ local `c2` wrapper, use the command shape
 Q-COLD starts Codex-like agent commands (`c1`, `cc1`, `c2`, `cc2`, `codex`,
 and `codexN`) from an explicit launch directory instead of inheriting the
 daemon cwd. If the launch directory is not already a managed task worktree,
-Q-COLD first opens a managed task worktree for that agent, initializes Git
-submodules with `git submodule update --init --recursive` when `.gitmodules`
-is present, and then starts the agent from that worktree. This keeps Codex
-resume and context-compaction fallbacks anchored in the agent's isolated
-worktree instead of the primary checkout. Q-COLD also exports the managed
-worktree as `QCOLD_REPO_ROOT` for the launched agent, so active inventory
-commands such as `qcold task list` resolve through the task's primary checkout
-while closeout and other worktree-sensitive commands still run against the
-agent worktree. Use `--cwd <path>` to choose the launch context explicitly.
-Set `QCOLD_AGENT_MANAGED_WORKTREE=0` only for debugging when this automatic
+Q-COLD first creates a persistent agent-owned Git worktree under
+`../WT/<repo>/agents/<agent-id>/`, initializes Git submodules with
+`git submodule update --init --recursive` when `.gitmodules` is present, and
+then starts the agent from that worktree. This keeps Codex resume and
+context-compaction fallbacks anchored in the agent's isolated workspace instead
+of the primary checkout, while task worktrees opened later by the agent remain
+separate and can be closed without deleting the agent workspace. Q-COLD exports
+the primary checkout as `QCOLD_REPO_ROOT` for the launched agent, so active
+inventory commands such as `qcold task list` resolve through the task's primary
+checkout. Worktree-sensitive commands such as `task closeout` still prefer the
+current managed task worktree when the agent has changed into one. Use
+`--cwd <path>` to choose the launch context explicitly. Set
+`QCOLD_AGENT_MANAGED_WORKTREE=0` only for debugging when this automatic
 isolation should be bypassed.
 When the wrapped agent exits, the terminal session exits too, so `/q` in an
 attached agent returns to the parent terminal without an extra shell prompt.

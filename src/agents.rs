@@ -25,11 +25,18 @@ enum TerminalTarget {
 struct Launch {
     command: Vec<String>,
     cwd: PathBuf,
+    qcold_repo_root: Option<PathBuf>,
 }
 
 struct TerminalLaunch {
     command: String,
     cwd: PathBuf,
+    qcold_repo_root: Option<PathBuf>,
+}
+
+struct LaunchContext {
+    cwd: PathBuf,
+    qcold_repo_root: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -177,7 +184,7 @@ fn start_agent(
     let mut process = Command::new(&launch.command[0]);
     process.args(&launch.command[1..]);
     process.current_dir(&launch.cwd);
-    apply_qcold_launch_env(&mut process, &launch.cwd);
+    apply_qcold_launch_env(&mut process, launch.qcold_repo_root.as_deref());
     let child = process
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
@@ -276,10 +283,11 @@ fn prepare_launch(
     command: &[String],
 ) -> Result<Launch> {
     let command_text = shell_join(command);
-    let cwd = prepare_launch_cwd(id, track, started_at, requested_cwd, &command_text)?;
+    let context = prepare_launch_context(id, track, started_at, requested_cwd, &command_text)?;
     Ok(Launch {
         command: command.to_vec(),
-        cwd,
+        cwd: context.cwd,
+        qcold_repo_root: context.qcold_repo_root,
     })
 }
 
@@ -290,19 +298,21 @@ fn prepare_terminal_launch(
     requested_cwd: Option<&Path>,
     command: &str,
 ) -> Result<TerminalLaunch> {
+    let context = prepare_launch_context(id, track, started_at, requested_cwd, command)?;
     Ok(TerminalLaunch {
         command: command.to_string(),
-        cwd: prepare_launch_cwd(id, track, started_at, requested_cwd, command)?,
+        cwd: context.cwd,
+        qcold_repo_root: context.qcold_repo_root,
     })
 }
 
-fn prepare_launch_cwd(
+fn prepare_launch_context(
     id: &str,
     track: &str,
     started_at: u64,
     requested_cwd: Option<&Path>,
     command: &str,
-) -> Result<PathBuf> {
+) -> Result<LaunchContext> {
     let codex_like = command_contains_codex_agent(command);
     let cwd = if let Some(cwd) = requested_cwd {
         canonical_dir(cwd)?
@@ -312,7 +322,10 @@ fn prepare_launch_cwd(
         env::current_dir().context("failed to read current directory")?
     };
     if !should_open_managed_worktree(codex_like, &cwd) {
-        return Ok(cwd);
+        return Ok(LaunchContext {
+            qcold_repo_root: managed_task_root_for(&cwd),
+            cwd,
+        });
     }
 
     open_agent_worktree(id, track, started_at, &cwd)
@@ -391,36 +404,39 @@ fn open_agent_worktree(
     track: &str,
     started_at: u64,
     requested_cwd: &Path,
-) -> Result<PathBuf> {
+) -> Result<LaunchContext> {
     let primary_root = git_root_for(requested_cwd)?;
     let relative_cwd = requested_cwd.strip_prefix(&primary_root).unwrap_or(Path::new(""));
-    let task_slug = agent_task_slug(id, track, started_at);
-    let executable = env::current_exe().context("failed to locate current Q-COLD executable")?;
-    let output = Command::new(executable)
-        .current_dir(&primary_root)
-        .args(["task", "open", &task_slug])
-        .env("QCOLD_REPO_ROOT", &primary_root)
-        .output()
-        .with_context(|| format!("failed to open managed agent worktree for {task_slug}"))?;
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "failed to open managed agent worktree {task_slug}: {}\n{}",
-            output.status,
-            format_command_output(&stdout, &stderr)
-        );
+    let agent_slug = agent_worktree_slug(id, track, started_at);
+    let worktree = agent_worktree_path(&primary_root, &agent_slug)?;
+    if worktree.exists() {
+        bail!("agent worktree already exists: {}", worktree.display());
     }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let worktree = parse_task_worktree(&stdout)
-        .with_context(|| format!("task open did not report TASK_WORKTREE for {task_slug}"))?;
+    fs::create_dir_all(
+        worktree
+            .parent()
+            .context("agent worktree has no parent")?,
+    )?;
+    let worktree_arg = worktree.display().to_string();
+    let status = Command::new("git")
+        .current_dir(&primary_root)
+        .args(["worktree", "add", "--detach", &worktree_arg, "HEAD"])
+        .status()
+        .with_context(|| format!("failed to create agent worktree {agent_slug}"))?;
+    if !status.success() {
+        bail!("failed to create agent worktree {agent_slug}: {status}");
+    }
     ensure_worktree_submodules(&worktree)?;
     let cwd = worktree.join(relative_cwd);
-    if cwd.is_dir() {
-        Ok(cwd)
+    let cwd = if cwd.is_dir() {
+        cwd
     } else {
-        Ok(worktree)
-    }
+        worktree
+    };
+    Ok(LaunchContext {
+        cwd,
+        qcold_repo_root: Some(primary_root),
+    })
 }
 
 fn ensure_worktree_submodules(worktree: &Path) -> Result<()> {
@@ -445,7 +461,7 @@ fn ensure_worktree_submodules(worktree: &Path) -> Result<()> {
     );
 }
 
-fn agent_task_slug(id: &str, track: &str, started_at: u64) -> String {
+fn agent_worktree_slug(id: &str, track: &str, started_at: u64) -> String {
     let id = sanitize_id(id);
     let track = sanitize_id(track);
     let base = if id.is_empty() {
@@ -460,11 +476,14 @@ fn agent_task_slug(id: &str, track: &str, started_at: u64) -> String {
     }
 }
 
-fn parse_task_worktree(output: &str) -> Option<PathBuf> {
-    output
-        .lines()
-        .find_map(|line| line.strip_prefix("TASK_WORKTREE="))
-        .map(PathBuf::from)
+fn agent_worktree_path(primary_root: &Path, agent_slug: &str) -> Result<PathBuf> {
+    Ok(primary_root
+        .parent()
+        .context("repository root has no parent")?
+        .join("WT")
+        .join(primary_root.file_name().context("repository root has no name")?)
+        .join("agents")
+        .join(agent_slug))
 }
 
 fn format_command_output(stdout: &str, stderr: &str) -> String {
@@ -486,7 +505,7 @@ fn start_tmux_terminal_agent(
     ensure_tmux_available()?;
     let session = format!("qcold-{id}");
     let target = format!("{session}:0.0");
-    let env_prefix = terminal_qcold_env_prefix(&launch.cwd)?;
+    let env_prefix = terminal_qcold_env_prefix(launch.qcold_repo_root.as_deref());
     let wrapped = format!(
         "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\"",
         launch.command,
@@ -545,7 +564,7 @@ fn start_zellij_terminal_agent(
 ) -> Result<AgentRecord> {
     ensure_zellij_available()?;
     let session = format!("qcold-{id}");
-    let env_prefix = terminal_qcold_env_prefix(&launch.cwd)?;
+    let env_prefix = terminal_qcold_env_prefix(launch.qcold_repo_root.as_deref());
     let wrapped = format!(
         "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; sleep 0.1; zellij kill-session {} >/dev/null 2>&1 || true; exit \"$status\"",
         launch.command,
@@ -627,20 +646,20 @@ fn zellij_first_terminal_pane(session: &str) -> Result<String> {
         .unwrap_or_else(|| anyhow::anyhow!("zellij session {session} has no terminal pane")))
 }
 
-fn apply_qcold_launch_env(command: &mut Command, cwd: &Path) {
-    if let Some(root) = managed_task_root_for(cwd) {
+fn apply_qcold_launch_env(command: &mut Command, root: Option<&Path>) {
+    if let Some(root) = root {
         command.env("QCOLD_REPO_ROOT", root);
     }
 }
 
-fn terminal_qcold_env_prefix(cwd: &Path) -> Result<String> {
-    let Some(root) = managed_task_root_for(cwd) else {
-        return Ok(String::new());
+fn terminal_qcold_env_prefix(root: Option<&Path>) -> String {
+    let Some(root) = root else {
+        return String::new();
     };
-    Ok(format!(
+    format!(
         "export QCOLD_REPO_ROOT={}; ",
         shell_quote(&root.display().to_string())
-    ))
+    )
 }
 
 fn zellij_first_terminal_pane_once(session: &str) -> Result<String> {
@@ -1032,7 +1051,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_wrappers_use_managed_worktree_launch_cwd() {
+    fn codex_wrappers_use_agent_worktree_launch_cwd() {
         let temp = tempdir().unwrap();
         assert!(command_contains_codex_agent("cc1 \"inspect submodules\""));
         assert!(command_contains_codex_agent(
@@ -1045,11 +1064,63 @@ mod tests {
     }
 
     #[test]
-    fn task_open_output_reports_agent_worktree() {
+    fn agent_worktree_paths_are_separate_from_task_inventory() {
+        let temp = tempdir().unwrap();
+        let primary = temp.path().join("repo");
+        fs::create_dir_all(&primary).unwrap();
         assert_eq!(
-            parse_task_worktree("task-opened\tx\t/tmp/wt\nTASK_WORKTREE=/tmp/wt\n").as_deref(),
-            Some(Path::new("/tmp/wt"))
+            agent_worktree_path(&primary, "agent-c1-123")
+                .unwrap()
+                .strip_prefix(temp.path())
+                .unwrap(),
+            Path::new("WT/repo/agents/agent-c1-123")
         );
+    }
+
+    #[test]
+    fn agent_worktree_creation_does_not_create_task_env() {
+        let temp = tempdir().unwrap();
+        let primary = temp.path().join("repo");
+        fs::create_dir_all(&primary).unwrap();
+        assert!(Command::new("git")
+            .current_dir(&primary)
+            .args(["init"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .current_dir(&primary)
+            .args(["config", "user.name", "tester"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .current_dir(&primary)
+            .args(["config", "user.email", "tester@example.com"])
+            .status()
+            .unwrap()
+            .success());
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        assert!(Command::new("git")
+            .current_dir(&primary)
+            .args(["add", "README.md"])
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .current_dir(&primary)
+            .args(["commit", "-m", "seed"])
+            .status()
+            .unwrap()
+            .success());
+
+        let context = open_agent_worktree("c1-123", "c1", 123, &primary).unwrap();
+        assert_eq!(context.qcold_repo_root.as_deref(), Some(primary.as_path()));
+        assert!(context
+            .cwd
+            .strip_prefix(temp.path().join("WT/repo/agents"))
+            .is_ok());
+        assert!(!context.cwd.join(".task/task.env").exists());
     }
 
     #[test]
