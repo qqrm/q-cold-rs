@@ -26,7 +26,13 @@ use telegram::TelegramArgs;
 use crate::adapter::{BundleAdapter, ProofAdapter, TaskAdapter};
 use crate::repository::{AdapterContext, RepositoryArgs, RepositoryConfig};
 
-const QCOLD_VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " ", env!("QCOLD_BUILD_GIT_HASH"));
+const QCOLD_VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    ".",
+    env!("QCOLD_BUILD_NUMBER"),
+    " ",
+    env!("QCOLD_BUILD_GIT_HASH")
+);
 const DEFAULT_CODEX_TELEMETRY_RETENTION_HOURS: u64 = 48;
 const LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD: u64 = 5_000;
 const MAX_TOOL_OUTPUT_SAMPLES: usize = 5;

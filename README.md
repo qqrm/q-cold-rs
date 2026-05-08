@@ -41,8 +41,11 @@ qcold task open my-task
 `cargo qcold <command>` remains supported for Cargo subcommand compatibility,
 but `qcold <command>` is the primary operator interface.
 Use `qcold --version` or `cargo qcold --version` to check the installed
-operator binary. The reported version includes the Cargo package version plus
-the Git commit hash embedded when that binary was built.
+operator binary. The reported version includes the Cargo package version, a
+monotonic Git commit-count build number, and the Git commit hash embedded when
+that binary was built. A dirty local rebuild reports the next build number so
+changed-but-uncommitted operator binaries are distinguishable from the last
+clean commit build.
 
 ## Task records
 
