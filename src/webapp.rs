@@ -809,7 +809,7 @@ fn dashboard_state() -> DashboardState {
             status::snapshot_for(&PathBuf::from(&root))
         }),
         agents: SnapshotBlock::capture("managed agents", agents::snapshot),
-        task_records: task_record_snapshot(),
+        task_records: task_record_snapshot(&root),
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),
         commands: CommandTemplates {
@@ -820,9 +820,9 @@ fn dashboard_state() -> DashboardState {
     }
 }
 
-fn task_record_snapshot() -> TaskRecordSnapshot {
+fn task_record_snapshot(repo_root: &str) -> TaskRecordSnapshot {
     let sync_error = crate::sync_codex_task_records().err().map(|err| format!("{err:#}"));
-    match state::load_task_records(None, 250) {
+    match state::load_task_records_for_repo(repo_root, None, 250) {
         Ok(rows) => TaskRecordSnapshot::from_rows(rows, sync_error),
         Err(err) => TaskRecordSnapshot {
             count: 0,

@@ -140,12 +140,12 @@ other external supervisors.
 
 The dashboard opens to the meta-agent chat and keeps repository/task/agent
 overview state in a compact always-visible status strip. Its Tasks view shows
-Q-COLD task records from SQLite as separate active and historical sections,
-including open/closed counts, last-24-hour activity, aggregate Codex token
-telemetry, and average closed-task token cost imported from session JSONL
-metadata. Raw managed-worktree status remains available for debugging. It
-streams state and history updates with server-sent events and includes an
-`Auto`/`Dark`/`Light` theme switch stored in browser local storage.
+Q-COLD task records for the active repository from SQLite as separate active
+and historical sections, including open/closed counts, last-24-hour activity,
+aggregate Codex token telemetry, and average closed-task token cost imported
+from session JSONL metadata. Raw managed-worktree status remains available for
+debugging. It streams state and history updates with server-sent events and
+includes an `Auto`/`Dark`/`Light` theme switch stored in browser local storage.
 The web chat displays web-origin messages only, while the meta-agent prompt can
 still use the broader shared local history as context. The Agents view
 separates running Q-COLD tracked agents from host-discovered agent programs:

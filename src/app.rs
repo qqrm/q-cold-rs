@@ -785,6 +785,10 @@ fn sync_task_flow_record_for_worktree(
             None,
         )
     });
+    let original_status = record.status.clone();
+    let original_repo_root = record.repo_root.clone();
+    let original_cwd = record.cwd.clone();
+    let original_metadata_json = record.metadata_json.clone();
     let start = env
         .get("STARTED_AT")
         .and_then(|value| value.parse::<u64>().ok())
@@ -840,14 +844,38 @@ fn sync_task_flow_record_for_worktree(
     } else if let Some(status) = env.get("STATUS") {
         record.status = status.clone();
     }
-    let metadata_json = Value::Object(metadata).to_string();
-    if record.metadata_json.as_deref() == Some(metadata_json.as_str()) {
+    let metadata = Value::Object(metadata);
+    if original_status == record.status
+        && original_repo_root == record.repo_root
+        && original_cwd == record.cwd
+        && original_metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .is_some_and(|existing| task_flow_metadata_equivalent(&existing, &metadata))
+    {
         return Ok(false);
     }
-    record.metadata_json = Some(metadata_json);
+    record.metadata_json = Some(metadata.to_string());
     record.updated_at = unix_now();
     state::upsert_task_record(&record)?;
     Ok(true)
+}
+
+fn task_flow_metadata_equivalent(left: &Value, right: &Value) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    remove_task_flow_capture_timestamp(&mut left);
+    remove_task_flow_capture_timestamp(&mut right);
+    left == right
+}
+
+fn remove_task_flow_capture_timestamp(value: &mut Value) {
+    if let Some(efficiency) = value
+        .get_mut("token_efficiency")
+        .and_then(Value::as_object_mut)
+    {
+        efficiency.remove("captured_at");
+    }
 }
 
 fn task_flow_worktree_for_record(record: &state::TaskRecordRow) -> Option<PathBuf> {
@@ -1827,7 +1855,7 @@ mod tests {
         codex_task_telemetry_for_worktree_in_roots,
         find_codex_session_summary_in_root, parse_codex_session_summary, parse_rfc3339_unix,
         polish_task_text, prompt_from_agent_command, render_token_efficiency, render_token_usage,
-        slug_from_title, unix_now,
+        slug_from_title, task_flow_metadata_equivalent, unix_now,
     };
     use std::collections::HashSet;
     use std::ffi::OsString;
@@ -2079,6 +2107,37 @@ mod tests {
             render_token_efficiency(&efficiency).as_deref(),
             Some("token-efficiency\tsessions=2\tmatched_worktree=1\tmatched_task=1\ttool_output_tokens=7000\tlarge_tool_outputs=1\tlarge_tool_output_tokens=6001\tretention_hours=48\tsource=codex-session-window")
         );
+    }
+
+    #[test]
+    fn task_flow_metadata_equivalence_ignores_capture_timestamp_only() {
+        let left = serde_json::json!({
+            "kind": "managed-task-flow",
+            "token_efficiency": {
+                "source": "codex-session-window",
+                "captured_at": 10,
+                "tool_output_original_tokens": 7000,
+            },
+        });
+        let right = serde_json::json!({
+            "kind": "managed-task-flow",
+            "token_efficiency": {
+                "source": "codex-session-window",
+                "captured_at": 20,
+                "tool_output_original_tokens": 7000,
+            },
+        });
+        assert!(task_flow_metadata_equivalent(&left, &right));
+
+        let changed = serde_json::json!({
+            "kind": "managed-task-flow",
+            "token_efficiency": {
+                "source": "codex-session-window",
+                "captured_at": 20,
+                "tool_output_original_tokens": 7001,
+            },
+        });
+        assert!(!task_flow_metadata_equivalent(&left, &changed));
     }
 
     #[test]

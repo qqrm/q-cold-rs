@@ -436,6 +436,52 @@ pub fn load_task_records(status: Option<&str>, limit: usize) -> Result<Vec<TaskR
     Ok(records)
 }
 
+pub fn load_task_records_for_repo(
+    repo_root: &str,
+    status: Option<&str>,
+    limit: usize,
+) -> Result<Vec<TaskRecordRow>> {
+    let connection = open_db()?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    let mut records = Vec::new();
+    if let Some(status) = status {
+        let mut statement = connection
+            .prepare(
+                "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
+                        repo_root, cwd, agent_id, metadata_json
+                 from tasks
+                 where repo_root = ?1 and status = ?2
+                 order by updated_at_unix desc, id
+                 limit ?3",
+            )
+            .context("failed to prepare repo task record query")?;
+        let rows = statement
+            .query_map(params![repo_root, status, limit], task_record_from_row)
+            .context("failed to query repo task records")?;
+        for row in rows {
+            records.push(row.context("failed to decode repo task record")?);
+        }
+    } else {
+        let mut statement = connection
+            .prepare(
+                "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
+                        repo_root, cwd, agent_id, metadata_json
+                 from tasks
+                 where repo_root = ?1
+                 order by updated_at_unix desc, id
+                 limit ?2",
+            )
+            .context("failed to prepare repo task record query")?;
+        let rows = statement
+            .query_map(params![repo_root, limit], task_record_from_row)
+            .context("failed to query repo task records")?;
+        for row in rows {
+            records.push(row.context("failed to decode repo task record")?);
+        }
+    }
+    Ok(records)
+}
+
 pub fn get_task_record(id: &str) -> Result<Option<TaskRecordRow>> {
     let connection = open_db()?;
     connection
