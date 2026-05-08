@@ -67,12 +67,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function parseAgents(text) {
       const lines = text.trim().split('\n').filter(Boolean);
       const summary = lines[0] ? parseKeyValues(lines[0].split('\t').slice(1)) : { count: '0' };
-      const records = lines.slice(1).map((line) => {
+      const allRecords = lines.slice(1).map((line) => {
         const parts = line.split('\t');
         return { id: parts[1] || 'agent', meta: parseKeyValues(parts.slice(2)) };
       });
-      const runningCount = records.filter((agent) => agent.meta.state === 'running').length;
-      return { count: Number(summary.count || 0), runningCount, records };
+      const records = allRecords.filter((agent) => agent.meta.state === 'running');
+      return { count: Number(summary.count || 0), runningCount: records.length, records };
     }
 
     function badge(status) {
@@ -364,13 +364,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const hostRecords = host.records || [];
       const hostAgentCount = hostRecords.filter((agent) => agent.kind !== 'meta-agent').length;
       const daemonCount = hostRecords.length - hostAgentCount;
-      document.getElementById('agent-count').textContent = `${data.runningCount} running / ${data.count} tracked`;
+      document.getElementById('agent-count').textContent = `${data.runningCount} running`;
       document.getElementById('host-agent-count').textContent = daemonCount
         ? `${hostAgentCount} host / ${daemonCount} daemon`
         : `${hostAgentCount} host`;
       document.getElementById('nav-agents').textContent = String(Math.max(data.runningCount, hostAgentCount));
       if (!data.records.length) {
-        agentList.innerHTML = '<div class="empty">No tracked agents.</div>';
+        agentList.innerHTML = '<div class="empty">No running Q-COLD agents.</div>';
       } else {
         agentList.replaceChildren(...data.records.map((agent) => {
           const node = document.createElement('article');
