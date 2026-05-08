@@ -147,10 +147,12 @@ from session JSONL metadata. Raw managed-worktree status remains available for
 debugging. It streams state and history updates with server-sent events and
 includes an `Auto`/`Dark`/`Light` theme switch stored in browser local storage.
 The web chat displays web-origin messages only, while the meta-agent prompt can
-still use the broader shared local history as context. The Agents view
-separates running Q-COLD tracked agents from host-discovered agent programs:
-native `codex` processes plus the Q-COLD web control daemon. Task-flow helper
-programs such as `xtask` are not counted as agents.
+still use the broader shared local history as context. The Agents view shows
+only currently running Q-COLD tracked agents and separates them from
+host-discovered agent programs: native `codex` processes plus the Q-COLD web
+control daemon. Exited Q-COLD agent records remain available through the CLI
+registry surface, but the dashboard omits them as historical noise. Task-flow
+helper programs such as `xtask` are not counted as agents.
 The Terminals view exposes attachable terminal panes for agent programs,
 captures recent pane output with ANSI color/style attributes, and sends input
 from each terminal card through backend-native paste plus a submit key. The

@@ -812,7 +812,7 @@ fn dashboard_state() -> DashboardState {
         status: SnapshotBlock::capture("task-flow status", || {
             status::snapshot_for(&PathBuf::from(&root))
         }),
-        agents: SnapshotBlock::capture("managed agents", agents::snapshot),
+        agents: SnapshotBlock::capture("running managed agents", agents::running_snapshot),
         task_records: task_record_snapshot(&root),
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),

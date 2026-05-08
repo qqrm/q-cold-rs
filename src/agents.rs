@@ -107,19 +107,39 @@ pub fn run(args: AgentArgs) -> Result<u8> {
 pub fn snapshot() -> Result<String> {
     let _ = crate::sync_codex_task_records();
     let state = AgentState::load()?;
-    if state.records.is_empty() {
-        return Ok("agents\tcount=0\n".to_string());
-    }
+    Ok(render_snapshot(&state.records, SnapshotScope::All))
+}
 
+pub fn running_snapshot() -> Result<String> {
+    let _ = crate::sync_codex_task_records();
+    let state = AgentState::load()?;
+    Ok(render_snapshot(&state.records, SnapshotScope::RunningOnly))
+}
+
+fn render_snapshot(records: &[AgentRecord], scope: SnapshotScope) -> String {
     let metadata = terminal_metadata_by_target().unwrap_or_default();
-    let mut lines = vec![format!("agents\tcount={}", state.records.len())];
-    lines.extend(
-        state
-            .records
-            .iter()
-            .map(|record| render_record(record, &metadata)),
-    );
-    Ok(format!("{}\n", lines.join("\n")))
+    render_snapshot_with_metadata(records, scope, &metadata)
+}
+
+fn render_snapshot_with_metadata(
+    records: &[AgentRecord],
+    scope: SnapshotScope,
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+) -> String {
+    let rendered = records
+        .iter()
+        .filter_map(|record| {
+            let state = process_state(record.pid);
+            if scope == SnapshotScope::RunningOnly && state != "running" {
+                None
+            } else {
+                Some(render_record_with_state(record, metadata, state))
+            }
+        })
+        .collect::<Vec<_>>();
+    let mut lines = vec![format!("agents\tcount={}", rendered.len())];
+    lines.extend(rendered);
+    format!("{}\n", lines.join("\n"))
 }
 
 pub fn snapshot_line(record: &AgentRecord) -> String {
@@ -876,12 +896,20 @@ fn render_record(
     record: &AgentRecord,
     metadata: &HashMap<String, state::TerminalMetadataRow>,
 ) -> String {
+    render_record_with_state(record, metadata, process_state(record.pid))
+}
+
+fn render_record_with_state(
+    record: &AgentRecord,
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+    state: &str,
+) -> String {
     let mut line = format!(
         "agent\t{}\ttrack={}\tpid={}\tstate={}\tstarted_at={}\tcmd={}",
         record.id,
         record.track,
         record.pid,
-        process_state(record.pid),
+        state,
         record.started_at,
         record.command.join(" ")
     );
@@ -1112,6 +1140,12 @@ pub struct TerminalAgentContext {
 
 struct AgentState {
     records: Vec<AgentRecord>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SnapshotScope {
+    All,
+    RunningOnly,
 }
 
 impl AgentState {
@@ -1359,10 +1393,50 @@ mod tests {
     }
 
     #[test]
+    fn running_snapshot_omits_exited_agent_records() {
+        let records = vec![
+            AgentRecord {
+                id: "active-agent".to_string(),
+                track: "unit".to_string(),
+                pid: std::process::id(),
+                started_at: 100,
+                command: vec!["sleep".to_string(), "10".to_string()],
+                cwd: None,
+            },
+            AgentRecord {
+                id: "exited-agent".to_string(),
+                track: "unit".to_string(),
+                pid: u32::MAX,
+                started_at: 101,
+                command: vec!["printf".to_string(), "done".to_string()],
+                cwd: None,
+            },
+        ];
+        let metadata = HashMap::new();
+
+        let snapshot =
+            render_snapshot_with_metadata(&records, SnapshotScope::RunningOnly, &metadata);
+
+        assert!(snapshot.starts_with("agents\tcount=1\n"));
+        assert!(snapshot.contains("agent\tactive-agent\t"));
+        assert!(!snapshot.contains("exited-agent"));
+    }
+
+    #[test]
     fn start_shell_agent_records_process() {
         let temp = tempdir().unwrap();
         env::set_var("QCOLD_STATE_DIR", temp.path());
-        let record = start_shell_agent("unit", "printf ok").unwrap();
+        let record = start_agent(
+            None,
+            "unit".to_string(),
+            vec![
+                "/bin/sh".to_string(),
+                "-c".to_string(),
+                "sleep 1".to_string(),
+            ],
+            Some(temp.path().to_path_buf()),
+        )
+        .unwrap();
         assert!(record.id.starts_with("unit-"));
         let snapshot = snapshot().unwrap();
         assert!(snapshot.contains("agent\tunit-"));

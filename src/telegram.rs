@@ -916,7 +916,7 @@ mod tests {
 
     fn config_with_meta_agent() -> TelegramConfig {
         let mut config = config();
-        config.meta_agent_command = Some("printf handled".to_string());
+        config.meta_agent_command = Some("sh -c 'cat >/dev/null; printf handled'".to_string());
         config
     }
 
