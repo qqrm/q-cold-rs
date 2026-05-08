@@ -377,7 +377,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
           node.className = 'task-card';
           const title = document.createElement('div');
           title.innerHTML = '<div class="task-title"></div><div class="task-path"></div>';
-          title.children[0].textContent = agent.id;
+          title.children[0].textContent = agent.meta.name || agent.id;
           title.children[1].textContent = agent.meta.cmd || '';
           const trackCell = document.createElement('div');
           trackCell.appendChild(badge(agent.meta.track || 'track'));

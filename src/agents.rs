@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
@@ -10,6 +11,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 
 use crate::state;
+
+const AGENT_DISPLAY_NAMES: &[&str] = &["Alex", "Fedor", "Ilya", "Kirill", "Maxim"];
 
 #[derive(Clone, Copy)]
 enum TerminalBackend {
@@ -80,7 +83,7 @@ pub fn run(args: AgentArgs) -> Result<u8> {
             } else {
                 start_agent(args.id, args.track, args.command, args.cwd)?
             };
-            println!("{}", render_record(&record));
+            println!("{}", snapshot_line(&record));
             if args.attach {
                 attach_terminal(&record)?;
             }
@@ -97,13 +100,20 @@ pub fn snapshot() -> Result<String> {
         return Ok("agents\tcount=0\n".to_string());
     }
 
+    let metadata = terminal_metadata_by_target().unwrap_or_default();
     let mut lines = vec![format!("agents\tcount={}", state.records.len())];
-    lines.extend(state.records.iter().map(snapshot_line));
+    lines.extend(
+        state
+            .records
+            .iter()
+            .map(|record| render_record(record, &metadata)),
+    );
     Ok(format!("{}\n", lines.join("\n")))
 }
 
 pub fn snapshot_line(record: &AgentRecord) -> String {
-    render_record(record)
+    let metadata = terminal_metadata_by_target().unwrap_or_default();
+    render_record(record, &metadata)
 }
 
 pub fn terminal_contexts() -> Result<Vec<TerminalAgentContext>> {
@@ -267,6 +277,7 @@ fn start_terminal_agent(
         stdout_log_path: Some(stdout_log_path),
         stderr_log_path: None,
     })?;
+    assign_terminal_display_name(&record)?;
     crate::record_agent_task(&record)?;
     Ok(record)
 }
@@ -850,7 +861,10 @@ fn terminal_command_from_record(command: &[String]) -> String {
     }
 }
 
-fn render_record(record: &AgentRecord) -> String {
+fn render_record(
+    record: &AgentRecord,
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+) -> String {
     let mut line = format!(
         "agent\t{}\ttrack={}\tpid={}\tstate={}\tstarted_at={}\tcmd={}",
         record.id,
@@ -862,6 +876,9 @@ fn render_record(record: &AgentRecord) -> String {
     );
     if let Some(cwd) = &record.cwd {
         let _ = write!(line, "\tcwd={}", cwd.display());
+    }
+    if let Some(name) = terminal_display_name(record, metadata) {
+        let _ = write!(line, "\tname={name}");
     }
     if let Some(target) = terminal_target(record) {
         match target {
@@ -880,6 +897,100 @@ fn render_record(record: &AgentRecord) -> String {
         }
     }
     line
+}
+
+fn assign_terminal_display_name(record: &AgentRecord) -> Result<()> {
+    let Some(target) = terminal_target_key(record) else {
+        return Ok(());
+    };
+    let metadata = terminal_metadata_by_target()?;
+    if metadata
+        .get(&target)
+        .and_then(|metadata| metadata.name.as_deref())
+        .is_some_and(|name| !name.trim().is_empty())
+    {
+        return Ok(());
+    }
+    let used = used_terminal_display_names(&metadata)?;
+    let name = choose_agent_display_name(&record.id, &used);
+    state::save_terminal_metadata(&target, Some(&name), None)
+}
+
+fn terminal_display_name<'a>(
+    record: &AgentRecord,
+    metadata: &'a HashMap<String, state::TerminalMetadataRow>,
+) -> Option<&'a str> {
+    let target = terminal_target_key(record)?;
+    metadata
+        .get(&target)
+        .and_then(|metadata| metadata.name.as_deref())
+        .filter(|name| !name.trim().is_empty())
+}
+
+fn terminal_metadata_by_target() -> Result<HashMap<String, state::TerminalMetadataRow>> {
+    Ok(state::load_terminal_metadata()?
+        .into_iter()
+        .map(|metadata| (metadata.target.clone(), metadata))
+        .collect())
+}
+
+fn used_terminal_display_names(
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+) -> Result<HashSet<String>> {
+    Ok(AgentState::load()?
+        .records
+        .into_iter()
+        .filter(|record| process_state(record.pid) == "running")
+        .filter_map(|record| terminal_display_name(&record, metadata).map(normalize_display_name))
+        .collect())
+}
+
+fn terminal_target_key(record: &AgentRecord) -> Option<String> {
+    match terminal_target(record)? {
+        TerminalTarget::Tmux { session } => Some(format!("{session}:0.0")),
+        TerminalTarget::Zellij { session, pane } => Some(format!("zellij:{session}:{pane}")),
+    }
+}
+
+fn choose_agent_display_name(id: &str, used: &HashSet<String>) -> String {
+    let start = stable_name_offset(id);
+    for round in 0..100 {
+        for offset in 0..AGENT_DISPLAY_NAMES.len() {
+            let name = AGENT_DISPLAY_NAMES[(start + offset) % AGENT_DISPLAY_NAMES.len()];
+            let candidate = if round == 0 {
+                name.to_string()
+            } else {
+                format!("{name} {}", round + 1)
+            };
+            if !used.contains(&normalize_display_name(&candidate)) {
+                return candidate;
+            }
+        }
+    }
+    format!("Agent {}", short_agent_id(id))
+}
+
+fn stable_name_offset(value: &str) -> usize {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    (hash as usize) % AGENT_DISPLAY_NAMES.len()
+}
+
+fn normalize_display_name(value: impl AsRef<str>) -> String {
+    value.as_ref().trim().to_ascii_lowercase()
+}
+
+fn short_agent_id(id: &str) -> String {
+    id.chars()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect()
 }
 
 fn process_state(pid: u32) -> &'static str {
@@ -1192,6 +1303,50 @@ mod tests {
         );
         assert!(prefix.contains("export QCOLD_REPO_ROOT='/workspace/primary';"));
         assert!(prefix.contains("export QCOLD_AGENT_WORKTREE='/workspace/WT/repo/agents/c1';"));
+    }
+
+    #[test]
+    fn agent_display_name_uses_unused_pool_name() {
+        let mut used = HashSet::new();
+        used.insert(normalize_display_name("Alex"));
+        used.insert(normalize_display_name("Fedor"));
+        used.insert(normalize_display_name("Ilya"));
+        used.insert(normalize_display_name("Kirill"));
+        used.insert(normalize_display_name("Maxim"));
+
+        let name = choose_agent_display_name("c1-1234", &used);
+        assert!(name.ends_with(" 2"));
+        assert!(!used.contains(&normalize_display_name(&name)));
+    }
+
+    #[test]
+    fn snapshot_line_includes_terminal_display_name() {
+        let record = AgentRecord {
+            id: "c1-1234".to_string(),
+            track: "c1".to_string(),
+            pid: std::process::id(),
+            started_at: 456,
+            command: vec![
+                "tmux".to_string(),
+                "new-session".to_string(),
+                "-s".to_string(),
+                "qcold-c1-1234".to_string(),
+                "c1 \"inspect\"".to_string(),
+            ],
+            cwd: None,
+        };
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "qcold-c1-1234:0.0".to_string(),
+            state::TerminalMetadataRow {
+                target: "qcold-c1-1234:0.0".to_string(),
+                name: Some("Alex".to_string()),
+                scope: None,
+                updated_at: 123,
+            },
+        );
+
+        assert!(render_record(&record, &metadata).contains("\tname=Alex\t"));
     }
 
     #[test]
