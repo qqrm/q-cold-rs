@@ -929,7 +929,9 @@ fn terminal_closeout_code(outcome: &str, code: u8) -> bool {
 
 fn codex_account_from_agent_command(command: &str) -> Option<String> {
     let lower = command.to_lowercase();
-    if !(lower.contains("c2")
+    if !(lower.contains("c1")
+        || lower.contains("cc1")
+        || lower.contains("c2")
         || lower.contains("cc2")
         || lower.contains("codex")
         || lower.contains("code"))
@@ -941,6 +943,9 @@ fn codex_account_from_agent_command(command: &str) -> Option<String> {
         let Some(name) = Path::new(&word).file_name().and_then(|value| value.to_str()) else {
             continue;
         };
+        if name == "c1" || name == "cc1" {
+            return Some("1".to_string());
+        }
         if name == "c2" || name == "cc2" {
             return Some("2".to_string());
         }
@@ -1607,7 +1612,12 @@ fn agent_command_payload(command: &[String]) -> String {
 
 fn prompt_from_agent_command(command: &str) -> Option<String> {
     let lower = command.to_lowercase();
-    if !(lower.contains("c2") || lower.contains("cc2") || lower.contains("codex")) {
+    if !(lower.contains("c1")
+        || lower.contains("cc1")
+        || lower.contains("c2")
+        || lower.contains("cc2")
+        || lower.contains("codex"))
+    {
         return None;
     }
     let words = shell_words(command);
@@ -1618,7 +1628,12 @@ fn prompt_from_agent_command(command: &str) -> Option<String> {
             let clean = word.trim();
             clean.len() >= 3
                 && !clean.starts_with('-')
+                && clean != "/home/qqrm/.local/bin/c1"
+                && clean != "/home/qqrm/.local/bin/cc1"
                 && clean != "/home/qqrm/.local/bin/c2"
+                && clean != "/home/qqrm/.local/bin/cc2"
+                && clean != "c1"
+                && clean != "cc1"
                 && clean != "c2"
                 && clean != "cc2"
                 && clean != "codex"
@@ -1848,10 +1863,19 @@ mod tests {
                 .as_deref(),
             Some("Добавь CRUD для задач")
         );
+        assert_eq!(
+            prompt_from_agent_command("/home/qqrm/.local/bin/cc1 \"Проверь сабмодули\"")
+                .as_deref(),
+            Some("Проверь сабмодули")
+        );
     }
 
     #[test]
     fn codex_account_is_detected_from_cc2_wrapper() {
+        assert_eq!(
+            codex_account_from_agent_command("/home/qqrm/.local/bin/cc1").as_deref(),
+            Some("1")
+        );
         assert_eq!(
             codex_account_from_agent_command("/home/qqrm/.local/bin/cc2").as_deref(),
             Some("2")

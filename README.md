@@ -59,12 +59,13 @@ Q-COLD task record with source `task-flow`. When that record has a repo-scoped
 `sequence`, Q-COLD passes it to the repository adapter as
 `QCOLD_TASK_SEQUENCE` so managed task anchors can use an operator-sortable
 monotonic number instead of a random-looking suffix. Q-COLD-managed agent starts also
-create an ad-hoc task record when the wrapped `c2`, `cc2`, or `codex` command
+create an ad-hoc task record when the wrapped `c1`, `cc1`, `c2`, `cc2`, or `codex` command
 contains an explicit prompt argument. Interactive prompts typed later inside an
 already-open terminal are imported from Codex session JSONL telemetry under
 `~/.codex-accounts/<slot>/sessions` when task records, agent lists, or the web
-dashboard are refreshed. Local `cc2` and `c2` wrappers are treated as Codex
-account `2`. The importer reads Codex `session_meta`, matches sessions to the
+dashboard are refreshed. Local `cc1` and `c1` wrappers are treated as Codex
+account `1`; local `cc2` and `c2` wrappers are treated as Codex account `2`.
+The importer reads Codex `session_meta`, matches sessions to the
 Q-COLD agent start time and active repository cwd, and does not assign a
 claimed `session_path` to another agent. It stores the polished first
 meaningful user prompt plus the latest Codex token counters in task metadata.
