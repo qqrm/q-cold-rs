@@ -269,6 +269,7 @@ fn closeout_command(args: &CloseoutArgs) -> Result<u8> {
 
 fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     let message = message.context("--message is required for success closeout")?;
+    let agent_worktree = agent_return_worktree();
     ensure_clean(&task.primary_repo_path, "primary checkout")?;
     run_required("cargo", ["fmt", "--check"].map(OsString::from).to_vec())?;
     run_required(
@@ -298,6 +299,19 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     append_event(&task.task_worktree, "task-closeout", "success")?;
     let worktree = task.task_worktree.clone();
     let branch = task.task_branch.clone();
+    if let Some(agent_worktree) = agent_worktree {
+        run_git(&worktree, ["checkout", "--detach"])?;
+        let task_state = worktree.join(".task");
+        if task_state.exists() {
+            fs::remove_dir_all(&task_state)
+                .with_context(|| format!("failed to remove {}", task_state.display()))?;
+        }
+        run_git(&task.primary_repo_path, ["branch", "-d", &branch])?;
+        println!("task-closeout\tsuccess\t{}", task.task_name);
+        println!("task-return\t{}", agent_worktree.display());
+        println!("QCOLD_AGENT_WORKTREE={}", agent_worktree.display());
+        return Ok(0);
+    }
     run_git(
         &task.primary_repo_path,
         ["worktree", "remove", path_arg(&worktree)],
@@ -305,6 +319,16 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     run_git(&task.primary_repo_path, ["branch", "-d", &branch])?;
     println!("task-closeout\tsuccess\t{}", task.task_name);
     Ok(0)
+}
+
+fn agent_return_worktree() -> Option<PathBuf> {
+    let value = std::env::var("QCOLD_AGENT_WORKTREE").ok()?;
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(value))
+    }
 }
 
 fn closeout_non_success(
@@ -737,6 +761,22 @@ mod tests {
         assert_eq!(sequence_anchor(42).as_deref(), Some("042"));
         assert_eq!(sequence_anchor(1001).as_deref(), Some("1001"));
         assert_eq!(sequence_anchor(0), None);
+    }
+
+    #[test]
+    fn agent_return_worktree_reads_nonempty_env() {
+        std::env::remove_var("QCOLD_AGENT_WORKTREE");
+        assert_eq!(agent_return_worktree(), None);
+
+        std::env::set_var("QCOLD_AGENT_WORKTREE", "  ");
+        assert_eq!(agent_return_worktree(), None);
+
+        std::env::set_var("QCOLD_AGENT_WORKTREE", "/workspace/WT/repo/agents/c1");
+        assert_eq!(
+            agent_return_worktree().as_deref(),
+            Some(Path::new("/workspace/WT/repo/agents/c1"))
+        );
+        std::env::remove_var("QCOLD_AGENT_WORKTREE");
     }
 }
 

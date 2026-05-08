@@ -26,17 +26,20 @@ struct Launch {
     command: Vec<String>,
     cwd: PathBuf,
     qcold_repo_root: Option<PathBuf>,
+    qcold_agent_worktree: Option<PathBuf>,
 }
 
 struct TerminalLaunch {
     command: String,
     cwd: PathBuf,
     qcold_repo_root: Option<PathBuf>,
+    qcold_agent_worktree: Option<PathBuf>,
 }
 
 struct LaunchContext {
     cwd: PathBuf,
     qcold_repo_root: Option<PathBuf>,
+    qcold_agent_worktree: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -184,7 +187,11 @@ fn start_agent(
     let mut process = Command::new(&launch.command[0]);
     process.args(&launch.command[1..]);
     process.current_dir(&launch.cwd);
-    apply_qcold_launch_env(&mut process, launch.qcold_repo_root.as_deref());
+    apply_qcold_launch_env(
+        &mut process,
+        launch.qcold_repo_root.as_deref(),
+        launch.qcold_agent_worktree.as_deref(),
+    );
     let child = process
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
@@ -288,6 +295,7 @@ fn prepare_launch(
         command: command.to_vec(),
         cwd: context.cwd,
         qcold_repo_root: context.qcold_repo_root,
+        qcold_agent_worktree: context.qcold_agent_worktree,
     })
 }
 
@@ -303,6 +311,7 @@ fn prepare_terminal_launch(
         command: command.to_string(),
         cwd: context.cwd,
         qcold_repo_root: context.qcold_repo_root,
+        qcold_agent_worktree: context.qcold_agent_worktree,
     })
 }
 
@@ -324,6 +333,7 @@ fn prepare_launch_context(
     if !should_open_managed_worktree(codex_like, &cwd) {
         return Ok(LaunchContext {
             qcold_repo_root: managed_task_root_for(&cwd),
+            qcold_agent_worktree: None,
             cwd,
         });
     }
@@ -431,11 +441,12 @@ fn open_agent_worktree(
     let cwd = if cwd.is_dir() {
         cwd
     } else {
-        worktree
+        worktree.clone()
     };
     Ok(LaunchContext {
         cwd,
         qcold_repo_root: Some(primary_root),
+        qcold_agent_worktree: Some(worktree),
     })
 }
 
@@ -512,7 +523,10 @@ fn start_tmux_terminal_agent(
     ensure_tmux_available()?;
     let session = format!("qcold-{id}");
     let target = format!("{session}:0.0");
-    let env_prefix = terminal_qcold_env_prefix(launch.qcold_repo_root.as_deref());
+    let env_prefix = terminal_qcold_env_prefix(
+        launch.qcold_repo_root.as_deref(),
+        launch.qcold_agent_worktree.as_deref(),
+    );
     let wrapped = format!(
         "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\"",
         launch.command,
@@ -571,7 +585,10 @@ fn start_zellij_terminal_agent(
 ) -> Result<AgentRecord> {
     ensure_zellij_available()?;
     let session = format!("qcold-{id}");
-    let env_prefix = terminal_qcold_env_prefix(launch.qcold_repo_root.as_deref());
+    let env_prefix = terminal_qcold_env_prefix(
+        launch.qcold_repo_root.as_deref(),
+        launch.qcold_agent_worktree.as_deref(),
+    );
     let wrapped = format!(
         "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; sleep 0.1; zellij kill-session {} >/dev/null 2>&1 || true; exit \"$status\"",
         launch.command,
@@ -653,20 +670,34 @@ fn zellij_first_terminal_pane(session: &str) -> Result<String> {
         .unwrap_or_else(|| anyhow::anyhow!("zellij session {session} has no terminal pane")))
 }
 
-fn apply_qcold_launch_env(command: &mut Command, root: Option<&Path>) {
+fn apply_qcold_launch_env(
+    command: &mut Command,
+    root: Option<&Path>,
+    agent_worktree: Option<&Path>,
+) {
     if let Some(root) = root {
         command.env("QCOLD_REPO_ROOT", root);
     }
+    if let Some(agent_worktree) = agent_worktree {
+        command.env("QCOLD_AGENT_WORKTREE", agent_worktree);
+    }
 }
 
-fn terminal_qcold_env_prefix(root: Option<&Path>) -> String {
-    let Some(root) = root else {
-        return String::new();
-    };
-    format!(
-        "export QCOLD_REPO_ROOT={}; ",
-        shell_quote(&root.display().to_string())
-    )
+fn terminal_qcold_env_prefix(root: Option<&Path>, agent_worktree: Option<&Path>) -> String {
+    let mut prefix = String::new();
+    if let Some(root) = root {
+        prefix.push_str(&format!(
+            "export QCOLD_REPO_ROOT={}; ",
+            shell_quote(&root.display().to_string())
+        ));
+    }
+    if let Some(agent_worktree) = agent_worktree {
+        prefix.push_str(&format!(
+            "export QCOLD_AGENT_WORKTREE={}; ",
+            shell_quote(&agent_worktree.display().to_string())
+        ));
+    }
+    prefix
 }
 
 fn zellij_first_terminal_pane_once(session: &str) -> Result<String> {
@@ -1116,6 +1147,10 @@ mod tests {
 
         let context = open_agent_worktree("c1-123", "c1", 123, &primary).unwrap();
         assert_eq!(context.qcold_repo_root.as_deref(), Some(primary.as_path()));
+        assert_eq!(
+            context.qcold_agent_worktree.as_deref(),
+            Some(context.cwd.as_path())
+        );
         assert!(context
             .cwd
             .strip_prefix(temp.path().join("WT/repo/agents"))
@@ -1147,6 +1182,16 @@ mod tests {
 
         let context = open_agent_worktree("c1-submodule", "c1", 456, &primary).unwrap();
         assert!(context.cwd.join("json11/README.md").is_file());
+    }
+
+    #[test]
+    fn terminal_env_prefix_exports_agent_worktree() {
+        let prefix = terminal_qcold_env_prefix(
+            Some(Path::new("/workspace/primary")),
+            Some(Path::new("/workspace/WT/repo/agents/c1")),
+        );
+        assert!(prefix.contains("export QCOLD_REPO_ROOT='/workspace/primary';"));
+        assert!(prefix.contains("export QCOLD_AGENT_WORKTREE='/workspace/WT/repo/agents/c1';"));
     }
 
     #[test]

@@ -178,10 +178,15 @@ then starts the agent from that worktree. This keeps Codex resume and
 context-compaction fallbacks anchored in the agent's isolated workspace instead
 of the primary checkout, while task worktrees opened later by the agent remain
 separate and can be closed without deleting the agent workspace. Q-COLD exports
-the primary checkout as `QCOLD_REPO_ROOT` for the launched agent, so active
-inventory commands such as `qcold task list` resolve through the task's primary
-checkout. Worktree-sensitive commands such as `task closeout` still prefer the
-current managed task worktree when the agent has changed into one. Use
+the primary checkout as `QCOLD_REPO_ROOT` and the agent-owned worktree as
+`QCOLD_AGENT_WORKTREE` for the launched agent, so active inventory commands
+such as `qcold task list` resolve through the task's primary checkout.
+Worktree-sensitive commands such as `task closeout` still prefer the current
+managed task worktree when the agent has changed into one. In that agent
+context, successful task closeout leaves the closed task worktree detached and
+untracked instead of removing the directory from under the live agent process;
+the closeout output prints `task-return <agent-worktree>` so the agent can
+return to its stable workspace before starting another chat or task. Use
 `--cwd <path>` to choose the launch context explicitly. Set
 `QCOLD_AGENT_MANAGED_WORKTREE=0` only for debugging when this automatic
 isolation should be bypassed.

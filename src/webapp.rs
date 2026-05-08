@@ -818,7 +818,7 @@ fn dashboard_state() -> DashboardState {
         terminals: discover_terminal_sessions(),
         commands: CommandTemplates {
             agent_start_template: format!(
-                "/agent_start <track> :: codex exec \"Use the launched agent workspace as your home base for {root}. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree/devcontainer, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless blocked, and return to the agent workspace after task closeout.\""
+                "/agent_start <track> :: codex exec \"Use the launched agent workspace as your home base for {root}. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree/devcontainer, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\""
             ),
         },
     }
