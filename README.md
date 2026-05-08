@@ -205,10 +205,10 @@ Mini Apps require a public HTTPS URL; run the local server behind an HTTPS
 reverse proxy or tunnel before setting `QCOLD_TELEGRAM_WEBAPP_URL`. Plain
 messages in `QCOLD_TELEGRAM_META_CHAT_ID`, or replies in an allowed chat, are
 routed to `QCOLD_META_AGENT_COMMAND` when it is set. If it is unset, Q-COLD
-uses `codex exec --ephemeral --cd <repo> -` from the active repository, so
-Codex session state is not persisted between meta-agent runs. The
-meta-agent prompt includes the latest shared local history entries plus the
-current operator message.
+uses `c1 exec --ephemeral --cd <repo> -` from the active repository, so the
+meta-agent uses the local C1 Codex account while Codex session state is not
+persisted between meta-agent runs. The meta-agent prompt includes the latest
+shared local history entries plus the current operator message.
 
 In a forum supergroup, `/task <description>` creates a per-task topic when the
 bot has permission to manage topics. Q-COLD stores the topic mapping under

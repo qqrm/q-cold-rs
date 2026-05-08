@@ -701,7 +701,7 @@ fn help_text() -> String {
         "/app - show dashboard context",
         "/help - show this help",
         "",
-        "Plain messages start the configured meta-agent command, or `codex exec --ephemeral --cd <repo> -` by default.",
+        "Plain messages start the configured meta-agent command, or `c1 exec --ephemeral --cd <repo> -` by default.",
     ]
     .join("\n")
 }
@@ -756,10 +756,14 @@ fn meta_agent_command() -> Result<String> {
         return Ok(command);
     }
     let cwd = repository::active_root()?;
-    Ok(format!(
-        "codex exec --ephemeral --cd {} -",
+    Ok(default_meta_agent_command(&cwd))
+}
+
+fn default_meta_agent_command(cwd: &Path) -> String {
+    format!(
+        "c1 exec --ephemeral --cd {} -",
         shell_quote(&cwd.display().to_string())
-    ))
+    )
 }
 
 fn shell_quote(value: &str) -> String {
@@ -1753,6 +1757,14 @@ mod tests {
             "--daemon-child".to_string(),
         ];
         assert_eq!(classify_host_agent(&args).as_deref(), Some("meta-agent"));
+    }
+
+    #[test]
+    fn default_meta_agent_command_uses_c1_exec() {
+        assert_eq!(
+            default_meta_agent_command(Path::new("/workspace/repo")),
+            "c1 exec --ephemeral --cd '/workspace/repo' -"
+        );
     }
 
     #[test]

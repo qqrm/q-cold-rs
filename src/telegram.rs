@@ -430,10 +430,14 @@ fn meta_agent_command(configured: Option<&str>) -> Result<String> {
         }
     }
     let cwd = repository::active_root()?;
-    Ok(format!(
-        "codex exec --ephemeral --cd {} -",
+    Ok(default_meta_agent_command(&cwd))
+}
+
+fn default_meta_agent_command(cwd: &PathBuf) -> String {
+    format!(
+        "c1 exec --ephemeral --cd {} -",
         shell_quote(&cwd.display().to_string())
-    ))
+    )
 }
 
 fn shell_quote(value: &str) -> String {
@@ -914,6 +918,14 @@ mod tests {
         let mut config = config();
         config.meta_agent_command = Some("printf handled".to_string());
         config
+    }
+
+    #[test]
+    fn default_meta_agent_command_uses_c1_exec() {
+        assert_eq!(
+            default_meta_agent_command(&PathBuf::from("/workspace/repo")),
+            "c1 exec --ephemeral --cd '/workspace/repo' -"
+        );
     }
 
     fn message(chat_id: i64, text: &str) -> TelegramMessage {
