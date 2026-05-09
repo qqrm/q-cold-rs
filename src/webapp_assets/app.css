@@ -274,12 +274,40 @@
       margin-top: 10px;
     }
     .queue-item {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 8px;
-      align-items: end;
+      position: relative;
     }
     .queue-item textarea { min-height: 112px; }
+    .queue-remove {
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 24px;
+      height: 24px;
+      display: inline-grid;
+      place-items: center;
+      padding: 0;
+      border-radius: 50%;
+      border: 1px solid rgba(180, 35, 24, .35);
+      background: rgba(180, 35, 24, .10);
+      color: var(--bad);
+      font-size: 16px;
+      line-height: 1;
+      font-weight: 800;
+    }
+    .queue-remove:hover {
+      background: var(--bad);
+      color: #ffffff;
+      border-color: var(--bad);
+    }
+    .queue-remove:disabled {
+      display: none;
+    }
+    .queue-stop {
+      display: none;
+    }
+    .queue-stop.visible {
+      display: inline-flex;
+    }
     .queue-status {
       display: grid;
       gap: 6px;
@@ -462,7 +490,7 @@
       .task-card, .task-card.task-record-card { grid-template-columns: 1fr; }
       .task-usage { justify-items: start; text-align: left; }
       .form-grid { grid-template-columns: 1fr; }
-      .queue-item, .queue-step { grid-template-columns: 1fr; }
+      .queue-step { grid-template-columns: 1fr; }
       .terminal-head, .terminal-compose, .terminal-meta-form { grid-template-columns: 1fr; }
       .header-actions { width: 100%; justify-content: space-between; }
       .system-strip {
