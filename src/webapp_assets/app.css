@@ -270,6 +270,15 @@
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .queue-entry { display: block; }
     .queue-entry textarea { min-height: 118px; }
+    .queue-add-actions, .queue-run-actions {
+      justify-content: flex-end;
+    }
+    #run-queue {
+      display: none;
+    }
+    #run-queue.visible {
+      display: inline-flex;
+    }
     .queue-stop {
       display: none;
     }
@@ -302,6 +311,13 @@
     .queue-step-actions button.compact {
       padding: 6px 8px;
       font-size: 12px;
+    }
+    .queue-step-actions button.compact[aria-label^="Move"] {
+      width: 32px;
+      min-width: 32px;
+      padding: 6px 0;
+      font-size: 15px;
+      line-height: 1;
     }
     .queue-step-actions button.danger {
       color: var(--bad);

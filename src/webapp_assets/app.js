@@ -158,6 +158,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       queueInput.disabled = queueRun.running;
       document.getElementById('add-queue-task').disabled = queueRun.running || !queueInput.value.trim();
       document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length;
+      document.getElementById('run-queue').classList.toggle('visible', Boolean(queueItems.length));
       if (!queueItems.length) {
         const empty = document.createElement('div');
         empty.className = 'empty';
@@ -194,9 +195,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function queueItemControls(index) {
       const controls = document.createElement('div');
       controls.className = 'queue-step-actions';
-      const up = queueActionButton('Up', () => moveQueueItem(index, -1));
+      const up = queueActionButton('↑', () => moveQueueItem(index, -1), 'Move task up');
       up.disabled = queueRun.running || index === 0;
-      const down = queueActionButton('Down', () => moveQueueItem(index, 1));
+      const down = queueActionButton('↓', () => moveQueueItem(index, 1), 'Move task down');
       down.disabled = queueRun.running || index === queueItems.length - 1;
       const copy = queueActionButton('Copy prompt', () => copyQueuePrompt(index));
       const remove = queueActionButton('Remove', () => removeQueueItem(index));
@@ -206,11 +207,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return controls;
     }
 
-    function queueActionButton(label, action) {
+    function queueActionButton(label, action, title = label) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'secondary compact';
       button.textContent = label;
+      button.title = title;
+      button.setAttribute('aria-label', title);
       button.addEventListener('click', action);
       return button;
     }
