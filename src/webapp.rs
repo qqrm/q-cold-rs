@@ -816,6 +816,7 @@ fn dashboard_state() -> DashboardState {
         task_records: task_record_snapshot(&root),
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),
+        available_agents: AvailableAgentSnapshot::discover(),
         commands: CommandTemplates {
             agent_start_template: agent_start_template(&root),
         },
@@ -1353,6 +1354,7 @@ struct DashboardState {
     task_records: TaskRecordSnapshot,
     host_agents: HostAgentSnapshot,
     terminals: TerminalSnapshot,
+    available_agents: AvailableAgentSnapshot,
     commands: CommandTemplates,
 }
 
@@ -1588,6 +1590,22 @@ impl SnapshotBlock {
 #[derive(Serialize)]
 struct CommandTemplates {
     agent_start_template: String,
+}
+
+#[derive(Serialize)]
+struct AvailableAgentSnapshot {
+    count: usize,
+    records: Vec<agents::AvailableAgentCommand>,
+}
+
+impl AvailableAgentSnapshot {
+    fn discover() -> Self {
+        let records = agents::available_agent_commands();
+        Self {
+            count: records.len(),
+            records,
+        }
+    }
 }
 
 #[derive(Serialize)]

@@ -10,6 +10,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const hostAgentList = document.getElementById('host-agent-list');
     const terminalList = document.getElementById('terminal-list');
     const queueInput = document.getElementById('queue-input');
+    const queueAgentSelect = document.getElementById('queue-agent');
+    const queueAgentState = document.getElementById('queue-agent-state');
     const queueState = document.getElementById('queue-state');
     const queueStatus = document.getElementById('queue-status');
     const chatLog = document.getElementById('chat-log');
@@ -23,6 +25,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const viewButtons = Array.from(document.querySelectorAll('.nav button'));
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
     const queueStorageKey = 'qcold-task-queue-v4';
+    const queueAgentStorageKey = 'qcold-task-queue-agent-v1';
+    let selectedQueueAgent = localStorage.getItem(queueAgentStorageKey) || '';
     const queueSaved = loadQueueStorage();
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item, status: 'pending', message: '' }));
@@ -138,8 +142,53 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return `Use the launched host-side agent workspace as your home base for ${root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task ${taskSlug} with cargo qcold task open ${taskSlug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: ${item.prompt.trim()} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.`;
     }
 
+    function queueAgentRecords() {
+      return model?.availableAgents?.records || [];
+    }
+
+    function selectedQueueAgentRecord() {
+      const records = queueAgentRecords();
+      return records.find((agent) => agent.command === selectedQueueAgent) || records[0] || null;
+    }
+
+    function renderQueueAgentSelector() {
+      const records = queueAgentRecords();
+      const current = selectedQueueAgent || queueAgentSelect.value;
+      const nextSelected = records.some((agent) => agent.command === current)
+        ? current
+        : (records[0]?.command || '');
+      selectedQueueAgent = nextSelected;
+      queueAgentSelect.replaceChildren(...records.map((agent) => {
+        const option = document.createElement('option');
+        option.value = agent.command;
+        option.textContent = `${agent.command} - ${agent.label}`;
+        option.title = agent.path || agent.command;
+        return option;
+      }));
+      if (!records.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No agent commands found';
+        queueAgentSelect.appendChild(option);
+      }
+      queueAgentSelect.value = selectedQueueAgent;
+      queueAgentSelect.disabled = queueRun.running || !records.length;
+      queueAgentState.textContent = `${records.length} available`;
+      queueAgentState.className = records.length ? 'badge ready' : 'badge warn';
+      if (selectedQueueAgent) localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
+    }
+
+    function queueAgentCommand(prompt) {
+      const agent = selectedQueueAgentRecord();
+      if (!agent) return '';
+      const quotedPrompt = shellQuote(prompt);
+      if (agent.invocation === 'direct') return `${agent.command} ${quotedPrompt}`;
+      return `${agent.command} exec ${quotedPrompt}`;
+    }
+
     function queueCommand(item, index) {
-      return `/agent_start ${queueTrack()} :: codex exec ${shellQuote(taskInstruction(item, index))}`;
+      const command = queueAgentCommand(taskInstruction(item, index));
+      return `/agent_start ${queueTrack()} :: ${command}`;
     }
 
     function queueStatusText(item) {
@@ -156,8 +205,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       queueState.textContent = queueRun.running ? `running ${queueRun.activeIndex + 1}/${queueItems.length}` : 'idle';
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
       queueInput.disabled = queueRun.running;
+      renderQueueAgentSelector();
       document.getElementById('add-queue-task').disabled = queueRun.running || !queueInput.value.trim();
-      document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length;
+      document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length || !selectedQueueAgentRecord();
       document.getElementById('run-queue').classList.toggle('visible', Boolean(queueItems.length));
       if (!queueItems.length) {
         const empty = document.createElement('div');
@@ -795,6 +845,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         taskRecords: state.task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
         hostAgents: state.host_agents || { count: 0, records: [] },
         terminals: state.terminals || { count: 0, records: [] },
+        availableAgents: state.available_agents || { count: 0, records: [] },
       };
       status.textContent = state.status.text;
       agents.textContent = state.agents.text;
@@ -967,6 +1018,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
         const item = queueItems[index];
         queueRun.activeIndex = index;
         if (queueRun.stop || item.status === 'failed') break;
+        if (!selectedQueueAgentRecord()) {
+          item.status = 'failed';
+          item.message = 'no available agent command';
+          renderQueue();
+          break;
+        }
         item.status = 'starting';
         item.message = 'starting clean agent context';
         renderQueue();
@@ -1040,6 +1097,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addQueueTask();
     });
     queueInput.addEventListener('input', renderQueue);
+    queueAgentSelect.addEventListener('change', () => {
+      selectedQueueAgent = queueAgentSelect.value;
+      localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
+      renderQueue();
+    });
     chatInput.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendChat(chatInput.value);
     });

@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
+use serde::Serialize;
 
 use crate::state;
 
@@ -24,6 +25,37 @@ const AGENT_DISPLAY_NAMES: &[&str] = &[
     "Democritus",
     "Heraclitus",
 ];
+
+const KNOWN_AGENT_COMMANDS: &[(&str, &str, AgentInvocation)] = &[
+    ("c1", "Codex account 1", AgentInvocation::Exec),
+    ("cc1", "Codex account 1 compact", AgentInvocation::Direct),
+    ("c2", "Codex account 2", AgentInvocation::Direct),
+    ("cc2", "Codex account 2 compact", AgentInvocation::Direct),
+    ("codex", "Codex default", AgentInvocation::Exec),
+];
+
+#[derive(Clone, Copy)]
+enum AgentInvocation {
+    Exec,
+    Direct,
+}
+
+impl AgentInvocation {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Exec => "exec",
+            Self::Direct => "direct",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct AvailableAgentCommand {
+    pub command: String,
+    pub label: String,
+    pub invocation: &'static str,
+    pub path: String,
+}
 
 #[derive(Clone, Copy)]
 enum TerminalBackend {
@@ -114,6 +146,37 @@ pub fn running_snapshot() -> Result<String> {
     let _ = crate::sync_codex_task_records();
     let state = AgentState::load()?;
     Ok(render_snapshot(&state.records, SnapshotScope::RunningOnly))
+}
+
+pub fn available_agent_commands() -> Vec<AvailableAgentCommand> {
+    let mut commands = Vec::new();
+    let mut seen = HashSet::new();
+    for (command, label, invocation) in KNOWN_AGENT_COMMANDS {
+        if let Some(path) = command_path(command) {
+            seen.insert((*command).to_string());
+            commands.push(AvailableAgentCommand {
+                command: (*command).to_string(),
+                label: (*label).to_string(),
+                invocation: invocation.as_str(),
+                path: path.display().to_string(),
+            });
+        }
+    }
+    for command in discover_numbered_codex_commands() {
+        if !seen.insert(command.clone()) {
+            continue;
+        }
+        if let Some(path) = command_path(&command) {
+            commands.push(AvailableAgentCommand {
+                label: format!("Codex account {}", command.trim_start_matches("codex")),
+                command,
+                invocation: AgentInvocation::Exec.as_str(),
+                path: path.display().to_string(),
+            });
+        }
+    }
+    commands.sort_by(|left, right| agent_command_sort_key(&left.command).cmp(&agent_command_sort_key(&right.command)));
+    commands
 }
 
 fn render_snapshot(records: &[AgentRecord], scope: SnapshotScope) -> String {
@@ -431,6 +494,72 @@ fn is_codex_agent_command(name: &str) -> bool {
         || name
             .strip_prefix("codex")
             .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+}
+
+fn command_path(command: &str) -> Option<PathBuf> {
+    let path = Path::new(command);
+    if path.components().count() > 1 {
+        return executable_file(path).then(|| path.to_path_buf());
+    }
+    env::var_os("PATH")
+        .into_iter()
+        .flat_map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
+        .map(|dir| dir.join(command))
+        .find(|candidate| executable_file(candidate))
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+fn discover_numbered_codex_commands() -> Vec<String> {
+    let mut commands = HashSet::new();
+    if let Some(paths) = env::var_os("PATH") {
+        for dir in env::split_paths(&paths) {
+            let Ok(entries) = fs::read_dir(dir) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let Some(name) = entry.file_name().to_str().map(ToString::to_string) else {
+                    continue;
+                };
+                if name
+                    .strip_prefix("codex")
+                    .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+                    && executable_file(&entry.path())
+                {
+                    commands.insert(name);
+                }
+            }
+        }
+    }
+    commands.into_iter().collect()
+}
+
+fn agent_command_sort_key(command: &str) -> (u8, String) {
+    let rank = match command {
+        "c1" => 0,
+        "cc1" => 1,
+        "c2" => 2,
+        "cc2" => 3,
+        "codex" => 4,
+        _ => 5,
+    };
+    (rank, command.to_string())
 }
 
 fn managed_task_root_for(cwd: &Path) -> Option<PathBuf> {

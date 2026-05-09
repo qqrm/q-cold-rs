@@ -272,6 +272,21 @@
       display: block;
       min-height: 118px;
     }
+    .queue-agent-row {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 10px;
+    }
+    .queue-agent-row label {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
     .queue-add-actions, .queue-run-actions {
       justify-content: flex-end;
     }
@@ -524,6 +539,7 @@
       .task-card, .task-card.task-record-card { grid-template-columns: 1fr; }
       .task-usage { justify-items: start; text-align: left; }
       .form-grid { grid-template-columns: 1fr; }
+      .queue-agent-row { grid-template-columns: 1fr; }
       .queue-step { grid-template-columns: 1fr; }
       .terminal-head, .terminal-compose, .terminal-meta-form { grid-template-columns: 1fr; }
       .header-actions { width: 100%; justify-content: space-between; }
