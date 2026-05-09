@@ -766,7 +766,7 @@ fn meta_agent_command() -> Result<String> {
     if let Some(command) = optional_env("QCOLD_META_AGENT_COMMAND") {
         return Ok(command);
     }
-    let cwd = repository::active_root()?;
+    let cwd = repository::current_or_active_root()?;
     Ok(default_meta_agent_command(&cwd))
 }
 
@@ -1259,7 +1259,7 @@ fn compact_command(args: &[String]) -> String {
 }
 
 fn repository_context() -> RepositoryContext {
-    match repository::active() {
+    match repository::current_or_active() {
         Ok(repo) => repository_context_from_config(repo),
         Err(_) => fallback_repository_context(),
     }

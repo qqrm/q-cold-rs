@@ -180,6 +180,37 @@ pub fn active_root() -> Result<PathBuf> {
     Ok(active()?.root)
 }
 
+pub fn current_or_active() -> Result<RepositoryConfig> {
+    if let Some(repo) = current_checkout_config()? {
+        return Ok(repo);
+    }
+    active()
+}
+
+pub fn current_or_active_root() -> Result<PathBuf> {
+    Ok(current_or_active()?.root)
+}
+
+fn current_checkout_config() -> Result<Option<RepositoryConfig>> {
+    let root = match git_root() {
+        Ok(root) => canonical_root(&root)?,
+        Err(_) => return Ok(None),
+    };
+    current_checkout_config_for_root(&root).map(Some)
+}
+
+fn current_checkout_config_for_root(root: &Path) -> Result<RepositoryConfig> {
+    let root = canonical_root(root)?;
+    if root.join(".task/task.env").is_file() {
+        return config_for_managed_worktree_primary(&root);
+    }
+    if let Some(mut repo) = registered_for_root(&root)? {
+        repo.active = true;
+        return Ok(repo);
+    }
+    fallback_for_root(&root)
+}
+
 fn cwd_managed_worktree_root() -> Result<Option<PathBuf>> {
     match git_root() {
         Ok(root) if root.join(".task/task.env").is_file() => Ok(Some(canonical_root(&root)?)),

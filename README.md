@@ -100,7 +100,10 @@ SQLite database. Adapter-backed commands such as `status`, `task`, `verify`,
 of the daemon process cwd. Worktree-sensitive commands such as `task closeout`,
 `task enter`, `task finalize`, `task iteration-notify`, and validation commands
 run from a managed task worktree use that worktree even when a primary checkout
-is the active repository. If no repository is registered, Q-COLD falls back to
+is the active repository. The web dashboard and Q-COLD-started Codex agents use
+the daemon's current git checkout when the daemon was launched from one, falling
+back to the active repository only when the daemon cwd is not inside a checkout.
+If no repository is registered, Q-COLD falls back to
 the current checkout for development compatibility. `QCOLD_REPO_ROOT` and
 `QCOLD_ACTIVE_REPO` can override the resolved connection for one process.
 

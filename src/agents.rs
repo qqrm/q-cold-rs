@@ -458,7 +458,7 @@ fn resolve_codex_launch_cwd() -> Result<PathBuf> {
         return Ok(current);
     }
 
-    let Ok(active_root) = crate::repository::active_root() else {
+    let Ok(active_root) = crate::repository::current_or_active_root() else {
         return Ok(current);
     };
     if current.starts_with(&active_root) {
