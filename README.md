@@ -157,11 +157,17 @@ debugging. It streams state and history updates with server-sent events and
 includes an `Auto`/`Dark`/`Light` theme switch stored in browser local storage.
 The web chat displays web-origin messages only, while the meta-agent prompt can
 still use the broader shared local history as context. The Agents view shows
-only currently running Q-COLD tracked agents and separates them from
-host-discovered agent programs: native `codex` processes plus the Q-COLD web
-control daemon. Exited Q-COLD agent records remain available through the CLI
-registry surface, but the dashboard omits them as historical noise. Task-flow
-helper programs such as `xtask` are not counted as agents.
+detected local agent commands and their account/auth/limit probe status before
+the running-process sections. Limit probes run through a cached
+`/api/agent-limits` request when the Agents view is opened or refreshed. Q-COLD
+uses each account's base command such as `c1`, `c2`, or `codexN` with
+`exec status`, retries transient failures, and avoids compact `cc*` wrappers so
+probing does not create terminal-agent sessions. The same view shows only
+currently running Q-COLD tracked agents and separates them from host-discovered
+agent programs: native `codex` processes plus the Q-COLD web control daemon.
+Exited Q-COLD agent records remain available through the CLI registry surface,
+but the dashboard omits them as historical noise. Task-flow helper programs
+such as `xtask` are not counted as agents.
 The Terminals view exposes attachable terminal panes for agent programs,
 captures recent pane output with ANSI color/style attributes, and sends input
 from each terminal card through backend-native paste plus a submit key. The

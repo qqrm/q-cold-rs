@@ -378,6 +378,34 @@
     .queue-step.failed { border-left: 4px solid var(--bad); }
     .queue-step.running, .queue-step.starting { border-left: 4px solid var(--info); }
     .queue-step.stopped { border-left: 4px solid var(--warn); }
+    .agent-limit-toolbar {
+      justify-content: flex-start;
+      margin: 0 0 8px;
+    }
+    .agent-command-card {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) minmax(130px, .55fr) minmax(180px, .8fr);
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 11px;
+      background: var(--soft);
+      margin-bottom: 8px;
+      min-width: 0;
+    }
+    .agent-limit-status {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      min-width: 0;
+    }
+    .agent-limit-status span:last-child {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
     pre {
       margin: 0;
       white-space: pre-wrap;
@@ -541,6 +569,8 @@
       .form-grid { grid-template-columns: 1fr; }
       .queue-agent-row { grid-template-columns: 1fr; }
       .queue-step { grid-template-columns: 1fr; }
+      .agent-command-card { grid-template-columns: 1fr; }
+      .agent-limit-status span:last-child { white-space: normal; }
       .terminal-head, .terminal-compose, .terminal-meta-form { grid-template-columns: 1fr; }
       .header-actions { width: 100%; justify-content: space-between; }
       .system-strip {

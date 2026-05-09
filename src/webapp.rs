@@ -1,16 +1,17 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use axum::{
-    extract::Json,
+    extract::{Json, Query},
     http::{
         header::{CACHE_CONTROL, CONTENT_TYPE},
         HeaderMap, StatusCode,
@@ -33,6 +34,10 @@ const DAEMON_STARTUP_CHECKS: usize = 10;
 const DAEMON_STARTUP_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const DAEMON_SHUTDOWN_CHECKS: usize = 50;
 const DAEMON_SHUTDOWN_CHECK_INTERVAL: Duration = Duration::from_millis(100);
+const AGENT_LIMIT_CACHE_TTL: u64 = 600;
+const AGENT_LIMIT_STATUS_ATTEMPTS: usize = 2;
+const AGENT_LIMIT_STATUS_TIMEOUT: u64 = 20;
+static AGENT_LIMIT_CACHE: OnceLock<Mutex<Option<AgentLimitCache>>> = OnceLock::new();
 
 #[derive(Args, Clone)]
 pub struct ServeArgs {
@@ -307,6 +312,7 @@ fn router() -> Router {
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
         .route("/api/state", get(api_state))
+        .route("/api/agent-limits", get(api_agent_limits))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
         .route("/api/history", get(api_history))
@@ -332,6 +338,11 @@ async fn app_js() -> impl IntoResponse {
 
 async fn api_state() -> impl IntoResponse {
     no_store(Json(dashboard_state()))
+}
+
+async fn api_agent_limits(Query(query): Query<AgentLimitQuery>) -> impl IntoResponse {
+    let refresh = query.refresh.as_deref() == Some("true");
+    no_store(Json(agent_limit_snapshot(refresh)))
 }
 
 async fn api_history() -> Response {
@@ -1608,6 +1619,285 @@ impl AvailableAgentSnapshot {
     }
 }
 
+#[derive(Clone)]
+struct AgentLimitCache {
+    generated_at_unix: u64,
+    records: Vec<AgentLimitRecord>,
+}
+
+#[derive(Serialize)]
+struct AgentLimitSnapshot {
+    generated_at_unix: u64,
+    cached: bool,
+    count: usize,
+    records: Vec<AgentLimitRecord>,
+}
+
+#[derive(Clone, Serialize)]
+struct AgentLimitRecord {
+    command: String,
+    account: String,
+    status_command: String,
+    state: String,
+    summary: String,
+    detail: String,
+    checked_at_unix: u64,
+    attempts: usize,
+}
+
+fn agent_limit_snapshot(refresh: bool) -> AgentLimitSnapshot {
+    let now = unix_now();
+    let cache = AGENT_LIMIT_CACHE.get_or_init(|| Mutex::new(None));
+    if !refresh {
+        if let Some(cached) = cache.lock().ok().and_then(|guard| guard.clone()) {
+            if now.saturating_sub(cached.generated_at_unix) < AGENT_LIMIT_CACHE_TTL {
+                return AgentLimitSnapshot {
+                    generated_at_unix: cached.generated_at_unix,
+                    cached: true,
+                    count: cached.records.len(),
+                    records: cached.records,
+                };
+            }
+        }
+    }
+
+    let records = probe_agent_limits();
+    let snapshot = AgentLimitSnapshot {
+        generated_at_unix: now,
+        cached: false,
+        count: records.len(),
+        records: records.clone(),
+    };
+    if let Ok(mut cached) = cache.lock() {
+        *cached = Some(AgentLimitCache {
+            generated_at_unix: now,
+            records,
+        });
+    }
+    snapshot
+}
+
+fn probe_agent_limits() -> Vec<AgentLimitRecord> {
+    let agents = agents::available_agent_commands();
+    let mut probes = BTreeMap::<String, agents::AvailableAgentCommand>::new();
+    for agent in &agents {
+        probes
+            .entry(agent.account.clone())
+            .or_insert_with(|| agent.clone());
+    }
+    let handles = probes
+        .into_values()
+        .map(|agent| thread::spawn(move || (agent.account.clone(), probe_agent_limit(&agent))))
+        .collect::<Vec<_>>();
+    let mut by_account = BTreeMap::new();
+    for handle in handles {
+        if let Ok((account, record)) = handle.join() {
+            by_account.insert(account, record);
+        }
+    }
+    agents
+        .into_iter()
+        .map(|agent| {
+            let Some(record) = by_account.get(&agent.account) else {
+                return unchecked_agent_limit(&agent, "status probe did not return");
+            };
+            AgentLimitRecord {
+                command: agent.command,
+                account: agent.account,
+                status_command: agent.status_command,
+                state: record.state.clone(),
+                summary: record.summary.clone(),
+                detail: record.detail.clone(),
+                checked_at_unix: record.checked_at_unix,
+                attempts: record.attempts,
+            }
+        })
+        .collect()
+}
+
+fn probe_agent_limit(agent: &agents::AvailableAgentCommand) -> AgentLimitRecord {
+    if !agent_auth_file(&agent.account).is_file() {
+        return AgentLimitRecord {
+            command: agent.command.clone(),
+            account: agent.account.clone(),
+            status_command: agent.status_command.clone(),
+            state: "unauthenticated".to_string(),
+            summary: "no auth.json".to_string(),
+            detail: format!("missing {}", agent_auth_file(&agent.account).display()),
+            checked_at_unix: unix_now(),
+            attempts: 0,
+        };
+    }
+    let mut last = None;
+    for attempt in 1..=AGENT_LIMIT_STATUS_ATTEMPTS {
+        let output = run_agent_status_probe(&agent.status_command);
+        let record = classify_agent_status_output(agent, attempt, output);
+        if record.state != "retry" {
+            return record;
+        }
+        last = Some(record);
+    }
+    last.unwrap_or_else(|| unchecked_agent_limit(agent, "status probe was not attempted"))
+}
+
+fn run_agent_status_probe(command: &str) -> io::Result<std::process::Output> {
+    Command::new("timeout")
+        .arg(format!("{AGENT_LIMIT_STATUS_TIMEOUT}s"))
+        .arg(command)
+        .arg("exec")
+        .arg("status")
+        .env("QCOLD_AGENT_MANAGED_WORKTREE", "0")
+        .stdin(Stdio::null())
+        .output()
+}
+
+fn classify_agent_status_output(
+    agent: &agents::AvailableAgentCommand,
+    attempt: usize,
+    output: io::Result<std::process::Output>,
+) -> AgentLimitRecord {
+    let checked_at_unix = unix_now();
+    let output = match output {
+        Ok(output) => output,
+        Err(err) => {
+            return AgentLimitRecord {
+                command: agent.command.clone(),
+                account: agent.account.clone(),
+                status_command: agent.status_command.clone(),
+                state: "error".to_string(),
+                summary: "status probe failed to start".to_string(),
+                detail: err.to_string(),
+                checked_at_unix,
+                attempts: attempt,
+            };
+        }
+    };
+    let text = compact_probe_output(&output);
+    let lower = text.to_lowercase();
+    let code = output.status.code().unwrap_or_default();
+    let timed_out = code == 124;
+    let limited = lower.contains("usage limit")
+        || lower.contains("rate limit")
+        || lower.contains("quota")
+        || (lower.contains("limit") && (lower.contains("reached") || lower.contains("exceeded")));
+    let transient = lower.contains("try again")
+        || lower.contains("temporar")
+        || lower.contains("429")
+        || timed_out;
+    let state = if limited {
+        "limited"
+    } else if timed_out {
+        "timeout"
+    } else if output.status.success() {
+        "ok"
+    } else if transient && attempt < AGENT_LIMIT_STATUS_ATTEMPTS {
+        "retry"
+    } else {
+        "error"
+    };
+    let summary = if limited {
+        extract_relevant_status_line(&text).unwrap_or_else(|| "limit reached".to_string())
+    } else if timed_out {
+        format!("status probe timed out after {AGENT_LIMIT_STATUS_TIMEOUT}s")
+    } else if output.status.success() {
+        extract_relevant_status_line(&text).unwrap_or_else(|| "status probe completed".to_string())
+    } else {
+        extract_relevant_status_line(&text)
+            .unwrap_or_else(|| format!("status probe exited with {}", output.status))
+    };
+    AgentLimitRecord {
+        command: agent.command.clone(),
+        account: agent.account.clone(),
+        status_command: agent.status_command.clone(),
+        state: state.to_string(),
+        summary,
+        detail: truncate_chars(&text, 600),
+        checked_at_unix,
+        attempts: attempt,
+    }
+}
+
+fn compact_probe_output(output: &std::process::Output) -> String {
+    let mut text = String::new();
+    text.push_str(&String::from_utf8_lossy(&output.stdout));
+    if !output.stderr.is_empty() {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&String::from_utf8_lossy(&output.stderr));
+    }
+    strip_ansi(&text)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(80)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn extract_relevant_status_line(text: &str) -> Option<String> {
+    let keywords = [
+        "limit",
+        "remaining",
+        "reset",
+        "quota",
+        "rate",
+        "usage",
+        "try again",
+        "error",
+    ];
+    text.lines()
+        .find(|line| {
+            let lower = line.to_lowercase();
+            keywords.iter().any(|keyword| lower.contains(keyword))
+        })
+        .map(|line| truncate_chars(line.trim(), 160))
+}
+
+fn strip_ansi(text: &str) -> String {
+    let mut result = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\u{1b}' {
+            result.push(ch);
+            continue;
+        }
+        while let Some(next) = chars.next() {
+            if next.is_ascii_alphabetic() || matches!(next, '~' | '\\') {
+                break;
+            }
+        }
+    }
+    result
+}
+
+fn unchecked_agent_limit(
+    agent: &agents::AvailableAgentCommand,
+    summary: impl Into<String>,
+) -> AgentLimitRecord {
+    AgentLimitRecord {
+        command: agent.command.clone(),
+        account: agent.account.clone(),
+        status_command: agent.status_command.clone(),
+        state: "unknown".to_string(),
+        summary: summary.into(),
+        detail: String::new(),
+        checked_at_unix: unix_now(),
+        attempts: 0,
+    }
+}
+
+fn agent_auth_file(account: &str) -> PathBuf {
+    let home = env::var("HOME").unwrap_or_default();
+    if account == "default" {
+        return PathBuf::from(home).join(".codex/auth.json");
+    }
+    PathBuf::from(home)
+        .join(".codex-accounts")
+        .join(account)
+        .join("auth.json")
+}
+
 #[derive(Serialize)]
 struct HostAgentSnapshot {
     count: usize,
@@ -1668,6 +1958,11 @@ impl TerminalPane {
         apply_terminal_details(&mut pane, None, None);
         pane
     }
+}
+
+#[derive(Deserialize)]
+struct AgentLimitQuery {
+    refresh: Option<String>,
 }
 
 #[derive(Deserialize)]

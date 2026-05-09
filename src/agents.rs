@@ -55,6 +55,8 @@ pub struct AvailableAgentCommand {
     pub label: String,
     pub invocation: &'static str,
     pub path: String,
+    pub account: String,
+    pub status_command: String,
 }
 
 #[derive(Clone, Copy)]
@@ -159,6 +161,8 @@ pub fn available_agent_commands() -> Vec<AvailableAgentCommand> {
                 label: (*label).to_string(),
                 invocation: invocation.as_str(),
                 path: path.display().to_string(),
+                account: agent_account_key(command),
+                status_command: status_probe_command(command),
             });
         }
     }
@@ -169,6 +173,8 @@ pub fn available_agent_commands() -> Vec<AvailableAgentCommand> {
         if let Some(path) = command_path(&command) {
             commands.push(AvailableAgentCommand {
                 label: format!("Codex account {}", command.trim_start_matches("codex")),
+                account: agent_account_key(&command),
+                status_command: status_probe_command(&command),
                 command,
                 invocation: AgentInvocation::Exec.as_str(),
                 path: path.display().to_string(),
@@ -560,6 +566,29 @@ fn agent_command_sort_key(command: &str) -> (u8, String) {
         _ => 5,
     };
     (rank, command.to_string())
+}
+
+fn agent_account_key(command: &str) -> String {
+    if matches!(command, "c1" | "cc1") {
+        return "1".to_string();
+    }
+    if matches!(command, "c2" | "cc2") {
+        return "2".to_string();
+    }
+    if let Some(suffix) = command.strip_prefix("codex") {
+        if !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            return suffix.to_string();
+        }
+    }
+    "default".to_string()
+}
+
+fn status_probe_command(command: &str) -> String {
+    match command {
+        "cc1" => "c1".to_string(),
+        "cc2" => "c2".to_string(),
+        _ => command.to_string(),
+    }
 }
 
 fn managed_task_root_for(cwd: &Path) -> Option<PathBuf> {

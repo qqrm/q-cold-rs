@@ -7,6 +7,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const agents = document.getElementById('agents');
     const tasks = document.getElementById('tasks');
     const agentList = document.getElementById('agent-list');
+    const availableAgentList = document.getElementById('available-agent-list');
+    const agentLimitState = document.getElementById('agent-limit-state');
     const hostAgentList = document.getElementById('host-agent-list');
     const terminalList = document.getElementById('terminal-list');
     const queueInput = document.getElementById('queue-input');
@@ -31,6 +33,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item, status: 'pending', message: '' }));
     let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
+    let agentLimits = null;
+    let agentLimitsLoading = false;
 
     function applyTheme(choice) {
       const value = choice || localStorage.getItem('qcold-theme') || 'auto';
@@ -570,6 +574,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function renderAgents() {
       const data = model.agents;
       const host = model.hostAgents;
+      const available = model.availableAgents;
       const hostRecords = host.records || [];
       const hostAgentCount = hostRecords.filter((agent) => agent.kind !== 'meta-agent').length;
       const daemonCount = hostRecords.length - hostAgentCount;
@@ -577,7 +582,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('host-agent-count').textContent = daemonCount
         ? `${hostAgentCount} host / ${daemonCount} daemon`
         : `${hostAgentCount} host`;
-      document.getElementById('nav-agents').textContent = String(Math.max(data.runningCount, hostAgentCount));
+      document.getElementById('nav-agents').textContent = String(Math.max(data.runningCount, hostAgentCount, available.count || 0));
+      renderAvailableAgents();
       if (!data.records.length) {
         agentList.innerHTML = '<div class="empty">No running Q-COLD agents.</div>';
       } else {
@@ -616,6 +622,63 @@ const tg = window.Telegram && window.Telegram.WebApp;
         node.append(title, kindCell, cwdCell);
         return node;
       }));
+    }
+
+    function renderAvailableAgents() {
+      const records = model.availableAgents.records || [];
+      const limits = new Map((agentLimits?.records || []).map((record) => [record.command, record]));
+      const stateText = agentLimitsLoading
+        ? 'checking'
+        : agentLimits
+          ? `${agentLimits.count} checked${agentLimits.cached ? ' / cached' : ''}`
+          : 'not checked';
+      agentLimitState.textContent = stateText;
+      agentLimitState.className = agentLimitsLoading ? 'badge open' : agentLimits ? 'badge ready' : 'badge warn';
+      if (!records.length) {
+        availableAgentList.innerHTML = '<div class="empty">No local agent commands found in PATH.</div>';
+        return;
+      }
+      availableAgentList.replaceChildren(...records.map((agent) => availableAgentCard(agent, limits.get(agent.command))));
+    }
+
+    function availableAgentCard(agent, limit) {
+      const node = document.createElement('article');
+      node.className = 'agent-command-card';
+      const title = document.createElement('div');
+      title.innerHTML = '<div class="task-title"></div><div class="task-path"></div>';
+      title.children[0].textContent = `${agent.command} - ${agent.label}`;
+      title.children[1].textContent = agent.path || '';
+      const meta = document.createElement('div');
+      meta.className = 'task-meta-stack';
+      meta.appendChild(badge(`acct ${agent.account || 'default'}`));
+      meta.appendChild(badge(agent.invocation || 'agent'));
+      const status = document.createElement('div');
+      status.className = 'agent-limit-status';
+      if (limit) {
+        status.appendChild(limitBadge(limit.state));
+        const summary = document.createElement('span');
+        summary.textContent = limit.summary || limit.state;
+        status.appendChild(summary);
+      } else {
+        status.appendChild(limitBadge('unknown'));
+        const summary = document.createElement('span');
+        summary.textContent = 'not checked';
+        status.appendChild(summary);
+      }
+      node.append(title, meta, status);
+      return node;
+    }
+
+    function limitBadge(state) {
+      const span = document.createElement('span');
+      const tone = state === 'limited' || state === 'error' || state === 'unauthenticated'
+        ? 'failed'
+        : state === 'timeout' || state === 'unknown'
+          ? 'warn'
+          : 'ready';
+      span.className = `badge ${tone}`;
+      span.textContent = state || 'unknown';
+      return span;
     }
 
     function renderTerminals() {
@@ -854,6 +917,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       renderAgents();
       renderTerminals();
       renderQueue();
+      if (document.getElementById('view-agents').classList.contains('active') && !agentLimits && !agentLimitsLoading) {
+        window.setTimeout(() => loadAgentLimits(false), 0);
+      }
     }
 
     function setLiveState(label, tone = 'ready') {
@@ -1087,12 +1153,35 @@ const tg = window.Telegram && window.Telegram.WebApp;
           history.replaceState(null, '', `#${next}`);
         }
       }
+      if (next === 'agents' && model) loadAgentLimits(false);
+    }
+
+    async function loadAgentLimits(refresh) {
+      if (!model) return;
+      if (agentLimitsLoading) return;
+      agentLimitsLoading = true;
+      renderAgents();
+      try {
+        const response = await fetch(`/api/agent-limits${refresh ? '?refresh=true' : ''}`, { cache: 'no-store' });
+        agentLimits = await response.json();
+      } catch (err) {
+        agentLimits = {
+          cached: false,
+          count: 0,
+          records: [],
+        };
+        appendLocalMessage('error', `Failed to load agent limits: ${err}`);
+      } finally {
+        agentLimitsLoading = false;
+        renderAgents();
+      }
     }
 
     document.getElementById('send-chat').addEventListener('click', () => sendChat(chatInput.value));
     document.getElementById('add-queue-task').addEventListener('click', addQueueTask);
     document.getElementById('run-queue').addEventListener('click', runQueue);
     document.getElementById('stop-queue').addEventListener('click', stopQueue);
+    document.getElementById('refresh-agent-limits').addEventListener('click', () => loadAgentLimits(true));
     queueInput.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addQueueTask();
     });
