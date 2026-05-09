@@ -110,13 +110,13 @@
               <h2>Task Queue</h2>
               <span class="badge warn" id="queue-state">idle</span>
             </div>
-            <label class="queue-entry">Prompt<textarea id="queue-input" placeholder="Task prompt"></textarea></label>
+            <textarea class="queue-entry" id="queue-input" placeholder="Task prompt" aria-label="Task prompt"></textarea>
             <div class="actions queue-add-actions">
-              <button class="secondary" id="add-queue-task">Add Task</button>
+              <button class="secondary" id="add-queue-task">Add</button>
             </div>
             <div class="queue-status" id="queue-status"></div>
             <div class="actions queue-run-actions">
-              <button id="run-queue">Run Queue</button>
+              <button id="run-queue">Run</button>
               <button class="secondary queue-stop" id="stop-queue">Stop after current</button>
             </div>
           </div>

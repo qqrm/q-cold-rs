@@ -268,10 +268,16 @@
     textarea::placeholder, input::placeholder { color: var(--muted); opacity: .85; }
     textarea { min-height: 96px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .queue-entry { display: block; }
-    .queue-entry textarea { min-height: 118px; }
+    .queue-entry {
+      display: block;
+      min-height: 118px;
+    }
     .queue-add-actions, .queue-run-actions {
       justify-content: flex-end;
+    }
+    .queue-add-actions button, .queue-run-actions button {
+      padding: 7px 10px;
+      font-size: 12px;
     }
     #run-queue {
       display: none;
@@ -292,7 +298,7 @@
     }
     .queue-step {
       display: grid;
-      grid-template-columns: minmax(92px, .4fr) auto minmax(0, 1fr) auto;
+      grid-template-columns: 38px auto minmax(0, 1fr) auto;
       gap: 8px;
       align-items: center;
       border: 1px solid var(--line);
@@ -304,23 +310,49 @@
     .queue-step strong, .queue-step span { overflow-wrap: anywhere; }
     .queue-step-actions {
       display: flex;
-      gap: 6px;
+      gap: 5px;
       justify-content: flex-end;
       flex-wrap: wrap;
     }
     .queue-step-actions button.compact {
-      padding: 6px 8px;
-      font-size: 12px;
-    }
-    .queue-step-actions button.compact[aria-label^="Move"] {
-      width: 32px;
-      min-width: 32px;
-      padding: 6px 0;
-      font-size: 15px;
+      display: inline-grid;
+      place-items: center;
+      width: 28px;
+      min-width: 28px;
+      height: 28px;
+      padding: 0;
+      font-size: 14px;
       line-height: 1;
+    }
+    .queue-step-actions button.icon-copy {
+      position: relative;
+      color: var(--fg);
+    }
+    .queue-step-actions button.icon-copy::before,
+    .queue-step-actions button.icon-copy::after {
+      content: "";
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      border: 1.5px solid currentColor;
+      border-radius: 2px;
+    }
+    .queue-step-actions button.icon-copy::before {
+      transform: translate(-2px, 2px);
+      opacity: .65;
+    }
+    .queue-step-actions button.icon-copy::after {
+      transform: translate(2px, -2px);
+      background: var(--soft);
     }
     .queue-step-actions button.danger {
       color: var(--bad);
+      border-color: rgba(220, 68, 58, .45);
+      background: rgba(220, 68, 58, .08);
+    }
+    .queue-step-actions button.icon-remove {
+      font-size: 18px;
+      font-weight: 700;
     }
     .queue-step-actions button.danger:hover {
       background: var(--bad);
