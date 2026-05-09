@@ -147,8 +147,10 @@ queued prompt through `/agent_start`, with internal agent track and task slug
 names generated automatically. Queue rows can be reordered, removed, or copied
 before execution. The browser-side queue starts the next prompt only after the
 matching task record reaches `closed:success`; any blocked, failed, unknown,
-prematurely exited, or unavailable-agent task stops the remaining queue. Its
-Tasks view
+prematurely exited, or unavailable-agent task stops the remaining queue. Queue
+runtime metadata is stored in browser local storage, so rows keep showing the
+generated `task/<slug>`, selected agent command, agent id, and live task-record
+state after reloads or SSE reconnects. Its Tasks view
 shows Q-COLD task records for the active repository from SQLite as separate active
 and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported

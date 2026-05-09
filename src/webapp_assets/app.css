@@ -323,6 +323,16 @@
       min-width: 0;
     }
     .queue-step strong, .queue-step span { overflow-wrap: anywhere; }
+    .queue-step-message {
+      display: grid;
+      gap: 2px;
+      min-width: 0;
+    }
+    .queue-step-message small {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
     .queue-step-actions {
       display: flex;
       gap: 5px;

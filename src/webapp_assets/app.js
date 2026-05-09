@@ -31,7 +31,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let selectedQueueAgent = localStorage.getItem(queueAgentStorageKey) || '';
     const queueSaved = loadQueueStorage();
     let queueItems = (queueSaved.items || [])
-      .map((item) => ({ ...defaultQueueItem(), ...item, status: 'pending', message: '' }));
+      .map((item) => ({ ...defaultQueueItem(), ...item }));
     let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
     let agentLimits = null;
     let agentLimitsLoading = false;
@@ -105,7 +105,17 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function saveQueueStorage() {
       localStorage.setItem(queueStorageKey, JSON.stringify({
-        items: queueItems.map((item) => ({ id: item.id, prompt: item.prompt })),
+        items: queueItems.map((item) => ({
+          id: item.id,
+          prompt: item.prompt,
+          slug: item.slug,
+          agentId: item.agentId,
+          agentCommand: item.agentCommand,
+          status: item.status,
+          message: item.message,
+          startedAt: item.startedAt,
+          updatedAt: item.updatedAt,
+        })),
       }));
     }
 
@@ -115,8 +125,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
         prompt: '',
         slug: '',
         agentId: '',
+        agentCommand: '',
         status: 'pending',
         message: '',
+        startedAt: 0,
+        updatedAt: 0,
       };
     }
 
@@ -196,12 +209,90 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function queueStatusText(item) {
-      if (item.status === 'starting') return 'starting';
-      if (item.status === 'running') return 'running';
-      if (item.status === 'success') return 'done';
-      if (item.status === 'stopped') return 'stopped';
-      if (item.status === 'failed') return 'failed';
+      const view = queueItemView(item);
+      if (view.status === 'starting') return 'starting';
+      if (view.status === 'running') return 'running';
+      if (view.status === 'success') return 'done';
+      if (view.status === 'stopped') return 'stopped';
+      if (view.status === 'failed') return 'failed';
       return 'waiting';
+    }
+
+    function queueItemView(item) {
+      const task = taskRecordForQueueItem(item);
+      const agentId = item.agentId || task?.agent_id || '';
+      const agentRunning = agentId ? runningAgent(agentId) : false;
+      if (task?.status === 'closed:success') {
+        return {
+          status: 'success',
+          message: 'closed successfully',
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
+      if (task?.status?.startsWith('closed')) {
+        return {
+          status: 'failed',
+          message: task.status,
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
+      if (task?.status === 'open') {
+        return {
+          status: 'running',
+          message: 'task record open',
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
+      if (agentId && agentRunning) {
+        return {
+          status: item.status === 'starting' ? 'starting' : 'running',
+          message: 'agent running',
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
+      if (agentId && ['starting', 'running'].includes(item.status)) {
+        return {
+          status: 'failed',
+          message: 'agent exited before task closeout',
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
+      return {
+        status: item.status || 'pending',
+        message: item.message || item.slug || item.prompt.trim().slice(0, 120) || 'empty prompt',
+        detail: queueItemDetail(item, task, agentId),
+      };
+    }
+
+    function queueItemDetail(item, task, agentId) {
+      const parts = [];
+      if (item.slug) parts.push(`task/${item.slug}`);
+      if (task?.status) parts.push(task.status);
+      if (agentId) parts.push(`agent ${agentId}`);
+      if (item.agentCommand) parts.push(item.agentCommand);
+      return parts.join(' / ');
+    }
+
+    function syncQueueFromSnapshot() {
+      if (!state?.task_records?.records?.length) return;
+      let changed = false;
+      for (const item of queueItems) {
+        const view = queueItemView(item);
+        const task = taskRecordForQueueItem(item);
+        if (task?.agent_id && item.agentId !== task.agent_id) {
+          item.agentId = task.agent_id;
+          changed = true;
+        }
+        if (view.status !== item.status) {
+          item.status = view.status;
+          changed = true;
+        }
+        if (view.message && view.message !== item.message) {
+          item.message = view.message;
+          changed = true;
+        }
+      }
+      if (changed) saveQueueStorage();
     }
 
     function renderQueue() {
@@ -222,13 +313,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
         return;
       }
       queueStatus.replaceChildren(...queueItems.map((item, index) => {
+        const view = queueItemView(item);
         const node = document.createElement('div');
-        node.className = `queue-step ${item.status}`;
+        node.className = `queue-step ${view.status}`;
         const title = document.createElement('strong');
         title.textContent = `#${index + 1}`;
         const statusNode = badge(queueStatusText(item));
         const message = document.createElement('span');
-        message.textContent = item.message || item.slug || item.prompt.trim().slice(0, 120) || 'empty prompt';
+        message.className = 'queue-step-message';
+        const main = document.createElement('span');
+        main.textContent = view.message;
+        message.appendChild(main);
+        if (view.detail) {
+          const detail = document.createElement('small');
+          detail.textContent = view.detail;
+          message.appendChild(detail);
+        }
         const controls = queueItemControls(index);
         node.append(title, statusNode, message, controls);
         return node;
@@ -916,6 +1016,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       renderTasks();
       renderAgents();
       renderTerminals();
+      syncQueueFromSnapshot();
       renderQueue();
       if (document.getElementById('view-agents').classList.contains('active') && !agentLimits && !agentLimitsLoading) {
         window.setTimeout(() => loadAgentLimits(false), 0);
@@ -1078,7 +1179,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
         agentId: '',
         status: item.prompt.trim() ? 'pending' : 'failed',
         message: item.prompt.trim() ? '' : 'empty prompt',
+        agentCommand: selectedQueueAgentRecord()?.command || '',
+        startedAt: Math.floor(Date.now() / 1000),
+        updatedAt: Math.floor(Date.now() / 1000),
       }));
+      saveQueueStorage();
       renderQueue();
       for (let index = 0; index < queueItems.length; index += 1) {
         const item = queueItems[index];
@@ -1087,16 +1192,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
         if (!selectedQueueAgentRecord()) {
           item.status = 'failed';
           item.message = 'no available agent command';
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
           renderQueue();
           break;
         }
         item.status = 'starting';
         item.message = 'starting clean agent context';
+        item.updatedAt = Math.floor(Date.now() / 1000);
+        saveQueueStorage();
         renderQueue();
         const payload = await sendChat(queueCommand(item, index), 'queue');
         if (!payload?.ok) {
           item.status = 'failed';
           item.message = payload?.output || 'failed to start agent';
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
           renderQueue();
           break;
         }
@@ -1104,23 +1215,30 @@ const tg = window.Telegram && window.Telegram.WebApp;
         if (!item.agentId) {
           item.status = 'failed';
           item.message = 'agent start response did not include an agent id';
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
           renderQueue();
           break;
         }
         item.status = 'running';
         item.message = `agent ${item.agentId}`;
+        item.updatedAt = Math.floor(Date.now() / 1000);
+        saveQueueStorage();
         renderQueue();
         const result = await waitForQueueTask(item);
         item.status = result.ok ? 'success' : result.status === 'stopped' ? 'stopped' : 'failed';
         item.message = result.status === 'closed:success'
           ? 'closed successfully'
           : `${result.status}: ${result.message}`;
+        item.updatedAt = Math.floor(Date.now() / 1000);
+        saveQueueStorage();
         renderQueue();
         if (!result.ok) break;
       }
       queueRun.running = false;
       queueRun.stop = false;
       queueRun.activeIndex = -1;
+      saveQueueStorage();
       renderQueue();
       await loadSnapshot();
     }
@@ -1129,6 +1247,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
       queueRun.stop = true;
       if (queueRun.running && queueRun.activeIndex >= 0) {
         queueItems[queueRun.activeIndex].message = 'stop requested; current task is not killed';
+        queueItems[queueRun.activeIndex].updatedAt = Math.floor(Date.now() / 1000);
+        saveQueueStorage();
       }
       renderQueue();
     }
