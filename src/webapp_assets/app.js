@@ -12,7 +12,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const command = document.getElementById('command');
     const track = document.getElementById('track');
     const slug = document.getElementById('slug');
-    const prompt = document.getElementById('prompt');
+    const queueList = document.getElementById('queue-list');
+    const queueState = document.getElementById('queue-state');
+    const queueStatus = document.getElementById('queue-status');
     const chatLog = document.getElementById('chat-log');
     const chatInput = document.getElementById('chat-input');
     const themeButtons = Array.from(document.querySelectorAll('[data-theme-choice]'));
@@ -23,6 +25,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const terminalOutputCache = new Map();
     const viewButtons = Array.from(document.querySelectorAll('.nav button'));
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
+    const queueStorageKey = 'qcold-task-queue';
+    const queueSaved = loadQueueStorage();
+    if (queueSaved.track) track.value = queueSaved.track;
+    if (queueSaved.slug) slug.value = queueSaved.slug;
+    let queueItems = (queueSaved.items && queueSaved.items.length ? queueSaved.items : [defaultQueueItem()])
+      .map((item) => ({ ...defaultQueueItem(), ...item, status: 'pending', message: '' }));
+    let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
 
     function applyTheme(choice) {
       const value = choice || localStorage.getItem('qcold-theme') || 'auto';
@@ -81,6 +90,122 @@ const tg = window.Telegram && window.Telegram.WebApp;
       span.className = `badge ${tone}`;
       span.textContent = status;
       return span;
+    }
+
+    function loadQueueStorage() {
+      try {
+        return JSON.parse(localStorage.getItem(queueStorageKey) || '{}');
+      } catch (_err) {
+        return {};
+      }
+    }
+
+    function saveQueueStorage() {
+      localStorage.setItem(queueStorageKey, JSON.stringify({
+        track: track.value,
+        slug: slug.value,
+        items: queueItems.map((item) => ({ id: item.id, prompt: item.prompt })),
+      }));
+    }
+
+    function defaultQueueItem() {
+      return {
+        id: `queue-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        prompt: 'Continue the next bounded migration slice.',
+        slug: '',
+        agentId: '',
+        status: 'pending',
+        message: '',
+      };
+    }
+
+    function sanitizeSlug(value) {
+      return (value || 'queued-task')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 64) || 'queued-task';
+    }
+
+    function slugForQueueItem(index, runId = queueRun.runId || 'next') {
+      const prefix = sanitizeSlug(slug.value);
+      return `${prefix}-${runId}-${String(index + 1).padStart(2, '0')}`;
+    }
+
+    function shellQuote(value) {
+      return `'${String(value).replace(/'/g, `'\\''`)}'`;
+    }
+
+    function taskInstruction(item, index) {
+      const root = state?.repository?.root || '<repo>';
+      const taskSlug = item.slug || slugForQueueItem(index);
+      return `Use the launched host-side agent workspace as your home base for ${root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task ${taskSlug} with cargo qcold task open ${taskSlug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: ${item.prompt.trim()} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.`;
+    }
+
+    function queueCommand(item, index) {
+      return `/agent_start ${sanitizeSlug(track.value)} :: codex exec ${shellQuote(taskInstruction(item, index))}`;
+    }
+
+    function activeQueueIndex() {
+      const active = queueItems.findIndex((item) => ['starting', 'running'].includes(item.status));
+      if (active !== -1) return active;
+      const next = queueItems.findIndex((item) => item.status === 'pending');
+      return next === -1 ? 0 : next;
+    }
+
+    function updateCommandPreview() {
+      if (document.activeElement === command || !queueItems.length) return;
+      const index = Math.max(0, Math.min(activeQueueIndex(), queueItems.length - 1));
+      command.value = queueCommand(queueItems[index], index);
+    }
+
+    function renderQueue(forceControls = false) {
+      document.getElementById('nav-queue').textContent = String(queueItems.length);
+      queueState.textContent = queueRun.running ? `running ${queueRun.activeIndex + 1}/${queueItems.length}` : 'idle';
+      queueState.className = queueRun.running ? 'badge open' : 'badge warn';
+      queueStatus.replaceChildren(...queueItems.map((item, index) => {
+        const node = document.createElement('div');
+        node.className = `queue-step ${item.status}`;
+        const title = document.createElement('strong');
+        title.textContent = `${index + 1}. ${item.slug || slugForQueueItem(index)}`;
+        const statusNode = badge(item.status);
+        const message = document.createElement('span');
+        message.textContent = item.message || item.prompt.trim().slice(0, 120) || 'empty prompt';
+        node.append(title, statusNode, message);
+        return node;
+      }));
+      if (forceControls || !queueList.contains(document.activeElement)) {
+        queueList.replaceChildren(...queueItems.map((item, index) => {
+          const row = document.createElement('div');
+          row.className = 'queue-item';
+          const label = document.createElement('label');
+          label.textContent = `Prompt ${index + 1}`;
+          const textarea = document.createElement('textarea');
+          textarea.value = item.prompt;
+          textarea.placeholder = 'Task prompt';
+          textarea.disabled = queueRun.running;
+          textarea.addEventListener('input', () => {
+            item.prompt = textarea.value;
+            saveQueueStorage();
+            updateCommandPreview();
+          });
+          label.appendChild(textarea);
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'secondary';
+          remove.textContent = 'Remove';
+          remove.disabled = queueRun.running || queueItems.length === 1;
+          remove.addEventListener('click', () => {
+            queueItems.splice(index, 1);
+            saveQueueStorage();
+            renderQueue(true);
+            updateCommandPreview();
+          });
+          row.append(label, remove);
+          return row;
+        }));
+      }
+      updateCommandPreview();
     }
 
     function formatNumber(value) {
@@ -643,11 +768,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       renderTasks();
       renderAgents();
       renderTerminals();
-      const root = state.repository.root;
-      const nextCommand = `/agent_start ${track.value.trim()} :: codex exec "Use the launched host-side agent workspace as your home base for ${root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task ${slug.value.trim()} with cargo qcold task open ${slug.value.trim()}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: ${prompt.value.trim()} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task."`;
-      if (document.activeElement !== command) {
-        command.value = nextCommand;
-      }
+      renderQueue();
     }
 
     function setLiveState(label, tone = 'ready') {
@@ -686,23 +807,33 @@ const tg = window.Telegram && window.Telegram.WebApp;
       eventSource.onopen = () => setLiveState('Live');
     }
 
-    async function sendChat(text) {
+    async function postChatText(text) {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ text }),
+      });
+      const payload = await response.json();
+      if (!response.ok && payload.ok !== false) {
+        payload.ok = false;
+      }
+      return payload;
+    }
+
+    async function sendChat(text, source = 'web') {
       const trimmed = text.trim();
       if (!trimmed) return;
-      appendLocalMessage('operator', trimmed);
-      chatInput.value = '';
+      appendLocalMessage('operator', trimmed, source);
+      if (source === 'web') chatInput.value = '';
       try {
-        const response = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ text: trimmed }),
-        });
-        const payload = await response.json();
-        appendLocalMessage(payload.ok ? 'assistant' : 'error', payload.output || 'No output');
+        const payload = await postChatText(trimmed);
+        appendLocalMessage(payload.ok ? 'assistant' : 'error', payload.output || 'No output', source);
+        return payload;
       } catch (err) {
-        appendLocalMessage('error', String(err));
+        appendLocalMessage('error', String(err), source);
+        return { ok: false, output: String(err) };
       }
     }
 
@@ -746,10 +877,111 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
     }
 
+    function parseStartedAgentId(output) {
+      const match = String(output || '').match(/^agent\t([^\t\n]+)/m);
+      return match ? match[1] : '';
+    }
+
+    function taskRecordForQueueItem(item) {
+      const records = state?.task_records?.records || [];
+      return records.find((task) => task.id === `task/${item.slug}`);
+    }
+
+    function runningAgent(agentId) {
+      if (!agentId || !model) return true;
+      return (model.agents.records || []).some((agent) => agent.id === agentId);
+    }
+
+    async function waitForQueueTask(item) {
+      for (;;) {
+        if (queueRun.stop) return { ok: false, status: 'stopped', message: 'stopped by operator' };
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+        await loadSnapshot();
+        const task = taskRecordForQueueItem(item);
+        if (task?.status === 'closed:success') {
+          return { ok: true, status: task.status, message: task.title || item.slug };
+        }
+        if (task?.status && task.status.startsWith('closed')) {
+          return { ok: false, status: task.status, message: task.title || item.slug };
+        }
+        if (task?.status === 'open' && item.agentId && !runningAgent(item.agentId)) {
+          return { ok: false, status: 'failed', message: 'agent exited before task closeout' };
+        }
+        if (!task && item.agentId && !runningAgent(item.agentId)) {
+          return { ok: false, status: 'failed', message: 'agent exited before opening task record' };
+        }
+      }
+    }
+
+    async function runQueue() {
+      if (queueRun.running) return;
+      queueRun = {
+        running: true,
+        stop: false,
+        activeIndex: -1,
+        runId: Date.now().toString(36),
+      };
+      queueItems = queueItems.map((item, index) => ({
+        ...item,
+        slug: slugForQueueItem(index, queueRun.runId),
+        agentId: '',
+        status: item.prompt.trim() ? 'pending' : 'failed',
+        message: item.prompt.trim() ? '' : 'empty prompt',
+      }));
+      renderQueue();
+      for (let index = 0; index < queueItems.length; index += 1) {
+        const item = queueItems[index];
+        queueRun.activeIndex = index;
+        if (queueRun.stop || item.status === 'failed') break;
+        item.status = 'starting';
+        item.message = 'starting clean agent context';
+        renderQueue();
+        const payload = await sendChat(queueCommand(item, index), 'queue');
+        if (!payload?.ok) {
+          item.status = 'failed';
+          item.message = payload?.output || 'failed to start agent';
+          renderQueue();
+          break;
+        }
+        item.agentId = parseStartedAgentId(payload.output);
+        if (!item.agentId) {
+          item.status = 'failed';
+          item.message = 'agent start response did not include an agent id';
+          renderQueue();
+          break;
+        }
+        item.status = 'running';
+        item.message = `agent ${item.agentId}`;
+        renderQueue();
+        const result = await waitForQueueTask(item);
+        item.status = result.ok ? 'success' : result.status === 'stopped' ? 'stopped' : 'failed';
+        item.message = result.status === 'closed:success'
+          ? 'closed successfully'
+          : `${result.status}: ${result.message}`;
+        renderQueue();
+        if (!result.ok) break;
+      }
+      queueRun.running = false;
+      queueRun.stop = false;
+      queueRun.activeIndex = -1;
+      renderQueue();
+      await loadSnapshot();
+    }
+
+    function stopQueue() {
+      queueRun.stop = true;
+      if (queueRun.running && queueRun.activeIndex >= 0) {
+        queueItems[queueRun.activeIndex].message = 'stop requested; current task is not killed';
+      }
+      renderQueue();
+    }
+
     function preferredView() {
       const fromHash = window.location.hash.replace(/^#/, '');
+      if (fromHash === 'start') return 'queue';
       if (viewNames.has(fromHash)) return fromHash;
       const stored = localStorage.getItem('qcold-view') || '';
+      if (stored === 'start') return 'queue';
       return viewNames.has(stored) ? stored : 'chat';
     }
 
@@ -776,6 +1008,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
     });
     document.getElementById('send-chat').addEventListener('click', () => sendChat(chatInput.value));
     document.getElementById('send-start-command').addEventListener('click', () => sendChat(command.value));
+    document.getElementById('add-queue-task').addEventListener('click', () => {
+      queueItems.push(defaultQueueItem());
+      saveQueueStorage();
+      renderQueue(true);
+    });
+    document.getElementById('run-queue').addEventListener('click', runQueue);
+    document.getElementById('stop-queue').addEventListener('click', stopQueue);
     chatInput.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendChat(chatInput.value);
     });
@@ -787,9 +1026,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
         setActiveView(button.dataset.view);
       });
     });
-    [track, slug, prompt].forEach((node) => node.addEventListener('input', render));
+    [track, slug].forEach((node) => node.addEventListener('input', () => {
+      saveQueueStorage();
+      render();
+    }));
     applyTheme();
     setActiveView(preferredView(), false);
+    renderQueue();
     connectEvents();
     window.addEventListener('hashchange', () => setActiveView(preferredView()));
     document.addEventListener('visibilitychange', () => {

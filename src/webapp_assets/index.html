@@ -35,7 +35,7 @@
           <button data-view="terminals">Terminals <span class="nav-count" id="nav-terminals">0</span></button>
           <button data-view="tasks">Tasks <span class="nav-count" id="nav-tasks">0</span></button>
           <button data-view="agents">Agents <span class="nav-count" id="nav-agents">0</span></button>
-          <button data-view="start">Start <span class="nav-count">+</span></button>
+          <button data-view="queue">Queue <span class="nav-count" id="nav-queue">0</span></button>
         </nav>
       </aside>
 
@@ -51,7 +51,7 @@
               <label>Message or command<textarea id="chat-input" placeholder="/agent_start review-batch :: codex exec ..."></textarea></label>
               <div class="actions">
                 <button id="send-chat">Send</button>
-                <button class="secondary" id="send-start-command">Send Start Command</button>
+                <button class="secondary" id="send-start-command">Send Active Command</button>
               </div>
             </div>
           </div>
@@ -105,22 +105,26 @@
           </div>
         </section>
 
-        <section class="view" id="view-start">
+        <section class="view" id="view-queue">
           <div class="panel">
             <div class="panel-head">
-              <h2>Start Task</h2>
-              <span class="badge warn">Manual approval</span>
+              <h2>Task Queue</h2>
+              <span class="badge warn" id="queue-state">idle</span>
             </div>
             <div class="form-grid">
               <label>Track<input id="track" value="review-batch"></label>
-              <label>Slug<input id="slug" value="review-batch-next"></label>
+              <label>Slug prefix<input id="slug" value="review-batch"></label>
             </div>
-            <label>Task prompt<textarea id="prompt">Continue the next bounded migration slice.</textarea></label>
+            <div class="queue-list" id="queue-list"></div>
             <textarea id="command" readonly></textarea>
             <div class="actions">
-              <button id="copy">Copy Command</button>
+              <button class="secondary" id="add-queue-task">Add Task</button>
+              <button id="run-queue">Run Queue</button>
+              <button class="secondary" id="stop-queue">Stop</button>
+              <button class="secondary" id="copy">Copy Active Command</button>
               <button class="secondary" id="select-command">Select</button>
             </div>
+            <div class="queue-status" id="queue-status"></div>
           </div>
         </section>
       </div>

@@ -268,6 +268,39 @@
     textarea::placeholder, input::placeholder { color: var(--muted); opacity: .85; }
     textarea { min-height: 96px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .queue-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .queue-item {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+    .queue-item textarea { min-height: 112px; }
+    .queue-status {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .queue-step {
+      display: grid;
+      grid-template-columns: minmax(150px, .7fr) auto minmax(0, 1fr);
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 9px;
+      background: var(--soft);
+      min-width: 0;
+    }
+    .queue-step strong, .queue-step span { overflow-wrap: anywhere; }
+    .queue-step.success { border-left: 4px solid var(--ok); }
+    .queue-step.failed { border-left: 4px solid var(--bad); }
+    .queue-step.running, .queue-step.starting { border-left: 4px solid var(--info); }
+    .queue-step.stopped { border-left: 4px solid var(--warn); }
     pre {
       margin: 0;
       white-space: pre-wrap;
@@ -429,6 +462,7 @@
       .task-card, .task-card.task-record-card { grid-template-columns: 1fr; }
       .task-usage { justify-items: start; text-align: left; }
       .form-grid { grid-template-columns: 1fr; }
+      .queue-item, .queue-step { grid-template-columns: 1fr; }
       .terminal-head, .terminal-compose, .terminal-meta-form { grid-template-columns: 1fr; }
       .header-actions { width: 100%; justify-content: space-between; }
       .system-strip {
