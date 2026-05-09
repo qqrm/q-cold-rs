@@ -9,7 +9,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const agentList = document.getElementById('agent-list');
     const hostAgentList = document.getElementById('host-agent-list');
     const terminalList = document.getElementById('terminal-list');
-    const queueList = document.getElementById('queue-list');
+    const queueInput = document.getElementById('queue-input');
     const queueState = document.getElementById('queue-state');
     const queueStatus = document.getElementById('queue-status');
     const chatLog = document.getElementById('chat-log');
@@ -22,9 +22,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const terminalOutputCache = new Map();
     const viewButtons = Array.from(document.querySelectorAll('.nav button'));
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
-    const queueStorageKey = 'qcold-task-queue-v3';
+    const queueStorageKey = 'qcold-task-queue-v4';
     const queueSaved = loadQueueStorage();
-    let queueItems = (queueSaved.items && queueSaved.items.length ? queueSaved.items : [defaultQueueItem()])
+    let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item, status: 'pending', message: '' }));
     let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
 
@@ -151,12 +151,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return 'waiting';
     }
 
-    function renderQueue(forceControls = false) {
+    function renderQueue() {
       document.getElementById('nav-queue').textContent = String(queueItems.length);
       queueState.textContent = queueRun.running ? `running ${queueRun.activeIndex + 1}/${queueItems.length}` : 'idle';
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
-      const visibleStatus = queueRun.running || queueItems.some((item) => item.status !== 'pending' || item.message);
-      queueStatus.replaceChildren(...(visibleStatus ? queueItems.map((item, index) => {
+      queueInput.disabled = queueRun.running;
+      document.getElementById('add-queue-task').disabled = queueRun.running || !queueInput.value.trim();
+      document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length;
+      if (!queueItems.length) {
+        const empty = document.createElement('div');
+        empty.className = 'empty';
+        empty.textContent = 'No queued tasks.';
+        queueStatus.replaceChildren(empty);
+        document.getElementById('stop-queue').classList.toggle('visible', queueRun.running);
+        return;
+      }
+      queueStatus.replaceChildren(...queueItems.map((item, index) => {
         const node = document.createElement('div');
         node.className = `queue-step ${item.status}`;
         const title = document.createElement('strong');
@@ -164,42 +174,68 @@ const tg = window.Telegram && window.Telegram.WebApp;
         const statusNode = badge(queueStatusText(item));
         const message = document.createElement('span');
         message.textContent = item.message || item.slug || item.prompt.trim().slice(0, 120) || 'empty prompt';
-        node.append(title, statusNode, message);
+        const controls = queueItemControls(index);
+        node.append(title, statusNode, message, controls);
         return node;
-      }) : []));
-      if (forceControls || !queueList.contains(document.activeElement)) {
-        queueList.replaceChildren(...queueItems.map((item, index) => {
-          const row = document.createElement('div');
-          row.className = 'queue-item';
-          row.dataset.index = String(index);
-          const label = document.createElement('label');
-          label.textContent = `Prompt ${index + 1}`;
-          const textarea = document.createElement('textarea');
-          textarea.value = item.prompt;
-          textarea.placeholder = 'Task prompt';
-          textarea.disabled = queueRun.running;
-          textarea.addEventListener('input', () => {
-            item.prompt = textarea.value;
-            saveQueueStorage();
-          });
-          label.appendChild(textarea);
-          const remove = document.createElement('button');
-          remove.type = 'button';
-          remove.className = 'queue-remove';
-          remove.title = `Remove prompt ${index + 1}`;
-          remove.setAttribute('aria-label', `Remove prompt ${index + 1}`);
-          remove.textContent = 'x';
-          remove.disabled = queueRun.running || queueItems.length === 1;
-          remove.addEventListener('click', () => {
-            queueItems.splice(index, 1);
-            saveQueueStorage();
-            renderQueue(true);
-          });
-          row.append(label, remove);
-          return row;
-        }));
-      }
+      }));
       document.getElementById('stop-queue').classList.toggle('visible', queueRun.running);
+    }
+
+    function addQueueTask() {
+      const prompt = queueInput.value.trim();
+      if (!prompt || queueRun.running) return;
+      queueItems.push({ ...defaultQueueItem(), prompt });
+      queueInput.value = '';
+      saveQueueStorage();
+      renderQueue();
+      queueInput.focus();
+    }
+
+    function queueItemControls(index) {
+      const controls = document.createElement('div');
+      controls.className = 'queue-step-actions';
+      const up = queueActionButton('Up', () => moveQueueItem(index, -1));
+      up.disabled = queueRun.running || index === 0;
+      const down = queueActionButton('Down', () => moveQueueItem(index, 1));
+      down.disabled = queueRun.running || index === queueItems.length - 1;
+      const copy = queueActionButton('Copy prompt', () => copyQueuePrompt(index));
+      const remove = queueActionButton('Remove', () => removeQueueItem(index));
+      remove.classList.add('danger');
+      remove.disabled = queueRun.running;
+      controls.append(up, down, copy, remove);
+      return controls;
+    }
+
+    function queueActionButton(label, action) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'secondary compact';
+      button.textContent = label;
+      button.addEventListener('click', action);
+      return button;
+    }
+
+    function moveQueueItem(index, delta) {
+      const next = index + delta;
+      if (next < 0 || next >= queueItems.length || queueRun.running) return;
+      const [item] = queueItems.splice(index, 1);
+      queueItems.splice(next, 0, item);
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function removeQueueItem(index) {
+      if (queueRun.running) return;
+      queueItems.splice(index, 1);
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    async function copyQueuePrompt(index) {
+      const text = queueItems[index]?.prompt || '';
+      if (!text) return;
+      await navigator.clipboard.writeText(text);
+      if (tg) tg.showAlert('Prompt copied');
     }
 
     function formatNumber(value) {
@@ -908,7 +944,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     async function runQueue() {
-      if (queueRun.running) return;
+      if (queueRun.running || !queueItems.length) return;
       queueRun = {
         running: true,
         stop: false,
@@ -993,13 +1029,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     document.getElementById('send-chat').addEventListener('click', () => sendChat(chatInput.value));
-    document.getElementById('add-queue-task').addEventListener('click', () => {
-      queueItems.push(defaultQueueItem());
-      saveQueueStorage();
-      renderQueue(true);
-    });
+    document.getElementById('add-queue-task').addEventListener('click', addQueueTask);
     document.getElementById('run-queue').addEventListener('click', runQueue);
     document.getElementById('stop-queue').addEventListener('click', stopQueue);
+    queueInput.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addQueueTask();
+    });
+    queueInput.addEventListener('input', renderQueue);
     chatInput.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendChat(chatInput.value);
     });

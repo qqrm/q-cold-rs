@@ -268,40 +268,8 @@
     textarea::placeholder, input::placeholder { color: var(--muted); opacity: .85; }
     textarea { min-height: 96px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
     .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .queue-list {
-      display: grid;
-      gap: 10px;
-      margin-top: 10px;
-    }
-    .queue-item {
-      position: relative;
-    }
-    .queue-item textarea { min-height: 112px; }
-    .queue-remove {
-      position: absolute;
-      top: 0;
-      right: 0;
-      width: 24px;
-      height: 24px;
-      display: inline-grid;
-      place-items: center;
-      padding: 0;
-      border-radius: 50%;
-      border: 1px solid rgba(180, 35, 24, .35);
-      background: rgba(180, 35, 24, .10);
-      color: var(--bad);
-      font-size: 16px;
-      line-height: 1;
-      font-weight: 800;
-    }
-    .queue-remove:hover {
-      background: var(--bad);
-      color: #ffffff;
-      border-color: var(--bad);
-    }
-    .queue-remove:disabled {
-      display: none;
-    }
+    .queue-entry { display: block; }
+    .queue-entry textarea { min-height: 118px; }
     .queue-stop {
       display: none;
     }
@@ -315,7 +283,7 @@
     }
     .queue-step {
       display: grid;
-      grid-template-columns: minmax(150px, .7fr) auto minmax(0, 1fr);
+      grid-template-columns: minmax(92px, .4fr) auto minmax(0, 1fr) auto;
       gap: 8px;
       align-items: center;
       border: 1px solid var(--line);
@@ -325,6 +293,24 @@
       min-width: 0;
     }
     .queue-step strong, .queue-step span { overflow-wrap: anywhere; }
+    .queue-step-actions {
+      display: flex;
+      gap: 6px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .queue-step-actions button.compact {
+      padding: 6px 8px;
+      font-size: 12px;
+    }
+    .queue-step-actions button.danger {
+      color: var(--bad);
+    }
+    .queue-step-actions button.danger:hover {
+      background: var(--bad);
+      color: #ffffff;
+      border-color: var(--bad);
+    }
     .queue-step.success { border-left: 4px solid var(--ok); }
     .queue-step.failed { border-left: 4px solid var(--bad); }
     .queue-step.running, .queue-step.starting { border-left: 4px solid var(--info); }

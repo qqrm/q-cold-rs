@@ -140,11 +140,13 @@ other external supervisors.
 
 The dashboard opens to the meta-agent chat and keeps repository/task/agent
 overview state in a compact always-visible status strip. Its Queue view accepts
-one or more task prompts and starts one fresh Q-COLD terminal agent per prompt
-through `/agent_start`, with internal agent track and task slug names generated
-automatically. The browser-side queue starts the next prompt only after the
-matching task record reaches `closed:success`; any blocked, failed, unknown, or
-prematurely exited task stops the remaining queue. Its Tasks view
+one task prompt at a time, appends it to a visible ordered queue, and starts one
+fresh Q-COLD terminal agent per queued prompt through `/agent_start`, with
+internal agent track and task slug names generated automatically. Queue rows can
+be reordered, removed, or copied before execution. The browser-side queue starts
+the next prompt only after the matching task record reaches `closed:success`;
+any blocked, failed, unknown, or prematurely exited task stops the remaining
+queue. Its Tasks view
 shows Q-COLD task records for the active repository from SQLite as separate active
 and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported
