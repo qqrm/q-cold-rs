@@ -9,8 +9,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const agentList = document.getElementById('agent-list');
     const hostAgentList = document.getElementById('host-agent-list');
     const terminalList = document.getElementById('terminal-list');
-    const track = document.getElementById('track');
-    const slug = document.getElementById('slug');
     const queueList = document.getElementById('queue-list');
     const queueState = document.getElementById('queue-state');
     const queueStatus = document.getElementById('queue-status');
@@ -24,10 +22,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const terminalOutputCache = new Map();
     const viewButtons = Array.from(document.querySelectorAll('.nav button'));
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
-    const queueStorageKey = 'qcold-task-queue-v2';
+    const queueStorageKey = 'qcold-task-queue-v3';
     const queueSaved = loadQueueStorage();
-    if (queueSaved.track) track.value = queueSaved.track;
-    if (queueSaved.slug) slug.value = queueSaved.slug;
     let queueItems = (queueSaved.items && queueSaved.items.length ? queueSaved.items : [defaultQueueItem()])
       .map((item) => ({ ...defaultQueueItem(), ...item, status: 'pending', message: '' }));
     let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
@@ -101,8 +97,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function saveQueueStorage() {
       localStorage.setItem(queueStorageKey, JSON.stringify({
-        track: track.value,
-        slug: slug.value,
         items: queueItems.map((item) => ({ id: item.id, prompt: item.prompt })),
       }));
     }
@@ -127,8 +121,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function slugForQueueItem(index, runId = queueRun.runId || 'next') {
-      const prefix = sanitizeSlug(slug.value);
-      return `${prefix}-${runId}-${String(index + 1).padStart(2, '0')}`;
+      return `task-${runId}-${String(index + 1).padStart(2, '0')}`;
+    }
+
+    function queueTrack(runId = queueRun.runId || 'next') {
+      return `queue-${sanitizeSlug(runId)}`;
     }
 
     function shellQuote(value) {
@@ -142,7 +139,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function queueCommand(item, index) {
-      return `/agent_start ${sanitizeSlug(track.value)} :: codex exec ${shellQuote(taskInstruction(item, index))}`;
+      return `/agent_start ${queueTrack()} :: codex exec ${shellQuote(taskInstruction(item, index))}`;
     }
 
     function queueStatusText(item) {
@@ -1014,10 +1011,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
         setActiveView(button.dataset.view);
       });
     });
-    [track, slug].forEach((node) => node.addEventListener('input', () => {
-      saveQueueStorage();
-      render();
-    }));
     applyTheme();
     setActiveView(preferredView(), false);
     renderQueue();
