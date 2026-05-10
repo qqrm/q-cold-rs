@@ -288,7 +288,7 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     let message = message.context("--message is required for success closeout")?;
     let agent_worktree = agent_return_worktree();
     ensure_clean(&task.primary_repo_path, "primary checkout")?;
-    run_local_preflight(&[])?;
+    run_preflight(PreflightProfile::default())?;
     if !git_output(&task.task_worktree, ["status", "--porcelain"])?.is_empty() {
         run_git(&task.task_worktree, ["add", "-A"])?;
         run_git(&task.task_worktree, ["commit", "-m", message])?;
@@ -437,15 +437,90 @@ fn verify_command(args: &[OsString]) -> Result<u8> {
     if !args.is_empty() {
         println!("verify-profile\t{}", display_args(args));
     }
-    run_local_preflight(args)?;
+    let profile = PreflightProfile::parse(args)?;
+    run_preflight(profile)?;
     Ok(0)
 }
 
-fn run_local_preflight(args: &[OsString]) -> Result<()> {
-    let script = repo_root()?.join("scripts/preflight.sh");
-    let mut command_args = Vec::new();
-    command_args.extend(args.iter().cloned());
-    run_required(path_arg(&script), command_args)
+#[derive(Default)]
+struct PreflightProfile {
+    full: bool,
+    task_flow: bool,
+}
+
+impl PreflightProfile {
+    fn parse(args: &[OsString]) -> Result<Self> {
+        let mut profile = Self::default();
+        for arg in args {
+            match arg.to_string_lossy().as_ref() {
+                "fast" | "default" => {}
+                "full" | "--full" => profile.full = true,
+                "task-flow" | "--task-flow" => profile.task_flow = true,
+                "-h" | "--help" => {
+                    bail!("usage: cargo xtask verify [fast|full|task-flow] [--full] [--task-flow]")
+                }
+                value => bail!("unknown verify profile argument: {value}"),
+            }
+        }
+        Ok(profile)
+    }
+}
+
+fn run_preflight(profile: PreflightProfile) -> Result<()> {
+    run_required("cargo", ["fmt", "--check"].map(OsString::from).to_vec())?;
+    run_required(
+        "node",
+        ["--check", "src/webapp_assets/app.js"]
+            .map(OsString::from)
+            .to_vec(),
+    )?;
+    run_required(
+        "cargo",
+        ["test", "--locked", "-p", "xtask"]
+            .map(OsString::from)
+            .to_vec(),
+    )?;
+    run_required(
+        "cargo",
+        ["test", "--locked", "--bins"].map(OsString::from).to_vec(),
+    )?;
+    run_required(
+        "cargo",
+        ["test", "--locked", "--test", "command_version"]
+            .map(OsString::from)
+            .to_vec(),
+    )?;
+    run_required(
+        "cargo",
+        ["test", "--locked", "--test", "agent_repo_context"]
+            .map(OsString::from)
+            .to_vec(),
+    )?;
+    run_required(
+        "cargo",
+        ["test", "--locked", "--test", "task_record_sequence"]
+            .map(OsString::from)
+            .to_vec(),
+    )?;
+
+    if profile.full {
+        run_required("cargo", ["test", "--locked"].map(OsString::from).to_vec())?;
+    }
+    if profile.task_flow {
+        run_required(
+            "cargo",
+            ["test", "--locked", "--test", "task_flow_control_plane"]
+                .map(OsString::from)
+                .to_vec(),
+        )?;
+        run_required(
+            "cargo",
+            ["test", "--locked", "--test", "task_flow_regression"]
+                .map(OsString::from)
+                .to_vec(),
+        )?;
+    }
+    Ok(())
 }
 
 fn install_command(args: &[OsString]) -> Result<u8> {
@@ -806,6 +881,25 @@ mod tests {
         assert!(!task_blocks_terminal("closed:success"));
         assert!(!task_blocks_terminal("closed:blocked"));
         assert!(!task_blocks_terminal("closed:failed"));
+    }
+
+    #[test]
+    fn preflight_profile_parses_stable_aliases() {
+        let fast = PreflightProfile::parse(&[OsString::from("fast")]).unwrap();
+        assert!(!fast.full);
+        assert!(!fast.task_flow);
+
+        let full = PreflightProfile::parse(&[OsString::from("full")]).unwrap();
+        assert!(full.full);
+        assert!(!full.task_flow);
+
+        let task_flow =
+            PreflightProfile::parse(&[OsString::from("--full"), OsString::from("task-flow")])
+                .unwrap();
+        assert!(task_flow.full);
+        assert!(task_flow.task_flow);
+
+        assert!(PreflightProfile::parse(&[OsString::from("unknown")]).is_err());
     }
 
     #[test]

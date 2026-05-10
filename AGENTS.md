@@ -138,10 +138,11 @@ fixture or debugging task explicitly needs them.
 
 ## Validation Authority
 
-- Every non-trivial iteration should pass `scripts/preflight.sh` locally before
-  terminal closeout. The same script is the GitHub Actions/`act` preflight
-  entry point, and Q-COLD self-hosted `cargo qcold verify` plus successful
-  task closeout invoke it through the repository-local `xtask` adapter.
+- Every non-trivial iteration should pass `cargo xtask verify fast` locally
+  before terminal closeout. The repository-local `xtask` implementation is the
+  GitHub Actions/`act` preflight entry point, and Q-COLD self-hosted
+  `cargo qcold verify` plus successful task closeout invoke it through the same
+  adapter boundary.
 - For Rust code changes, run `cargo fmt --check` and `cargo test --locked`
   unless the task is too narrow or the environment blocks them.
 - For command-surface changes, include targeted help or invocation checks such

@@ -53,18 +53,19 @@ Run the same preflight gate locally before closing a task or asking CI to
 evaluate it:
 
 ```bash
-scripts/preflight.sh
+cargo xtask verify fast
 ```
 
 The gate checks Rust formatting, web asset JavaScript syntax, binary unit tests,
 and stable integration suites that do not require the external task-flow fixture
-adapter. `cargo qcold verify` and successful managed task closeout run this
-script through the repository-local `xtask` adapter. Optional heavier profiles
-are available when the local environment has the required fixtures:
+adapter. `cargo qcold verify` and successful managed task closeout run the same
+repository-local `xtask` implementation through the adapter boundary. Optional
+heavier profiles are available when the local environment has the required
+fixtures:
 
 ```bash
-scripts/preflight.sh --full
-scripts/preflight.sh --task-flow
+cargo xtask verify full
+cargo xtask verify task-flow
 act -W .github/workflows/preflight.yml -j preflight
 ```
 
