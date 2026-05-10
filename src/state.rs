@@ -65,6 +65,40 @@ pub struct TerminalMetadataRow {
     pub updated_at: u64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct QueueRunRow {
+    pub id: String,
+    pub status: String,
+    pub selected_agent_command: String,
+    pub selected_repo_root: Option<String>,
+    pub selected_repo_name: Option<String>,
+    pub track: String,
+    pub current_index: i64,
+    pub stop_requested: bool,
+    pub message: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct QueueItemRow {
+    pub id: String,
+    pub run_id: String,
+    pub position: i64,
+    pub prompt: String,
+    pub slug: String,
+    pub repo_root: Option<String>,
+    pub repo_name: Option<String>,
+    pub agent_command: String,
+    pub agent_id: Option<String>,
+    pub status: String,
+    pub message: String,
+    pub attempts: i64,
+    pub next_attempt_at: Option<u64>,
+    pub started_at: u64,
+    pub updated_at: u64,
+}
+
 pub fn append_history(source: &str, role: &str, text: &str) -> Result<()> {
     let text = text.trim();
     if text.is_empty() {
@@ -221,6 +255,211 @@ pub fn load_terminal_metadata() -> Result<Vec<TerminalMetadataRow>> {
         .collect::<Result<Vec<_>, _>>()
         .context("failed to decode terminal metadata rows")?;
     Ok(rows)
+}
+
+pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()> {
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction()
+        .context("failed to start web queue transaction")?;
+    tx.execute("delete from web_queue_items", [])
+        .context("failed to clear web queue items")?;
+    tx.execute("delete from web_queue_runs", [])
+        .context("failed to clear web queue runs")?;
+    tx.execute(
+        "insert into web_queue_runs
+             (id, status, selected_agent_command, selected_repo_root, selected_repo_name,
+              track, current_index, stop_requested, message, created_at_unix, updated_at_unix)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        params![
+            run.id,
+            run.status,
+            run.selected_agent_command,
+            run.selected_repo_root,
+            run.selected_repo_name,
+            run.track,
+            run.current_index,
+            if run.stop_requested { 1_i64 } else { 0_i64 },
+            run.message,
+            run.created_at,
+            run.updated_at,
+        ],
+    )
+    .context("failed to insert web queue run")?;
+    for item in items {
+        tx.execute(
+            "insert into web_queue_items
+                 (id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                  agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                  updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                item.id,
+                item.run_id,
+                item.position,
+                item.prompt,
+                item.slug,
+                item.repo_root,
+                item.repo_name,
+                item.agent_command,
+                item.agent_id,
+                item.status,
+                item.message,
+                item.attempts,
+                item.next_attempt_at,
+                item.started_at,
+                item.updated_at,
+            ],
+        )
+        .context("failed to insert web queue item")?;
+    }
+    tx.commit().context("failed to commit web queue")?;
+    Ok(())
+}
+
+pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
+    let connection = open_db()?;
+    let run = connection
+        .query_row(
+            "select id, status, selected_agent_command, selected_repo_root, selected_repo_name,
+                    track, current_index, stop_requested, message, created_at_unix, updated_at_unix
+             from web_queue_runs
+             order by updated_at_unix desc
+             limit 1",
+            [],
+            queue_run_from_row,
+        )
+        .optional()
+        .context("failed to query web queue run")?;
+    let Some(run_row) = run else {
+        return Ok((None, Vec::new()));
+    };
+    let mut statement = connection
+        .prepare(
+            "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                    updated_at_unix
+             from web_queue_items
+             where run_id = ?1
+             order by position, id",
+        )
+        .context("failed to prepare web queue item query")?;
+    let rows = statement
+        .query_map([run_row.id.as_str()], queue_item_from_row)
+        .context("failed to query web queue items")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode web queue items")?;
+    Ok((Some(run_row), rows))
+}
+
+pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
+    let connection = open_db()?;
+    let run = connection
+        .query_row(
+            "select id, status, selected_agent_command, selected_repo_root, selected_repo_name,
+                    track, current_index, stop_requested, message, created_at_unix, updated_at_unix
+             from web_queue_runs
+             where id = ?1",
+            [run_id],
+            queue_run_from_row,
+        )
+        .optional()
+        .context("failed to query web queue run")?;
+    let Some(run_row) = run else {
+        return Ok((None, Vec::new()));
+    };
+    let mut statement = connection
+        .prepare(
+            "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                    updated_at_unix
+             from web_queue_items
+             where run_id = ?1
+             order by position, id",
+        )
+        .context("failed to prepare web queue item query")?;
+    let rows = statement
+        .query_map([run_row.id.as_str()], queue_item_from_row)
+        .context("failed to query web queue items")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode web queue items")?;
+    Ok((Some(run_row), rows))
+}
+
+pub fn update_web_queue_run(
+    run_id: &str,
+    status: &str,
+    current_index: i64,
+    message: &str,
+) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_runs
+             set status = ?2, current_index = ?3, message = ?4, updated_at_unix = ?5
+             where id = ?1",
+            params![run_id, status, current_index, message, unix_now()],
+        )
+        .context("failed to update web queue run")?;
+    Ok(())
+}
+
+pub fn request_web_queue_stop() -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_runs
+             set stop_requested = 1, status = 'stopping', message = 'stop requested',
+                 updated_at_unix = ?1
+             where status in ('running', 'waiting', 'starting')",
+            [unix_now()],
+        )
+        .context("failed to request web queue stop")?;
+    Ok(())
+}
+
+pub fn web_queue_stop_requested(run_id: &str) -> Result<bool> {
+    let connection = open_db()?;
+    let requested = connection
+        .query_row(
+            "select stop_requested from web_queue_runs where id = ?1",
+            [run_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .context("failed to query web queue stop flag")?;
+    Ok(requested.map_or(true, |value| value != 0))
+}
+
+pub fn update_web_queue_item(
+    run_id: &str,
+    item_id: &str,
+    status: &str,
+    message: &str,
+    agent_id: Option<&str>,
+    attempts: i64,
+    next_attempt_at: Option<u64>,
+) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_items
+             set status = ?3, message = ?4, agent_id = coalesce(?5, agent_id),
+                 attempts = ?6, next_attempt_at_unix = ?7, updated_at_unix = ?8
+             where run_id = ?1 and id = ?2",
+            params![
+                run_id,
+                item_id,
+                status,
+                message,
+                agent_id,
+                attempts,
+                next_attempt_at,
+                unix_now(),
+            ],
+        )
+        .context("failed to update web queue item")?;
+    Ok(())
 }
 
 pub fn save_terminal_metadata(target: &str, name: Option<&str>, scope: Option<&str>) -> Result<()> {
@@ -687,6 +926,38 @@ fn open_db() -> Result<Connection> {
                  scope text,
                  updated_at_unix integer not null
              );
+             create table if not exists web_queue_runs (
+                 id text primary key,
+                 status text not null,
+                 selected_agent_command text not null,
+                 selected_repo_root text,
+                 selected_repo_name text,
+                 track text not null,
+                 current_index integer not null,
+                 stop_requested integer not null default 0,
+                 message text not null,
+                 created_at_unix integer not null,
+                 updated_at_unix integer not null
+             );
+             create table if not exists web_queue_items (
+                 id text primary key,
+                 run_id text not null references web_queue_runs(id) on delete cascade,
+                 position integer not null,
+                 prompt text not null,
+                 slug text not null,
+                 repo_root text,
+                 repo_name text,
+                 agent_command text not null,
+                 agent_id text,
+                 status text not null,
+                 message text not null,
+                 attempts integer not null default 0,
+                 next_attempt_at_unix integer,
+                 started_at_unix integer not null,
+                 updated_at_unix integer not null,
+                 unique(run_id, position),
+                 unique(run_id, slug)
+             );
              create table if not exists claims (
                  id text primary key,
                  task_id text references tasks(id),
@@ -732,6 +1003,7 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
     ensure_column(connection, "tasks", "metadata_json", "text")?;
     ensure_column(connection, "tasks", "sequence", "integer")?;
     ensure_column(connection, "agents", "cwd", "text")?;
+    ensure_web_queue_schema(connection)?;
     connection
         .execute(
             "create unique index if not exists tasks_repo_sequence
@@ -741,6 +1013,46 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
         )
         .context("failed to create task sequence index")?;
     backfill_task_sequences(connection)?;
+    Ok(())
+}
+
+fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
+    connection
+        .execute_batch(
+            "create table if not exists web_queue_runs (
+                 id text primary key,
+                 status text not null,
+                 selected_agent_command text not null,
+                 selected_repo_root text,
+                 selected_repo_name text,
+                 track text not null,
+                 current_index integer not null,
+                 stop_requested integer not null default 0,
+                 message text not null,
+                 created_at_unix integer not null,
+                 updated_at_unix integer not null
+             );
+             create table if not exists web_queue_items (
+                 id text primary key,
+                 run_id text not null references web_queue_runs(id) on delete cascade,
+                 position integer not null,
+                 prompt text not null,
+                 slug text not null,
+                 repo_root text,
+                 repo_name text,
+                 agent_command text not null,
+                 agent_id text,
+                 status text not null,
+                 message text not null,
+                 attempts integer not null default 0,
+                 next_attempt_at_unix integer,
+                 started_at_unix integer not null,
+                 updated_at_unix integer not null,
+                 unique(run_id, position),
+                 unique(run_id, slug)
+             );",
+        )
+        .context("failed to initialize web queue tables")?;
     Ok(())
 }
 
@@ -940,6 +1252,42 @@ fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecordR
         cwd: row.get(9)?,
         agent_id: row.get(10)?,
         metadata_json: row.get(11)?,
+    })
+}
+
+fn queue_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueRunRow> {
+    Ok(QueueRunRow {
+        id: row.get(0)?,
+        status: row.get(1)?,
+        selected_agent_command: row.get(2)?,
+        selected_repo_root: row.get(3)?,
+        selected_repo_name: row.get(4)?,
+        track: row.get(5)?,
+        current_index: row.get(6)?,
+        stop_requested: row.get::<_, i64>(7)? != 0,
+        message: row.get(8)?,
+        created_at: row.get(9)?,
+        updated_at: row.get(10)?,
+    })
+}
+
+fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow> {
+    Ok(QueueItemRow {
+        id: row.get(0)?,
+        run_id: row.get(1)?,
+        position: row.get(2)?,
+        prompt: row.get(3)?,
+        slug: row.get(4)?,
+        repo_root: row.get(5)?,
+        repo_name: row.get(6)?,
+        agent_command: row.get(7)?,
+        agent_id: row.get(8)?,
+        status: row.get(9)?,
+        message: row.get(10)?,
+        attempts: row.get(11)?,
+        next_attempt_at: row.get(12)?,
+        started_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 

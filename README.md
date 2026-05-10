@@ -155,24 +155,24 @@ generated managed-task instruction so the row does not inherit the previous
 Codex chat context. Queue launcher agents are internal transport and do not
 create separate ad-hoc task records; the visible task state belongs to the
 managed `task/<slug>` record.
-The Queue probes agent account status before running and stops before launch
-when the selected account is known to be logged out, limited, or failing.
+The Queue is run by the Mini App backend, not by a long-lived browser loop.
+The browser submits the ordered rows to `/api/queue/run` and then only renders
+the backend queue snapshot. The backend stores the active run in Q-COLD state,
+starts one fresh Q-COLD terminal agent per queued prompt, waits for the matching
+managed `task/<slug>` record to reach `closed:success`, and then advances to
+the next row. If the selected agent account is temporarily unavailable, the
+backend waits and retries the next launch three times after roughly 1, 5, and
+10 minutes before failing the row; unauthenticated accounts fail immediately.
 Queue rows can be reordered, removed, copied, or
 opened to the related running terminal or task record. Rows with a task record
 but no captured chat transcript open the Tasks card instead of a transcript
 modal, and rows without a task record still switch to the Tasks view while
-recording a row-level availability note. The browser-side queue starts the next prompt only after the
-matching task record reaches `closed:success`; any blocked, failed, unknown,
-prematurely exited, or unavailable-agent task stops the remaining queue. Queue
-runtime metadata is stored in browser local storage, so rows keep showing the
-generated `task/<slug>`, selected agent command, agent id, and live task-record
-state after reloads or SSE reconnects. Running the queue again preserves
-existing generated task slugs, skips rows whose task records already reached
-`closed:success`, assigns new rows the next unused task slug for that queue run,
-and continues the remaining waiting rows. If a row has an open task record but
-its previous agent has exited, running the queue again starts a fresh selected
-agent with the same task slug so the managed task worktree is resumed instead
-of abandoned. When Codex telemetry has captured a session path, task records
+recording a row-level availability note. Any blocked, failed, unknown, or
+prematurely exited task stops the remaining queue. Queue draft rows may still
+use browser local storage before launch, but live queue state, retry counters,
+agent ids, and generated `task/<slug>` values come from the backend snapshot
+after launch, so refreshing the tab does not stop the active run. When Codex
+telemetry has captured a session path, task records
 expose the saved chat transcript from the Tasks view even after the terminal
 agent has exited. Its
 Tasks view shows Q-COLD task records for the active repository from SQLite as

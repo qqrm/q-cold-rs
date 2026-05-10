@@ -144,20 +144,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
       };
     }
 
-    function sanitizeSlug(value) {
-      return (value || 'queued-task')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-+|-+$/g, '')
-        .slice(0, 64) || 'queued-task';
-    }
-
     function queueSlug(runId, index) {
       return `task-${runId}-${String(index + 1).padStart(2, '0')}`;
-    }
-
-    function slugForQueueItem(index, runId = queueRun.runId || 'next') {
-      return queueSlug(runId, index);
     }
 
     function queueTaskRecords() {
@@ -187,21 +175,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
       used.add(slug);
       return slug;
-    }
-
-    function queueTrack(runId = queueRun.runId || 'next') {
-      return `queue-${sanitizeSlug(runId)}`;
-    }
-
-    function shellQuote(value) {
-      return `'${String(value).replace(/'/g, `'\\''`)}'`;
-    }
-
-    function taskInstruction(item, index) {
-      const repo = queueItemRepository(item);
-      const root = repo.root || '<repo>';
-      const taskSlug = item.slug || slugForQueueItem(index);
-      return `Use the launched host-side agent workspace as your home base for ${root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task ${taskSlug} with cargo qcold task open ${taskSlug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: ${item.prompt.trim()} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.`;
     }
 
     function queueRepositories() {
@@ -299,12 +272,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return limit.state || 'unknown';
     }
 
-    function queueAgentUnavailableMessage(agent) {
-      const limit = queueAgentLimit(agent);
-      if (!agent || !limit || limit.state === 'ok') return '';
-      return `${agent.command} is ${queueAgentStatusLabel(limit)}: ${limit.summary || limit.state}`;
-    }
-
     function renderQueueAgentSelector() {
       const records = queueAgentRecords();
       const current = selectedQueueAgent || queueAgentSelect.value;
@@ -340,19 +307,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       queueAgentState.title = detected === records.length ? '' : `${detected} commands detected`;
       queueAgentState.className = records.length && (!agentLimits || okCount > 0) ? 'badge ready' : 'badge warn';
       if (selectedQueueAgent) localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
-    }
-
-    function queueAgentCommand() {
-      const agent = selectedQueueAgentRecord();
-      if (!agent) return '';
-      return agent.command;
-    }
-
-    function queueCommand(item, index) {
-      const command = queueAgentCommand();
-      const repo = queueItemRepository(item);
-      const cwd = repo.root ? ` --cwd ${shellQuote(repo.root)}` : '';
-      return `/agent_start${cwd} ${queueTrack()} :: ${command}`;
     }
 
     function queueStatusText(item) {
@@ -438,6 +392,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function syncQueueFromSnapshot() {
+      if (state?.queue?.run || state?.queue?.records?.length) {
+        queueItems = (state.queue.records || []).map(queueItemFromServer);
+        queueRun = {
+          running: Boolean(state.queue.running),
+          stop: false,
+          activeIndex: Number(state.queue.run?.current_index ?? -1),
+          runId: state.queue.run?.id || existingQueueRunId(),
+        };
+        return;
+      }
       if (!queueTaskRecords().length) return;
       let changed = false;
       for (const item of queueItems) {
@@ -457,6 +421,25 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }
       }
       if (changed) saveQueueStorage();
+    }
+
+    function queueItemFromServer(item) {
+      return {
+        ...defaultQueueItem(),
+        id: item.id,
+        prompt: item.prompt || '',
+        slug: item.slug || '',
+        agentId: item.agent_id || '',
+        agentCommand: item.agent_command || '',
+        repoRoot: item.repo_root || '',
+        repoName: item.repo_name || '',
+        status: item.status || 'pending',
+        message: item.message || '',
+        startedAt: item.started_at || 0,
+        updatedAt: item.updated_at || 0,
+        attempts: item.attempts || 0,
+        nextAttemptAt: item.next_attempt_at || 0,
+      };
     }
 
     function renderQueue() {
@@ -1339,6 +1322,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         agents: parseAgents(state.agents.text),
         taskRecords: state.task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
         queueTaskRecords: state.queue_task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
+        queue: state.queue || { count: 0, running: false, run: null, records: [] },
         hostAgents: state.host_agents || { count: 0, records: [] },
         terminals: state.terminals || { count: 0, records: [] },
         availableAgents: state.available_agents || { count: 0, records: [] },
@@ -1452,33 +1436,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
     }
 
-    function terminalForAgentId(agentId) {
-      if (!agentId || !model) return null;
-      return (model.terminals.records || []).find((terminal) => terminal.agent_id === agentId) || null;
-    }
-
-    async function waitForAgentTerminal(agentId) {
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        await loadSnapshot();
-        const terminal = terminalForAgentId(agentId);
-        if (terminal?.target) return terminal;
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
-      }
-      return null;
-    }
-
-    async function startFreshQueueSession(item, index) {
-      const terminal = await waitForAgentTerminal(item.agentId);
-      if (!terminal) {
-        return { ok: false, output: 'agent terminal did not appear' };
-      }
-      await new Promise((resolve) => window.setTimeout(resolve, 1000));
-      const reset = await postTerminalText(terminal.target, '/new');
-      if (!reset.ok) return reset;
-      await new Promise((resolve) => window.setTimeout(resolve, 500));
-      return postTerminalText(terminal.target, taskInstruction(item, index));
-    }
-
     async function saveTerminalMetadata(target, name, scope) {
       if (!target) return;
       try {
@@ -1500,11 +1457,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
     }
 
-    function parseStartedAgentId(output) {
-      const match = String(output || '').match(/^agent\t([^\t\n]+)/m);
-      return match ? match[1] : '';
-    }
-
     function taskRecordForQueueItem(item) {
       const repo = queueItemRepository(item);
       return queueTaskRecords().find((task) => (
@@ -1522,27 +1474,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return [item.agentId, task?.agent_id].find((agentId) => agentId && runningAgent(agentId)) || '';
     }
 
-    async function waitForQueueTask(item) {
-      for (;;) {
-        if (queueRun.stop) return { ok: false, status: 'stopped', message: 'stopped by operator' };
-        await new Promise((resolve) => window.setTimeout(resolve, 5000));
-        await loadSnapshot();
-        const task = taskRecordForQueueItem(item);
-        if (task?.status === 'closed:success') {
-          return { ok: true, status: task.status, message: task.title || item.slug };
-        }
-        if (task?.status && task.status.startsWith('closed')) {
-          return { ok: false, status: task.status, message: task.title || item.slug };
-        }
-        if (task?.status === 'open' && item.agentId && !activeQueueAgentId(item, task)) {
-          return { ok: false, status: 'failed', message: 'agent exited before task closeout' };
-        }
-        if (!task && item.agentId && !runningAgent(item.agentId)) {
-          return { ok: false, status: 'failed', message: 'agent exited before opening task record' };
-        }
-      }
-    }
-
     function queueRunIdFromSlug(slug) {
       const match = /^task-(.+)-\d+$/.exec(slug || '');
       return match?.[1] || '';
@@ -1558,8 +1489,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     async function runQueue() {
       if (queueRun.running || !queueItems.length) return;
-      if (!agentLimits) await loadAgentLimits(false);
       const selectedAgent = selectedQueueAgentRecord();
+      if (!selectedAgent) return;
       const now = Math.floor(Date.now() / 1000);
       const selectedRepo = selectedQueueRepository();
       queueRun = {
@@ -1591,124 +1522,43 @@ const tg = window.Telegram && window.Telegram.WebApp;
       });
       saveQueueStorage();
       renderQueue();
-      for (let index = 0; index < queueItems.length; index += 1) {
-        const item = queueItems[index];
-        queueRun.activeIndex = index;
-        const task = taskRecordForQueueItem(item);
-        if (task?.status === 'closed:success' || item.status === 'success') {
-          item.status = 'success';
-          item.message = 'closed successfully';
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          continue;
-        }
-        if (task?.status?.startsWith('closed')) {
-          item.status = 'failed';
-          item.message = task.status;
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          break;
-        }
-        if (queueRun.stop || item.status === 'failed') break;
-        const activeAgentId = activeQueueAgentId(item, task);
-        if (activeAgentId) {
-          item.status = 'running';
-          item.message = `agent ${activeAgentId}`;
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          const result = await waitForQueueTask(item);
-          item.status = result.ok ? 'success' : result.status === 'stopped' ? 'stopped' : 'failed';
-          item.message = result.status === 'closed:success'
-            ? 'closed successfully'
-            : `${result.status}: ${result.message}`;
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          if (!result.ok) break;
-          continue;
-        }
-        if (!selectedQueueAgentRecord()) {
-          item.status = 'failed';
-          item.message = 'no available agent command';
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          break;
-        }
-        const unavailable = queueAgentUnavailableMessage(selectedQueueAgentRecord());
-        if (unavailable) {
-          item.status = 'failed';
-          item.message = unavailable;
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          break;
-        }
-        item.status = 'starting';
-        item.agentId = '';
-        item.message = task?.status === 'open' ? 'resuming interrupted task' : 'starting clean agent context';
-        item.updatedAt = Math.floor(Date.now() / 1000);
+      const response = await fetch('/api/queue/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          run_id: queueRun.runId,
+          selected_agent_command: selectedAgent.command,
+          selected_repo_root: selectedRepo.root || '',
+          selected_repo_name: selectedRepo.name || '',
+          items: queueItems.map((item) => ({
+            id: item.id,
+            prompt: item.prompt,
+            slug: item.slug,
+            repo_root: item.repoRoot,
+            repo_name: item.repoName,
+            agent_command: item.agentCommand || selectedAgent.command,
+          })),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        queueRun.running = false;
+        queueItems[0].status = 'failed';
+        queueItems[0].message = payload.output || 'failed to start backend queue';
         saveQueueStorage();
         renderQueue();
-        const payload = await sendChat(queueCommand(item, index), 'queue');
-        if (!payload?.ok) {
-          item.status = 'failed';
-          item.message = payload?.output || 'failed to start agent';
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          break;
-        }
-        item.agentId = parseStartedAgentId(payload.output);
-        if (!item.agentId) {
-          item.status = 'failed';
-          item.message = 'agent start response did not include an agent id';
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          break;
-        }
-        const started = await startFreshQueueSession(item, index);
-        if (!started.ok) {
-          item.status = 'failed';
-          item.message = started.output || 'failed to start fresh Codex session';
-          item.updatedAt = Math.floor(Date.now() / 1000);
-          saveQueueStorage();
-          renderQueue();
-          break;
-        }
-        item.status = 'running';
-        item.message = `agent ${item.agentId}`;
-        item.updatedAt = Math.floor(Date.now() / 1000);
-        saveQueueStorage();
-        renderQueue();
-        const result = await waitForQueueTask(item);
-        item.status = result.ok ? 'success' : result.status === 'stopped' ? 'stopped' : 'failed';
-        item.message = result.status === 'closed:success'
-          ? 'closed successfully'
-          : `${result.status}: ${result.message}`;
-        item.updatedAt = Math.floor(Date.now() / 1000);
-        saveQueueStorage();
-        renderQueue();
-        if (!result.ok) break;
+        return;
       }
-      queueRun.running = false;
-      queueRun.stop = false;
-      queueRun.activeIndex = -1;
-      saveQueueStorage();
-      renderQueue();
       await loadSnapshot();
     }
 
-    function stopQueue() {
+    async function stopQueue() {
       queueRun.stop = true;
-      if (queueRun.running && queueRun.activeIndex >= 0) {
-        queueItems[queueRun.activeIndex].message = 'stop requested; current task is not killed';
-        queueItems[queueRun.activeIndex].updatedAt = Math.floor(Date.now() / 1000);
-        saveQueueStorage();
+      try {
+        await fetch('/api/queue/stop', { method: 'POST' });
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
       }
       renderQueue();
     }

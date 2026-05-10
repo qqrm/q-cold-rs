@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -37,7 +37,9 @@ const DAEMON_SHUTDOWN_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const AGENT_LIMIT_CACHE_TTL: u64 = 600;
 const AGENT_LIMIT_STATUS_ATTEMPTS: usize = 2;
 const AGENT_LIMIT_STATUS_TIMEOUT: u64 = 20;
+const WEB_QUEUE_RETRY_DELAYS: [u64; 3] = [60, 300, 600];
 static AGENT_LIMIT_CACHE: OnceLock<Mutex<Option<AgentLimitCache>>> = OnceLock::new();
+static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Args, Clone)]
 pub struct ServeArgs {
@@ -314,6 +316,8 @@ fn router() -> Router {
         .route("/api/state", get(api_state))
         .route("/api/agent-limits", get(api_agent_limits))
         .route("/api/task-transcript", get(api_task_transcript))
+        .route("/api/queue/run", post(api_queue_run))
+        .route("/api/queue/stop", post(api_queue_stop))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
         .route("/api/history", get(api_history))
@@ -348,6 +352,26 @@ async fn api_agent_limits(Query(query): Query<AgentLimitQuery>) -> impl IntoResp
 
 async fn api_task_transcript(Query(query): Query<TaskTranscriptQuery>) -> impl IntoResponse {
     let response = task_transcript_response(&query.id);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_run(headers: HeaderMap, Json(payload): Json<QueueRunRequest>) -> impl IntoResponse {
+    let response = handle_queue_run(&headers, payload);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_stop(headers: HeaderMap) -> impl IntoResponse {
+    let response = handle_queue_stop(&headers);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -440,6 +464,573 @@ fn event_snapshot() -> Result<EventSnapshot> {
 
 fn web_history() -> Result<Vec<history::HistoryEntry>> {
     history::load_recent_for_source("web", 20)
+}
+
+fn handle_queue_run(headers: &HeaderMap, payload: QueueRunRequest) -> TerminalSendResponse {
+    match handle_queue_run_result(headers, payload) {
+        Ok(run_id) => TerminalSendResponse {
+            ok: true,
+            output: format!("queue-run\t{run_id}"),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Result<String> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let selected_agent_command = payload.selected_agent_command.trim();
+    if selected_agent_command.is_empty() {
+        bail!("queue agent command is empty");
+    }
+    if !agents::available_agent_commands()
+        .iter()
+        .any(|agent| agent.command == selected_agent_command)
+    {
+        bail!("unknown queue agent command: {selected_agent_command}");
+    }
+    let prompts = payload
+        .items
+        .into_iter()
+        .filter(|item| !item.prompt.trim().is_empty())
+        .collect::<Vec<_>>();
+    if prompts.is_empty() {
+        bail!("queue has no runnable items");
+    }
+    let fallback_run_id = base36_time_id();
+    let run_id = clean_queue_run_id(
+        payload
+            .run_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&fallback_run_id),
+    );
+    let now = unix_now();
+    let track = queue_track(&run_id);
+    let run = state::QueueRunRow {
+        id: run_id.clone(),
+        status: "running".to_string(),
+        selected_agent_command: selected_agent_command.to_string(),
+        selected_repo_root: payload.selected_repo_root.filter(|value| !value.trim().is_empty()),
+        selected_repo_name: payload.selected_repo_name.filter(|value| !value.trim().is_empty()),
+        track,
+        current_index: -1,
+        stop_requested: false,
+        message: "queued".to_string(),
+        created_at: now,
+        updated_at: now,
+    };
+    let mut used_slugs = HashSet::new();
+    let items = prompts
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let fallback_slug = queue_slug(&run_id, index);
+            let slug = clean_queue_slug(
+                item.slug
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(&fallback_slug),
+                &run_id,
+                index,
+                &mut used_slugs,
+            );
+            state::QueueItemRow {
+                id: item
+                    .id
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| format!("queue-{run_id}-{}", index + 1)),
+                run_id: run_id.clone(),
+                position: i64::try_from(index).unwrap_or(i64::MAX),
+                prompt: item.prompt.trim().to_string(),
+                slug,
+                repo_root: item
+                    .repo_root
+                    .or_else(|| run.selected_repo_root.clone())
+                    .filter(|value| !value.trim().is_empty()),
+                repo_name: item
+                    .repo_name
+                    .or_else(|| run.selected_repo_name.clone())
+                    .filter(|value| !value.trim().is_empty()),
+                agent_command: item
+                    .agent_command
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| selected_agent_command.to_string()),
+                agent_id: None,
+                status: "pending".to_string(),
+                message: String::new(),
+                attempts: 0,
+                next_attempt_at: None,
+                started_at: now,
+                updated_at: now,
+            }
+        })
+        .collect::<Vec<_>>();
+    state::replace_web_queue(&run, &items)?;
+    spawn_web_queue_worker(run_id.clone());
+    Ok(run_id)
+}
+
+fn handle_queue_stop(headers: &HeaderMap) -> TerminalSendResponse {
+    match handle_queue_stop_result(headers) {
+        Ok(()) => TerminalSendResponse {
+            ok: true,
+            output: "queue stop requested".to_string(),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_stop_result(headers: &HeaderMap) -> Result<()> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    state::request_web_queue_stop()
+}
+
+fn spawn_web_queue_worker(run_id: String) {
+    let workers = WEB_QUEUE_WORKERS.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut active) = workers.lock() {
+        if !active.insert(run_id.clone()) {
+            return;
+        }
+    }
+    thread::spawn(move || {
+        if let Err(err) = run_web_queue(&run_id) {
+            let _ = state::update_web_queue_run(&run_id, "failed", -1, &format!("{err:#}"));
+        }
+        if let Some(workers) = WEB_QUEUE_WORKERS.get() {
+            if let Ok(mut active) = workers.lock() {
+                active.remove(&run_id);
+            }
+        }
+    });
+}
+
+fn run_web_queue(run_id: &str) -> Result<()> {
+    let (_, items) = state::load_web_queue_run(run_id)?;
+    if items.is_empty() {
+        state::update_web_queue_run(run_id, "failed", -1, "queue has no items")?;
+        return Ok(());
+    }
+    state::update_web_queue_run(run_id, "running", -1, "running")?;
+    for item in items {
+        let index = item.position;
+        if state::web_queue_stop_requested(run_id)? {
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "stopped",
+                "stopped by operator",
+                None,
+                item.attempts,
+                None,
+            )?;
+            state::update_web_queue_run(run_id, "stopped", index, "stopped by operator")?;
+            return Ok(());
+        }
+        state::update_web_queue_run(run_id, "running", index, &format!("running {}", item.slug))?;
+        match run_web_queue_item(run_id, &item)? {
+            QueueItemOutcome::Success => {}
+            QueueItemOutcome::Stopped => {
+                state::update_web_queue_run(run_id, "stopped", index, "stopped by operator")?;
+                return Ok(());
+            }
+            QueueItemOutcome::Failed(message) => {
+                state::update_web_queue_run(run_id, "failed", index, &message)?;
+                return Ok(());
+            }
+        }
+    }
+    state::update_web_queue_run(run_id, "success", -1, "closed successfully")?;
+    Ok(())
+}
+
+enum QueueItemOutcome {
+    Success,
+    Stopped,
+    Failed(String),
+}
+
+fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueItemOutcome> {
+    if let Some(status) = queue_task_status(item)? {
+        if status == "closed:success" {
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "success",
+                "closed successfully",
+                None,
+                item.attempts,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::Success);
+        }
+        if status.starts_with("closed") {
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "failed",
+                &status,
+                None,
+                item.attempts,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::Failed(status));
+        }
+    }
+
+    let mut retries = item.attempts.max(0);
+    loop {
+        if state::web_queue_stop_requested(run_id)? {
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "stopped",
+                "stopped by operator",
+                None,
+                retries,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::Stopped);
+        }
+
+        if let Some(limit) = queue_agent_limit_for_command(&item.agent_command) {
+            if limit.state != "ok" {
+                if limit.state == "unauthenticated" || retries as usize >= WEB_QUEUE_RETRY_DELAYS.len() {
+                    let message = format!(
+                        "{} is {}: {}",
+                        item.agent_command, limit.state, limit.summary
+                    );
+                    state::update_web_queue_item(
+                        run_id,
+                        &item.id,
+                        "failed",
+                        &message,
+                        None,
+                        retries,
+                        None,
+                    )?;
+                    return Ok(QueueItemOutcome::Failed(message));
+                }
+                let delay = WEB_QUEUE_RETRY_DELAYS[retries as usize];
+                retries += 1;
+                let next_attempt_at = unix_now().saturating_add(delay);
+                let message = format!(
+                    "{} is {}: {}; retry {}/{} in {}s",
+                    item.agent_command,
+                    limit.state,
+                    limit.summary,
+                    retries,
+                    WEB_QUEUE_RETRY_DELAYS.len(),
+                    delay
+                );
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "waiting",
+                    &message,
+                    None,
+                    retries,
+                    Some(next_attempt_at),
+                )?;
+                if !sleep_queue_retry(run_id, delay)? {
+                    state::update_web_queue_item(
+                        run_id,
+                        &item.id,
+                        "stopped",
+                        "stopped by operator",
+                        None,
+                        retries,
+                        None,
+                    )?;
+                    return Ok(QueueItemOutcome::Stopped);
+                }
+                continue;
+            }
+        } else {
+            let message = format!("unknown queue agent command: {}", item.agent_command);
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "failed",
+                &message,
+                None,
+                retries,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::Failed(message));
+        }
+
+        state::update_web_queue_item(
+            run_id,
+            &item.id,
+            "starting",
+            "starting clean agent context",
+            None,
+            retries,
+            None,
+        )?;
+        match start_web_queue_item(run_id, item, retries)? {
+            QueueItemOutcome::Failed(message)
+                if (retries as usize) < WEB_QUEUE_RETRY_DELAYS.len() =>
+            {
+                let delay = WEB_QUEUE_RETRY_DELAYS[retries as usize];
+                retries += 1;
+                let next_attempt_at = unix_now().saturating_add(delay);
+                let retry_message = format!(
+                    "{message}; retry {}/{} in {}s",
+                    retries,
+                    WEB_QUEUE_RETRY_DELAYS.len(),
+                    delay
+                );
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "waiting",
+                    &retry_message,
+                    None,
+                    retries,
+                    Some(next_attempt_at),
+                )?;
+                if !sleep_queue_retry(run_id, delay)? {
+                    return Ok(QueueItemOutcome::Stopped);
+                }
+            }
+            outcome => return Ok(outcome),
+        }
+    }
+}
+
+fn start_web_queue_item(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    attempts: i64,
+) -> Result<QueueItemOutcome> {
+    let request = AgentStartRequest {
+        cwd: item.repo_root.as_ref().map(PathBuf::from),
+        track: queue_track(run_id),
+        command: item.agent_command.clone(),
+    };
+    let agent = match start_web_agent(&request) {
+        Ok(agent) => agent,
+        Err(err) => return Ok(QueueItemOutcome::Failed(format!("{err:#}"))),
+    };
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "starting",
+        "waiting for agent terminal",
+        Some(&agent.id),
+        attempts,
+        None,
+    )?;
+    let Some(target) = wait_for_agent_terminal_target(&agent.id) else {
+        return Ok(QueueItemOutcome::Failed(
+            "agent terminal did not appear".to_string(),
+        ));
+    };
+    thread::sleep(Duration::from_secs(1));
+    if let Err(err) = send_terminal_text_to_target(&target, "/new") {
+        return Ok(QueueItemOutcome::Failed(format!("{err:#}")));
+    }
+    thread::sleep(Duration::from_millis(500));
+    if let Err(err) = send_terminal_text_to_target(&target, &queue_task_instruction(item)) {
+        return Ok(QueueItemOutcome::Failed(format!("{err:#}")));
+    }
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "running",
+        &format!("agent {}", agent.id),
+        Some(&agent.id),
+        attempts,
+        None,
+    )?;
+    wait_for_queue_item_closeout(run_id, item, &agent.id, attempts)
+}
+
+fn wait_for_queue_item_closeout(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    agent_id: &str,
+    attempts: i64,
+) -> Result<QueueItemOutcome> {
+    loop {
+        if state::web_queue_stop_requested(run_id)? {
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "stopped",
+                "stopped by operator",
+                Some(agent_id),
+                attempts,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::Stopped);
+        }
+        thread::sleep(Duration::from_secs(5));
+        crate::sync_codex_task_records().ok();
+        if let Some(status) = queue_task_status(item)? {
+            if status == "closed:success" {
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "success",
+                    "closed successfully",
+                    Some(agent_id),
+                    attempts,
+                    None,
+                )?;
+                return Ok(QueueItemOutcome::Success);
+            }
+            if status.starts_with("closed") {
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "failed",
+                    &status,
+                    Some(agent_id),
+                    attempts,
+                    None,
+                )?;
+                return Ok(QueueItemOutcome::Failed(status));
+            }
+            if status == "open" && !agent_running(agent_id) {
+                let message = "agent exited before task closeout".to_string();
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "failed",
+                    &message,
+                    Some(agent_id),
+                    attempts,
+                    None,
+                )?;
+                return Ok(QueueItemOutcome::Failed(message));
+            }
+        } else if !agent_running(agent_id) {
+            let message = "agent exited before opening task record".to_string();
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "failed",
+                &message,
+                Some(agent_id),
+                attempts,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::Failed(message));
+        }
+    }
+}
+
+fn queue_agent_limit_for_command(command: &str) -> Option<AgentLimitRecord> {
+    let agent = agents::available_agent_commands()
+        .into_iter()
+        .find(|agent| agent.command == command)?;
+    Some(probe_agent_limit(&agent))
+}
+
+fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
+    let task_id = format!("task/{}", item.slug);
+    let Some(record) = state::get_task_record(&task_id)? else {
+        return Ok(None);
+    };
+    if item
+        .repo_root
+        .as_deref()
+        .is_some_and(|repo| record.repo_root.as_deref().is_some_and(|value| value != repo))
+    {
+        return Ok(None);
+    }
+    Ok(Some(record.status))
+}
+
+fn agent_running(agent_id: &str) -> bool {
+    agents::running_snapshot()
+        .map(|snapshot| snapshot.contains(&format!("agent\t{agent_id}\t")))
+        .unwrap_or(false)
+}
+
+fn wait_for_agent_terminal_target(agent_id: &str) -> Option<String> {
+    for _ in 0..20 {
+        if let Some(target) = agents::terminal_contexts()
+            .ok()?
+            .into_iter()
+            .find(|context| context.id == agent_id)
+            .map(|context| context.target)
+        {
+            return Some(target);
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    None
+}
+
+fn send_terminal_text_to_target(target: &str, text: &str) -> Result<()> {
+    if let Some((session, pane)) = parse_zellij_target(target) {
+        send_zellij_terminal_input(session, pane, text)
+    } else {
+        send_tmux_terminal_input(target, text)
+    }
+}
+
+fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
+    let mut slept = 0;
+    while slept < delay_seconds {
+        if state::web_queue_stop_requested(run_id)? {
+            return Ok(false);
+        }
+        let step = (delay_seconds - slept).min(5);
+        thread::sleep(Duration::from_secs(step));
+        slept += step;
+    }
+    Ok(true)
+}
+
+fn queue_task_instruction(item: &state::QueueItemRow) -> String {
+    let root = item.repo_root.as_deref().unwrap_or("<repo>");
+    format!(
+        "Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task {slug} with cargo qcold task open {slug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: {prompt} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.",
+        slug = item.slug,
+        prompt = item.prompt.trim(),
+    )
+}
+
+fn clean_queue_run_id(value: &str) -> String {
+    sanitize_daemon_id(value)
+}
+
+fn clean_queue_slug(
+    value: &str,
+    run_id: &str,
+    index: usize,
+    used_slugs: &mut HashSet<String>,
+) -> String {
+    let mut slug = sanitize_daemon_id(value);
+    if slug.is_empty() {
+        slug = queue_slug(run_id, index);
+    }
+    while !used_slugs.insert(slug.clone()) {
+        slug = queue_slug(run_id, used_slugs.len());
+    }
+    slug
+}
+
+fn queue_track(run_id: &str) -> String {
+    format!("queue-{}", sanitize_daemon_id(run_id))
+}
+
+fn queue_slug(run_id: &str, index: usize) -> String {
+    format!("task-{}-{:02}", sanitize_daemon_id(run_id), index + 1)
 }
 
 fn handle_terminal_send(
@@ -1057,6 +1648,7 @@ fn dashboard_state() -> DashboardState {
         agents: SnapshotBlock::capture("running managed agents", agents::running_snapshot),
         task_records: task_record_snapshot(&root),
         queue_task_records: all_task_record_snapshot(),
+        queue: queue_snapshot(),
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),
         available_agents: AvailableAgentSnapshot::discover(),
@@ -1107,6 +1699,27 @@ fn all_task_record_snapshot() -> TaskRecordSnapshot {
             total_reasoning_tokens: 0,
             total_tool_output_tokens: 0,
             total_large_tool_outputs: 0,
+            records: Vec::new(),
+            error: Some(format!("{err:#}")),
+        },
+    }
+}
+
+fn queue_snapshot() -> QueueSnapshot {
+    match state::load_web_queue() {
+        Ok((run, records)) => QueueSnapshot {
+            count: records.len(),
+            running: run.as_ref().is_some_and(|run| {
+                matches!(run.status.as_str(), "running" | "waiting" | "starting" | "stopping")
+            }),
+            run,
+            records,
+            error: None,
+        },
+        Err(err) => QueueSnapshot {
+            count: 0,
+            running: false,
+            run: None,
             records: Vec::new(),
             error: Some(format!("{err:#}")),
         },
@@ -1604,6 +2217,23 @@ fn optional_env(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn base36_time_id() -> String {
+    let mut value = unix_now();
+    if value == 0 {
+        return "0".to_string();
+    }
+    let mut chars = Vec::new();
+    while value > 0 {
+        let digit = (value % 36) as u8;
+        chars.push(match digit {
+            0..=9 => char::from(b'0' + digit),
+            _ => char::from(b'a' + digit - 10),
+        });
+        value /= 36;
+    }
+    chars.into_iter().rev().collect()
+}
+
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1620,6 +2250,7 @@ struct DashboardState {
     agents: SnapshotBlock,
     task_records: TaskRecordSnapshot,
     queue_task_records: TaskRecordSnapshot,
+    queue: QueueSnapshot,
     host_agents: HostAgentSnapshot,
     terminals: TerminalSnapshot,
     available_agents: AvailableAgentSnapshot,
@@ -1630,6 +2261,15 @@ struct DashboardState {
 struct EventSnapshot {
     state: DashboardState,
     history: Vec<history::HistoryEntry>,
+}
+
+#[derive(Serialize)]
+struct QueueSnapshot {
+    count: usize,
+    running: bool,
+    run: Option<state::QueueRunRow>,
+    records: Vec<state::QueueItemRow>,
+    error: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -2254,6 +2894,25 @@ struct TaskTranscriptMessage {
 }
 
 #[derive(Deserialize)]
+struct QueueRunRequest {
+    run_id: Option<String>,
+    selected_agent_command: String,
+    selected_repo_root: Option<String>,
+    selected_repo_name: Option<String>,
+    items: Vec<QueueRunItemRequest>,
+}
+
+#[derive(Deserialize)]
+struct QueueRunItemRequest {
+    id: Option<String>,
+    prompt: String,
+    slug: Option<String>,
+    repo_root: Option<String>,
+    repo_name: Option<String>,
+    agent_command: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct ChatRequest {
     text: String,
 }
@@ -2388,6 +3047,46 @@ mod tests {
         assert_eq!(request.cwd.as_deref(), Some(Path::new("/workspace/repo with space")));
         assert_eq!(request.track, "queue");
         assert_eq!(request.command, "c1 exec 'do work'");
+    }
+
+    #[test]
+    fn queue_task_instruction_starts_managed_task() {
+        let item = state::QueueItemRow {
+            id: "item".to_string(),
+            run_id: "run".to_string(),
+            position: 0,
+            prompt: "do focused work".to_string(),
+            slug: "task-run-01".to_string(),
+            repo_root: Some("/workspace/repo".to_string()),
+            repo_name: Some("repo".to_string()),
+            agent_command: "c1".to_string(),
+            agent_id: None,
+            status: "pending".to_string(),
+            message: String::new(),
+            attempts: 0,
+            next_attempt_at: None,
+            started_at: 0,
+            updated_at: 0,
+        };
+
+        let instruction = queue_task_instruction(&item);
+        assert!(instruction.contains("home base for /workspace/repo"));
+        assert!(instruction.contains("cargo qcold task open task-run-01"));
+        assert!(instruction.contains("then do: do focused work"));
+        assert!(instruction.contains("Drive the task to terminal closeout unless blocked"));
+    }
+
+    #[test]
+    fn queue_slug_deduplicates_with_run_prefix() {
+        let mut used = HashSet::new();
+        assert_eq!(
+            clean_queue_slug("task-run-01", "run", 0, &mut used),
+            "task-run-01"
+        );
+        assert_eq!(
+            clean_queue_slug("task-run-01", "run", 1, &mut used),
+            "task-run-02"
+        );
     }
 
     #[test]
