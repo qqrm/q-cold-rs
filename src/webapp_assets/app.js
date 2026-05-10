@@ -338,7 +338,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function queueItemView(item) {
       const task = taskRecordForQueueItem(item);
       const agentId = item.agentId || task?.agent_id || '';
-      const agentRunning = agentId ? runningAgent(agentId) : false;
+      const activeAgentId = activeQueueAgentId(item, task);
       if (task?.status === 'closed:success') {
         return {
           status: 'success',
@@ -361,13 +361,20 @@ const tg = window.Telegram && window.Telegram.WebApp;
         };
       }
       if (task?.status === 'open') {
+        if (!activeAgentId) {
+          return {
+            status: item.status === 'starting' ? 'starting' : 'pending',
+            message: 'task record open; ready to resume',
+            detail: queueItemDetail(item, task, agentId),
+          };
+        }
         return {
           status: 'running',
-          message: 'task record open',
+          message: `agent ${activeAgentId}`,
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (agentId && agentRunning) {
+      if (activeAgentId) {
         return {
           status: item.status === 'starting' ? 'starting' : 'running',
           message: 'agent running',
@@ -1394,6 +1401,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return (model.agents.records || []).some((agent) => agent.id === agentId);
     }
 
+    function activeQueueAgentId(item, task = taskRecordForQueueItem(item)) {
+      return [item.agentId, task?.agent_id].find((agentId) => agentId && runningAgent(agentId)) || '';
+    }
+
     async function waitForQueueTask(item) {
       for (;;) {
         if (queueRun.stop) return { ok: false, status: 'stopped', message: 'stopped by operator' };
@@ -1406,7 +1417,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         if (task?.status && task.status.startsWith('closed')) {
           return { ok: false, status: task.status, message: task.title || item.slug };
         }
-        if (task?.status === 'open' && item.agentId && !runningAgent(item.agentId)) {
+        if (task?.status === 'open' && item.agentId && !activeQueueAgentId(item, task)) {
           return { ok: false, status: 'failed', message: 'agent exited before task closeout' };
         }
         if (!task && item.agentId && !runningAgent(item.agentId)) {
@@ -1482,9 +1493,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
           break;
         }
         if (queueRun.stop || item.status === 'failed') break;
-        if (task?.status === 'open' || (item.agentId && runningAgent(item.agentId))) {
+        const activeAgentId = activeQueueAgentId(item, task);
+        if (activeAgentId) {
           item.status = 'running';
-          item.message = item.agentId ? `agent ${item.agentId}` : 'task record open';
+          item.message = `agent ${activeAgentId}`;
           item.updatedAt = Math.floor(Date.now() / 1000);
           saveQueueStorage();
           renderQueue();
@@ -1517,7 +1529,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
           break;
         }
         item.status = 'starting';
-        item.message = 'starting clean agent context';
+        item.agentId = '';
+        item.message = task?.status === 'open' ? 'resuming interrupted task' : 'starting clean agent context';
         item.updatedAt = Math.floor(Date.now() / 1000);
         saveQueueStorage();
         renderQueue();
