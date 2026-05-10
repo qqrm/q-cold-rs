@@ -320,6 +320,7 @@ fn router() -> Router {
         .route("/api/task-chat/send", post(api_task_chat_send))
         .route("/api/queue/run", post(api_queue_run))
         .route("/api/queue/remove", post(api_queue_remove))
+        .route("/api/queue/clear", post(api_queue_clear))
         .route("/api/queue/stop", post(api_queue_stop))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
@@ -378,6 +379,19 @@ async fn api_queue_remove(
     Json(payload): Json<QueueRemoveRequest>,
 ) -> impl IntoResponse {
     let response = handle_queue_remove(&headers, &payload);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_clear(
+    headers: HeaderMap,
+    Json(payload): Json<QueueClearRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_clear(&headers, &payload);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -666,19 +680,79 @@ fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest)
         bail!("cannot remove queue items while the queue is running");
     }
     let item = state::delete_web_queue_item(&run_id, item_id)?;
-    let task_id = payload
-        .task_id
+    cleanup_queue_item_artifacts(
+        &item,
+        payload
+            .task_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty()),
+        payload
+            .agent_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty()),
+    )
+}
+
+fn handle_queue_clear(headers: &HeaderMap, payload: &QueueClearRequest) -> TerminalSendResponse {
+    match handle_queue_clear_result(headers, payload) {
+        Ok(count) => TerminalSendResponse {
+            ok: true,
+            output: format!("cleared {count} queue item(s)"),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_clear_result(headers: &HeaderMap, payload: &QueueClearRequest) -> Result<usize> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let requested_run_id = payload
+        .run_id
         .as_deref()
+        .map(clean_queue_run_id)
+        .filter(|run_id| !run_id.is_empty());
+    let (run, items) = match requested_run_id {
+        Some(run_id) => state::load_web_queue_run(&run_id)?,
+        None => state::load_web_queue()?,
+    };
+    let Some(run) = run else {
+        return Ok(0);
+    };
+    if matches!(
+        run.status.as_str(),
+        "running" | "waiting" | "starting" | "stopping"
+    ) {
+        state::request_web_queue_stop()?;
+    }
+    let mut removed = 0;
+    for item in items {
+        let item = state::delete_web_queue_item(&run.id, &item.id)?;
+        cleanup_queue_item_artifacts(&item, None, None)?;
+        removed += 1;
+    }
+    Ok(removed)
+}
+
+fn cleanup_queue_item_artifacts(
+    item: &state::QueueItemRow,
+    task_id: Option<&str>,
+    agent_id: Option<&str>,
+) -> Result<()> {
+    let task_id = task_id
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| format!("task/{}", item.slug));
-    let agent_id = payload
-        .agent_id
-        .as_deref()
+    let task = state::get_task_record(&task_id)?;
+    let agent_id = agent_id
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)
-        .or(item.agent_id);
-    if state::get_task_record(&task_id)?.is_some() {
+        .or_else(|| item.agent_id.clone())
+        .or_else(|| task.as_ref().and_then(|task| task.agent_id.clone()));
+    if task.is_some() {
         state::delete_task_record(&task_id)?;
     }
     if let Some(agent_id) = agent_id {
@@ -3605,6 +3679,11 @@ struct QueueRemoveRequest {
     item_id: String,
     task_id: Option<String>,
     agent_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct QueueClearRequest {
+    run_id: Option<String>,
 }
 
 #[derive(Deserialize)]

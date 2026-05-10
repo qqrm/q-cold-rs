@@ -480,6 +480,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       renderQueueRepoSelector();
       renderQueueAgentSelector();
       document.getElementById('add-queue-task').disabled = queueRun.running || !queueInput.value.trim();
+      document.getElementById('clear-queue').disabled = !queueItems.length;
       document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length || !selectedQueueAgentRecord();
       document.getElementById('run-queue').classList.toggle('visible', Boolean(queueItems.length));
       if (!queueItems.length) {
@@ -596,6 +597,33 @@ const tg = window.Telegram && window.Telegram.WebApp;
       } catch (err) {
         appendLocalMessage('error', String(err));
       }
+    }
+
+    async function clearQueue() {
+      if (!queueItems.length) return;
+      const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
+      if (runId) {
+        try {
+          const response = await fetch('/api/queue/clear', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ run_id: runId }),
+          });
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || payload.ok === false) {
+            appendLocalMessage('error', payload.output || 'failed to clear queue');
+            return;
+          }
+        } catch (err) {
+          appendLocalMessage('error', String(err));
+          return;
+        }
+      }
+      queueItems = [];
+      queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
+      saveQueueStorage();
+      await loadSnapshot();
+      renderQueue();
     }
 
     async function copyQueuePrompt(index) {
@@ -1877,6 +1905,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (event.target === transcriptModal) closeTaskTranscript();
     });
     document.getElementById('add-queue-task').addEventListener('click', addQueueTask);
+    document.getElementById('clear-queue').addEventListener('click', clearQueue);
     document.getElementById('run-queue').addEventListener('click', runQueue);
     document.getElementById('stop-queue').addEventListener('click', stopQueue);
     document.getElementById('refresh-agent-limits').addEventListener('click', () => loadAgentLimits(true));

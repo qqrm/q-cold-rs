@@ -351,12 +351,22 @@
       font-size: 12px;
       font-weight: 700;
     }
-    .queue-add-actions, .queue-run-actions {
+    .queue-add-actions {
       justify-content: flex-end;
+    }
+    .queue-run-actions {
+      justify-content: space-between;
     }
     .queue-add-actions button, .queue-run-actions button {
       padding: 7px 10px;
       font-size: 12px;
+    }
+    .queue-run-spacer {
+      flex: 1 1 auto;
+    }
+    .queue-clear {
+      color: var(--bad);
+      border-color: rgba(220, 68, 58, .45);
     }
     #run-queue {
       display: none;

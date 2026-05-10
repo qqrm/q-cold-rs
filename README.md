@@ -174,8 +174,10 @@ Launch and terminal setup failures before a managed task record exists are
 retryable on the same schedule. Once the matching `task/<slug>` record exists,
 Q-COLD will not start a second executor for that row; non-success closeout or a
 prematurely exited executor stops the row for operator diagnostics.
-Queue rows can be reordered, removed, copied, or opened to an interactive task
-chat. When the related terminal agent is still running, that chat can send
+Queue rows can be reordered, removed, copied, cleared in bulk, or opened to an
+interactive task chat. Bulk clearing removes persisted queue rows, removes the
+matching task records, and terminates any associated executor agents. When the
+related terminal agent is still running, that chat can send
 operator messages back into the pane even before Codex telemetry has captured a
 session transcript; if no transcript is available yet, the modal falls back to
 the live terminal output. Blocked task chats remain operator-actionable: if the
