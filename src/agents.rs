@@ -1593,6 +1593,7 @@ mod tests {
 
     #[test]
     fn start_shell_agent_records_process() {
+        let _guard = crate::test_support::env_guard();
         let temp = tempdir().unwrap();
         env::set_var("QCOLD_STATE_DIR", temp.path());
         let record = start_agent(
@@ -1609,6 +1610,5 @@ mod tests {
         assert!(record.id.starts_with("unit-"));
         let snapshot = snapshot().unwrap();
         assert!(snapshot.contains("agent\tunit-"));
-        env::remove_var("QCOLD_STATE_DIR");
     }
 }

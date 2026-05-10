@@ -75,6 +75,7 @@ struct TelegramConfig {
     allowed_usernames: BTreeSet<String>,
     meta_agent_command: Option<String>,
     webapp_url: Option<String>,
+    history_enabled: bool,
 }
 
 impl TelegramConfig {
@@ -104,6 +105,7 @@ impl TelegramConfig {
             allowed_usernames,
             meta_agent_command: optional_env("QCOLD_META_AGENT_COMMAND"),
             webapp_url: optional_env("QCOLD_TELEGRAM_WEBAPP_URL"),
+            history_enabled: true,
         })
     }
 }
@@ -171,8 +173,10 @@ impl Router {
         else {
             return Ok(None);
         };
-        if let Err(err) = history::append("telegram", "operator", text) {
-            eprintln!("Telegram history append failed: {err:#}");
+        if self.config.history_enabled {
+            if let Err(err) = history::append("telegram", "operator", text) {
+                eprintln!("Telegram history append failed: {err:#}");
+            }
         }
 
         if command_matches(text, "status") {
@@ -385,8 +389,12 @@ fn meta_agent_reply(
     config: &TelegramConfig,
 ) -> Result<String> {
     let command = meta_agent_command(config.meta_agent_command.as_deref())?;
-    let prompt = history::prompt_context(text, 20)
-        .unwrap_or_else(|_| format!("Current operator message:\n{}", text.trim()));
+    let prompt = if config.history_enabled {
+        history::prompt_context(text, 20)
+            .unwrap_or_else(|_| format!("Current operator message:\n{}", text.trim()))
+    } else {
+        format!("Current operator message:\n{}", text.trim())
+    };
     run_meta_agent_command(&command, &prompt, message)
 }
 
@@ -571,8 +579,10 @@ impl TelegramClient {
     }
 
     fn send_message(&self, message: &SendMessage) -> Result<()> {
-        if let Err(err) = history::append("telegram", "assistant", &message.text) {
-            eprintln!("Telegram history append failed: {err:#}");
+        if self.config.history_enabled {
+            if let Err(err) = history::append("telegram", "assistant", &message.text) {
+                eprintln!("Telegram history append failed: {err:#}");
+            }
         }
         for text in split_telegram_text(&message.text) {
             let payload = SendMessagePayload {
@@ -900,6 +910,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use std::env;
 
     fn config() -> TelegramConfig {
         TelegramConfig {
@@ -911,6 +922,7 @@ mod tests {
             allowed_usernames: BTreeSet::new(),
             meta_agent_command: None,
             webapp_url: None,
+            history_enabled: false,
         }
     }
 
@@ -1103,5 +1115,22 @@ mod tests {
         };
         let action = send_action(router.route(&update).unwrap().unwrap());
         assert!(action.text.contains("Username: @chttlr"));
+    }
+
+    #[test]
+    fn router_unit_tests_do_not_write_shared_history() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+
+        let router = Router::new(config_with_meta_agent());
+        let update = TelegramUpdate {
+            update_id: 1,
+            message: Some(message(200, "what are you doing?")),
+        };
+        let action = send_action(router.route(&update).unwrap().unwrap());
+
+        assert_eq!(action.text, "handled");
+        assert!(history::load_recent(10).unwrap().is_empty());
     }
 }

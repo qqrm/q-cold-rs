@@ -6,6 +6,8 @@ mod repository;
 mod state;
 mod status;
 mod telegram;
+#[cfg(test)]
+mod test_support;
 mod webapp;
 
 use std::ffi::OsString;

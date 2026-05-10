@@ -486,22 +486,10 @@ fn unix_now() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn env_guard() -> MutexGuard<'static, ()> {
-        let guard = ENV_LOCK.lock().unwrap();
-        env::remove_var("QCOLD_ACTIVE_REPO");
-        env::remove_var("QCOLD_REPO_ROOT");
-        env::remove_var("QCOLD_XTASK_MANIFEST");
-        env::remove_var("QCOLD_STATE_DIR");
-        guard
-    }
 
     #[test]
     fn managed_worktree_config_reuses_registered_primary_adapter_settings() {
-        let _guard = env_guard();
+        let _guard = crate::test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
         env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
 
@@ -550,7 +538,7 @@ mod tests {
 
     #[test]
     fn active_fallback_from_managed_worktree_uses_primary_root() {
-        let _guard = env_guard();
+        let _guard = crate::test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
         let original_cwd = env::current_dir().unwrap();
         env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
