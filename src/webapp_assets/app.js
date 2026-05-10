@@ -225,7 +225,26 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function queueAgentRecords() {
-      return model?.availableAgents?.records || [];
+      const records = model?.availableAgents?.records || [];
+      const numberedAccounts = records.some((agent) => /^\d+$/.test(agent.account || ''));
+      const byAccount = new Map();
+      for (const agent of records) {
+        if (agent.command?.startsWith('cc')) continue;
+        if (agent.account === 'default' && numberedAccounts) continue;
+        const key = agent.account || agent.command;
+        const previous = byAccount.get(key);
+        if (!previous || queueAgentPreference(agent) < queueAgentPreference(previous)) {
+          byAccount.set(key, agent);
+        }
+      }
+      return Array.from(byAccount.values());
+    }
+
+    function queueAgentPreference(agent) {
+      if (/^c\d+$/.test(agent.command || '')) return 0;
+      if (/^codex\d+$/.test(agent.command || '')) return 1;
+      if (agent.command === 'codex') return 2;
+      return 3;
     }
 
     function selectedQueueAgentRecord() {
@@ -255,7 +274,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
       queueAgentSelect.value = selectedQueueAgent;
       queueAgentSelect.disabled = queueRun.running || !records.length;
-      queueAgentState.textContent = `${records.length} available`;
+      const detected = model?.availableAgents?.records?.length || 0;
+      queueAgentState.textContent = detected === records.length
+        ? `${records.length} available`
+        : `${records.length} accounts`;
+      queueAgentState.title = detected === records.length ? '' : `${detected} commands detected`;
       queueAgentState.className = records.length ? 'badge ready' : 'badge warn';
       if (selectedQueueAgent) localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
     }
