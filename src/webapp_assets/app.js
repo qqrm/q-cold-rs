@@ -1415,34 +1415,90 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
     }
 
+    function queueRunIdFromSlug(slug) {
+      const match = /^task-(.+)-\d{2}$/.exec(slug || '');
+      return match?.[1] || '';
+    }
+
+    function existingQueueRunId() {
+      for (const item of queueItems) {
+        const runId = queueRunIdFromSlug(item.slug);
+        if (runId) return runId;
+      }
+      return '';
+    }
+
     async function runQueue() {
       if (queueRun.running || !queueItems.length) return;
       if (!agentLimits) await loadAgentLimits(false);
       const selectedAgent = selectedQueueAgentRecord();
+      const now = Math.floor(Date.now() / 1000);
+      const selectedRepo = selectedQueueRepository();
       queueRun = {
         running: true,
         stop: false,
         activeIndex: -1,
-        runId: Date.now().toString(36),
+        runId: existingQueueRunId() || Date.now().toString(36),
       };
-      queueItems = queueItems.map((item, index) => ({
-        ...item,
-        slug: slugForQueueItem(index, queueRun.runId),
-        agentId: '',
-        repoRoot: selectedQueueRepository().root || '',
-        repoName: selectedQueueRepository().name || '',
-        status: item.prompt.trim() ? 'pending' : 'failed',
-        message: item.prompt.trim() ? '' : 'empty prompt',
-        agentCommand: selectedAgent?.command || '',
-        startedAt: Math.floor(Date.now() / 1000),
-        updatedAt: Math.floor(Date.now() / 1000),
-      }));
+      queueItems = queueItems.map((item, index) => {
+        const task = taskRecordForQueueItem(item);
+        const repo = item.repoRoot ? queueItemRepository(item) : selectedRepo;
+        const closedStatus = task?.status?.startsWith('closed') ? task.status : '';
+        const success = closedStatus === 'closed:success' || item.status === 'success';
+        const prompt = item.prompt.trim();
+        return {
+          ...item,
+          slug: item.slug || slugForQueueItem(index, queueRun.runId),
+          agentId: item.agentId || task?.agent_id || '',
+          repoRoot: repo.root || '',
+          repoName: repo.name || '',
+          status: success ? 'success' : closedStatus ? 'failed' : prompt ? 'pending' : 'failed',
+          message: success ? 'closed successfully' : closedStatus || (prompt ? '' : 'empty prompt'),
+          agentCommand: item.agentCommand || selectedAgent?.command || '',
+          startedAt: item.startedAt || now,
+          updatedAt: now,
+        };
+      });
       saveQueueStorage();
       renderQueue();
       for (let index = 0; index < queueItems.length; index += 1) {
         const item = queueItems[index];
         queueRun.activeIndex = index;
+        const task = taskRecordForQueueItem(item);
+        if (task?.status === 'closed:success' || item.status === 'success') {
+          item.status = 'success';
+          item.message = 'closed successfully';
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
+          renderQueue();
+          continue;
+        }
+        if (task?.status?.startsWith('closed')) {
+          item.status = 'failed';
+          item.message = task.status;
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
+          renderQueue();
+          break;
+        }
         if (queueRun.stop || item.status === 'failed') break;
+        if (task?.status === 'open' || (item.agentId && runningAgent(item.agentId))) {
+          item.status = 'running';
+          item.message = item.agentId ? `agent ${item.agentId}` : 'task record open';
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
+          renderQueue();
+          const result = await waitForQueueTask(item);
+          item.status = result.ok ? 'success' : result.status === 'stopped' ? 'stopped' : 'failed';
+          item.message = result.status === 'closed:success'
+            ? 'closed successfully'
+            : `${result.status}: ${result.message}`;
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
+          renderQueue();
+          if (!result.ok) break;
+          continue;
+        }
         if (!selectedQueueAgentRecord()) {
           item.status = 'failed';
           item.message = 'no available agent command';

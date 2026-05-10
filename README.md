@@ -158,11 +158,13 @@ matching task record reaches `closed:success`; any blocked, failed, unknown,
 prematurely exited, or unavailable-agent task stops the remaining queue. Queue
 runtime metadata is stored in browser local storage, so rows keep showing the
 generated `task/<slug>`, selected agent command, agent id, and live task-record
-state after reloads or SSE reconnects. When Codex telemetry has captured a
-session path, task records expose the saved chat transcript from the Tasks view
-even after the terminal agent has exited. Its Tasks view
-shows Q-COLD task records for the active repository from SQLite as separate active
-and historical sections, including open/closed counts, last-24-hour activity,
+state after reloads or SSE reconnects. Running the queue again preserves
+existing generated task slugs, skips rows whose task records already reached
+`closed:success`, and continues the remaining waiting rows. When Codex
+telemetry has captured a session path, task records expose the saved chat
+transcript from the Tasks view even after the terminal agent has exited. Its
+Tasks view shows Q-COLD task records for the active repository from SQLite as
+separate active and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported
 from session JSONL metadata. Raw managed-worktree status remains available for
 debugging. It streams state and history updates with server-sent events and
