@@ -75,10 +75,11 @@ meaningful user prompt plus the latest Codex token counters in task metadata.
 For adapter-backed task-flow records, Q-COLD also refreshes compact Codex token
 telemetry from matching session JSONL files while task records or the dashboard
 are loaded. It matches the managed worktree or task slug and task time window,
-sums Codex `last_token_usage` samples into per-task `token_usage` metadata, and
-stores bounded `token_efficiency` metadata for session counts plus the largest
-tool outputs by reported `Original token count`. Q-COLD keeps only metadata,
-not raw tool output, and limits task-flow session import to the recent Codex
+sums Codex `last_token_usage` samples into per-task `token_usage` metadata,
+stores the matching `session_path` for transcript viewing, and stores bounded
+`token_efficiency` metadata for session counts plus the largest tool outputs by
+reported `Original token count`. Q-COLD keeps only metadata, not raw tool
+output, and limits task-flow session import to the recent Codex
 telemetry window. The default retention window is 48 hours; set
 `QCOLD_CODEX_TELEMETRY_RETENTION_HOURS` to another positive hour count for one
 process. The metadata is refreshed before terminal `task closeout` updates the

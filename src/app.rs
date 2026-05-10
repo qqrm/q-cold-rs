@@ -623,6 +623,7 @@ struct CodexToolOutputSample {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CodexTaskTelemetry {
     usage: CodexTokenUsage,
+    session_paths: Vec<String>,
     session_count: u64,
     matched_by_worktree: u64,
     matched_by_task: u64,
@@ -828,6 +829,23 @@ fn sync_task_flow_record_for_worktree(
         metadata.insert("task_finished_at".to_string(), Value::from(finish));
     }
     if let Some(telemetry) = telemetry {
+        if let Some(session_path) = telemetry.session_paths.first() {
+            metadata.insert(
+                "session_path".to_string(),
+                Value::String(session_path.clone()),
+            );
+            metadata.insert(
+                "session_paths".to_string(),
+                Value::Array(
+                    telemetry
+                        .session_paths
+                        .iter()
+                        .cloned()
+                        .map(Value::String)
+                        .collect(),
+                ),
+            );
+        }
         metadata.insert("token_usage".to_string(), telemetry.usage.as_json());
         metadata.insert(
             "token_efficiency".to_string(),
@@ -1074,6 +1092,10 @@ fn codex_task_telemetry_for_worktree_in_roots(
             continue;
         }
         telemetry.session_count += 1;
+        let session_path = path.display().to_string();
+        if !telemetry.session_paths.contains(&session_path) {
+            telemetry.session_paths.push(session_path);
+        }
         if worktree_match {
             telemetry.matched_by_worktree += 1;
         }
@@ -1976,7 +1998,7 @@ mod tests {
         )
         .unwrap();
 
-        let usage = codex_task_telemetry_for_worktree_in_roots(
+        let telemetry = codex_task_telemetry_for_worktree_in_roots(
             &worktree,
             None,
             0,
@@ -1985,8 +2007,12 @@ mod tests {
             Some(0),
         )
         .unwrap()
-        .unwrap()
-        .usage;
+        .unwrap();
+        assert_eq!(telemetry.session_paths.len(), 1);
+        assert!(telemetry.session_paths[0].ends_with(
+            "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl"
+        ));
+        let usage = telemetry.usage;
         assert_eq!(usage.model_calls, 2);
         assert_eq!(usage.input_tokens, 17);
         assert_eq!(usage.cached_input_tokens, 9);
@@ -2026,6 +2052,7 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(telemetry.session_count, 1);
+        assert_eq!(telemetry.session_paths.len(), 1);
         assert_eq!(telemetry.matched_by_worktree, 0);
         assert_eq!(telemetry.matched_by_task, 1);
         assert_eq!(telemetry.usage.model_calls, 1);
