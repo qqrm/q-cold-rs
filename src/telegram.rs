@@ -11,6 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{agents, history, repository, state, status, webapp};
 
+const TELEGRAM_INBOUND_ENABLED: bool = false;
+
 #[derive(Args)]
 pub struct TelegramArgs {
     #[command(subcommand)]
@@ -19,9 +21,9 @@ pub struct TelegramArgs {
 
 #[derive(Subcommand)]
 enum TelegramCommand {
-    #[command(about = "Poll Telegram updates and route operator commands")]
+    #[command(about = "Poll and acknowledge Telegram updates without routing inbound commands")]
     Poll(PollArgs),
-    #[command(about = "Serve the Telegram Mini App dashboard over HTTP")]
+    #[command(about = "Serve the local web dashboard over HTTP")]
     Serve(webapp::ServeArgs),
 }
 
@@ -161,6 +163,9 @@ impl Router {
     }
 
     fn route(&self, update: &TelegramUpdate) -> Result<Option<TelegramAction>> {
+        if !TELEGRAM_INBOUND_ENABLED {
+            return Ok(None);
+        }
         let Some(message) = update.message.as_ref() else {
             return Ok(None);
         };
@@ -476,16 +481,7 @@ impl TelegramClient {
 
     fn set_my_commands(&self) -> Result<()> {
         let payload = serde_json::json!({
-            "commands": [
-                { "command": "app", "description": "Open the Q-COLD Mini App dashboard" },
-                { "command": "repos", "description": "Show connected repository context" },
-                { "command": "whoami", "description": "Show your Telegram user id" },
-                { "command": "status", "description": "Show repository task state" },
-                { "command": "agents", "description": "Show managed agents" },
-                { "command": "agent_start", "description": "Start an agent through Q-COLD" },
-                { "command": "task", "description": "Create a task topic" },
-                { "command": "help", "description": "Show Q-COLD help" }
-            ]
+            "commands": []
         });
         let response: TelegramResponse<bool> = self
             .agent
@@ -937,12 +933,6 @@ mod tests {
         config
     }
 
-    fn config_with_meta_agent_echo() -> TelegramConfig {
-        let mut config = config();
-        config.meta_agent_command = Some("cat".to_string());
-        config
-    }
-
     #[test]
     fn default_meta_agent_command_uses_c1_exec() {
         assert_eq!(
@@ -968,179 +958,32 @@ mod tests {
         }
     }
 
-    fn send_action(action: TelegramAction) -> SendMessage {
-        match action {
-            TelegramAction::Send(message) => message,
-            TelegramAction::CreateTask(_) => panic!("expected send action"),
+    #[test]
+    fn telegram_inbound_control_plane_is_frozen() {
+        let router = Router::new(config_with_meta_agent());
+        for (index, text) in [
+            "/help",
+            "/status",
+            "/agents",
+            "/repos",
+            "/app",
+            "/task implement telegram topics",
+            "/agent_start audit :: echo hi",
+            "/whoami",
+            "what are you doing?",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut msg = message(200, text);
+            if text == "what are you doing?" {
+                msg.reply_to_message = Some(Box::new(message(200, "previous bot message")));
+            }
+            let update = TelegramUpdate {
+                update_id: i64::try_from(index).unwrap() + 1,
+                message: Some(msg),
+            };
+            assert!(router.route(&update).unwrap().is_none());
         }
-    }
-
-    fn create_task_action(action: TelegramAction) -> TaskRequest {
-        match action {
-            TelegramAction::CreateTask(request) => request,
-            TelegramAction::Send(_) => panic!("expected create task action"),
-        }
-    }
-
-    #[test]
-    fn direct_meta_chat_message_routes_to_meta_agent() {
-        let router = Router::new(config_with_meta_agent());
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(200, "what are you doing?")),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert_eq!(action.chat_id, "200");
-        assert_eq!(action.text, "handled");
-    }
-
-    #[test]
-    fn operator_plain_message_is_ignored_without_reply_context() {
-        let router = Router::new(config());
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(100, "noise")),
-        };
-        assert!(router.route(&update).unwrap().is_none());
-    }
-
-    #[test]
-    fn reply_in_operator_chat_routes_to_meta_agent() {
-        let router = Router::new(config_with_meta_agent());
-        let mut msg = message(100, "continue");
-        msg.reply_to_message = Some(Box::new(message(100, "previous bot message")));
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(msg),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert_eq!(action.chat_id, "100");
-        assert_eq!(action.text, "handled");
-    }
-
-    #[test]
-    fn unauthorized_user_is_ignored() {
-        let router = Router::new(config());
-        let mut msg = message(200, "hello");
-        msg.from = Some(TelegramUser {
-            id: 8,
-            username: Some("other".to_string()),
-        });
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(msg),
-        };
-        assert!(router.route(&update).unwrap().is_none());
-    }
-
-    #[test]
-    fn allowed_user_private_chat_accepts_commands() {
-        let router = Router::new(config());
-        let mut msg = message(7, "/help");
-        msg.chat.kind = "private".to_string();
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(msg),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert!(action.text.contains("Q-COLD Telegram control plane"));
-    }
-
-    #[test]
-    fn allowed_user_private_chat_routes_plain_text_to_meta_agent() {
-        let router = Router::new(config_with_meta_agent());
-        let mut msg = message(7, "continue the task");
-        msg.chat.kind = "private".to_string();
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(msg),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert_eq!(action.text, "handled");
-    }
-
-    #[test]
-    fn task_command_creates_task_topic_action() {
-        let router = Router::new(config());
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(100, "/task implement telegram topics")),
-        };
-        let action = create_task_action(router.route(&update).unwrap().unwrap());
-        assert_eq!(action.source_chat_id, "100");
-        assert_eq!(action.title, "implement telegram topics");
-        assert!(action.topic_name.starts_with("qcd-"));
-    }
-
-    #[test]
-    fn app_command_explains_missing_webapp_url() {
-        let router = Router::new(config());
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(100, "/app")),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert!(action.text.contains("Mini App URL is not configured"));
-        assert!(action.reply_markup.is_none());
-    }
-
-    #[test]
-    fn app_command_uses_webapp_button_when_configured() {
-        let mut config = config();
-        config.webapp_url = Some("https://qcold.example/app".to_string());
-        let router = Router::new(config);
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(100, "/app")),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert_eq!(action.text, "Open Q-COLD Mini App.");
-        let markup = action.reply_markup.as_ref().unwrap().to_json();
-        assert_eq!(
-            markup["inline_keyboard"][0][0]["web_app"]["url"],
-            "https://qcold.example/app"
-        );
-    }
-
-    #[test]
-    fn whoami_reports_user_id() {
-        let router = Router::new(config());
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(100, "/whoami")),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert!(action.text.contains("Telegram user id: 7"));
-        assert!(action.text.contains("Operator user allowlist is active."));
-    }
-
-    #[test]
-    fn username_allowlist_accepts_matching_user() {
-        let mut config = config();
-        config.allowed_user_ids.clear();
-        config.allowed_usernames = BTreeSet::from(["chttlr".to_string()]);
-        let router = Router::new(config);
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(100, "/whoami")),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-        assert!(action.text.contains("Username: @chttlr"));
-    }
-
-    #[test]
-    fn router_unit_tests_do_not_write_shared_history() {
-        let router = Router::new(config_with_meta_agent_echo());
-        let update = TelegramUpdate {
-            update_id: 1,
-            message: Some(message(200, "what are you doing?")),
-        };
-        let action = send_action(router.route(&update).unwrap().unwrap());
-
-        assert_eq!(
-            action.text,
-            "Current operator message:\nwhat are you doing?"
-        );
-        assert!(!action.text.contains("Recent messages:"));
     }
 }

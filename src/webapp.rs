@@ -45,7 +45,7 @@ static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 pub struct ServeArgs {
     #[arg(long, default_value = "127.0.0.1:8787")]
     listen: String,
-    #[arg(long, help = "Run the Mini App server as a persistent Q-COLD daemon")]
+    #[arg(long, help = "Run the local web dashboard as a persistent Q-COLD daemon")]
     daemon: bool,
     #[arg(long, hide = true)]
     daemon_child: bool,
@@ -785,11 +785,17 @@ fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest)
     if item_id.is_empty() || item_id.chars().any(char::is_control) {
         bail!("invalid queue item id");
     }
-    let (run, _) = state::load_web_queue_run(&run_id)?;
+    let (run, items) = state::load_web_queue_run(&run_id)?;
+    let item = items.iter().find(|item| item.id == item_id);
     if run.as_ref().is_some_and(|run| {
         matches!(run.status.as_str(), "running" | "waiting" | "starting" | "stopping")
     }) {
-        bail!("cannot remove queue items while the queue is running");
+        let Some(item) = item else {
+            return Ok(());
+        };
+        if !queue_item_removable_while_running(item)? {
+            bail!("cannot remove active queue items while the queue is running");
+        }
     }
     let task_id = payload
         .task_id
@@ -803,6 +809,13 @@ fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest)
         Some(item) => cleanup_queue_item_artifacts(&item, task_id, agent_id),
         None => cleanup_task_agent_artifacts(task_id, agent_id),
     }
+}
+
+fn queue_item_removable_while_running(item: &state::QueueItemRow) -> Result<bool> {
+    if queue_item_terminal(&item.status) {
+        return Ok(true);
+    }
+    Ok(queue_task_status(item)?.is_some_and(|status| status.starts_with("closed")))
 }
 
 fn handle_queue_clear(headers: &HeaderMap, payload: &QueueClearRequest) -> TerminalSendResponse {

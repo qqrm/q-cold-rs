@@ -91,9 +91,9 @@ per-task telemetry is available.
 
 ## Web interface
 
-The Telegram Mini App server exposes the local operator dashboard. It includes
-the meta-agent chat, task-flow status, managed agents, attachable terminal
-panes, and a command composer for starting tracked agents.
+The local web dashboard server exposes the operator dashboard. It includes the
+meta-agent chat, task-flow status, managed agents, attachable terminal panes,
+and a command composer for starting tracked agents.
 
 `qcold repo add` stores repository connections in the local Q-COLD
 SQLite database. Adapter-backed commands such as `status`, `task`, `verify`,
@@ -108,26 +108,17 @@ If no repository is registered, Q-COLD falls back to
 the current checkout for development compatibility. `QCOLD_REPO_ROOT` and
 `QCOLD_ACTIVE_REPO` can override the resolved connection for one process.
 
-Telegram polling is configured with `TELEGRAM_BOT_TOKEN` plus
-`QCOLD_TELEGRAM_OPERATOR_CHAT_ID` or `TELEGRAM_CHAT_ID`. Command-capable
-polling fails closed unless `QCOLD_TELEGRAM_ALLOWED_USER_IDS` or
-`QCOLD_TELEGRAM_ALLOWED_USERNAMES` is set. Prefer
-`QCOLD_TELEGRAM_ALLOWED_USER_IDS` with comma-separated numeric Telegram user
-ids; usernames are useful only as a bootstrap fallback because they can change.
-Use `/whoami` in the operator chat to see the numeric Telegram user id to place
-in that allowlist. On poller startup Q-COLD publishes the current Bot API
-command list with `setMyCommands` so Telegram clients can show slash-command
-hints. Direct private chats are accepted only when the Telegram account is in
-the operator allowlist; group and forum commands must come from the configured
-chat. `/status` returns a human-readable repository task summary for Telegram,
-`/agents` returns the Q-COLD managed-agent registry, and
-`/agent_start <track> :: <command>` starts an agent through Q-COLD. `/repos`
-shows registered repository connections and the active repository. `/app`
-returns a Telegram Mini App launch button when `QCOLD_TELEGRAM_WEBAPP_URL` is
-set. The Mini App itself is served by `qcold telegram serve --listen <addr>` and
-exposes an Axum-backed operator dashboard with repository context, task-flow
-status, managed agents, shared local history, and a meta-agent command
-composer. Use `--daemon` for the persistent local control plane:
+Telegram outbound notifications still use `TELEGRAM_BOT_TOKEN` plus
+`QCOLD_TELEGRAM_OPERATOR_CHAT_ID` or `TELEGRAM_CHAT_ID` through the repository
+adapter notification flow. Inbound Telegram control is frozen: `qcold telegram
+poll` acknowledges updates so they do not accumulate, clears the bot slash
+command menu with `setMyCommands`, and deliberately does not route messages,
+slash commands, Mini App launch requests, task creation, agent starts, or
+meta-agent chat. The web dashboard itself is served by
+`qcold telegram serve --listen <addr>` and exposes an Axum-backed operator
+dashboard with repository context, task-flow status, managed agents, shared
+local history, and a meta-agent command composer. Use `--daemon` for the
+persistent local control plane:
 
 ```bash
 qcold telegram serve --listen 127.0.0.1:8787 --daemon
@@ -290,21 +281,15 @@ initial schema for runs, claims, budgets, and recipes. Legacy `agents.tsv`,
 `telegram_tasks.tsv`, and `task-events/*.log` files are imported on first read
 when the corresponding SQLite tables are empty.
 
-Telegram
-Mini Apps require a public HTTPS URL; run the local server behind an HTTPS
-reverse proxy or tunnel before setting `QCOLD_TELEGRAM_WEBAPP_URL`. Plain
-messages in `QCOLD_TELEGRAM_META_CHAT_ID`, or replies in an allowed chat, are
-routed to `QCOLD_META_AGENT_COMMAND` when it is set. If it is unset, Q-COLD
-uses `c1 exec --ephemeral --cd <repo> -` from the active repository, so the
-meta-agent uses the local C1 Codex account while Codex session state is not
-persisted between meta-agent runs. The meta-agent prompt includes the latest
-shared local history entries plus the current operator message, excluding
-control-plane slash commands and agent-launch transcripts.
+Telegram Mini App launch and inbound chat routing are currently suspended.
+`QCOLD_TELEGRAM_WEBAPP_URL`, `QCOLD_TELEGRAM_META_CHAT_ID`, `/app`, `/task`,
+plain Telegram messages, and Telegram replies are ignored by the poller while
+the Telegram control plane is frozen.
 
-In a forum supergroup, `/task <description>` creates a per-task topic when the
-bot has permission to manage topics. Q-COLD stores the topic mapping under
-`QCOLD_STATE_DIR` or `~/.local/state/qcold`, and later messages in that topic
-are recorded as task input.
+Historically, in a forum supergroup, `/task <description>` created a per-task
+topic when the bot had permission to manage topics. Existing topic mappings
+remain stored under `QCOLD_STATE_DIR` or `~/.local/state/qcold`, but new
+messages in those topics are ignored while inbound Telegram control is frozen.
 
 Adapter-backed commands run from a target repository checkout with
 `cargo xtask`, or through `QCOLD_XTASK_MANIFEST` when an explicit xtask
