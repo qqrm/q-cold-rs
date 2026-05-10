@@ -43,7 +43,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
     let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
-    let transcriptContext = { taskId: '', terminalTarget: '' };
+    let transcriptContext = { taskId: '', terminalTarget: '', chatAvailable: false };
     let agentLimits = null;
     let agentLimitsLoading = false;
 
@@ -431,6 +431,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return {
         ...defaultQueueItem(),
         id: item.id,
+        runId: item.run_id || '',
         prompt: item.prompt || '',
         slug: item.slug || '',
         agentId: item.agent_id || '',
@@ -538,9 +539,38 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function removeQueueItem(index) {
       if (queueRun.running) return;
+      const item = queueItems[index];
+      const task = taskRecordForQueueItem(item);
+      if (item?.runId) {
+        removeServerQueueItem(item, task);
+        return;
+      }
       queueItems.splice(index, 1);
       saveQueueStorage();
       renderQueue();
+    }
+
+    async function removeServerQueueItem(item, task) {
+      try {
+        const response = await fetch('/api/queue/remove', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            run_id: item.runId,
+            item_id: item.id,
+            task_id: task?.id || (item.slug ? `task/${item.slug}` : ''),
+            agent_id: item.agentId || task?.agent_id || '',
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to remove queue item');
+          return;
+        }
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
     }
 
     async function copyQueuePrompt(index) {
@@ -630,6 +660,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       transcriptContext = {
         taskId,
         terminalTarget: terminal?.target || '',
+        chatAvailable: Boolean(terminal?.target),
       };
       transcriptTitle.textContent = 'Task Chat';
       transcriptSubtitle.textContent = taskId;
@@ -652,6 +683,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
           payload.status,
           payload.session_path || (terminal ? `agent ${terminal.agent_id || terminal.label || terminal.target}` : ''),
         ].filter(Boolean).join(' / ');
+        transcriptContext.chatAvailable = Boolean(transcriptContext.terminalTarget || payload.chat_available);
+        renderTranscriptComposer();
+        if (!transcriptContext.terminalTarget && payload.chat_available) ensureTaskChatTarget(taskId);
         const messages = payload.messages || [];
         if (!messages.length) {
           renderTranscriptFallback('No chat messages found in transcript.');
@@ -685,7 +719,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
       transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'empty',
-        textContent: transcriptContext.terminalTarget
+        textContent: transcriptContext.chatAvailable
           ? `${message} Send a message below to continue in the live terminal.`
           : message,
       }));
@@ -702,7 +736,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function renderTranscriptComposer() {
-      const enabled = Boolean(transcriptContext.terminalTarget);
+      const enabled = Boolean(transcriptContext.terminalTarget || transcriptContext.chatAvailable);
       transcriptCompose.hidden = !enabled;
       transcriptInput.disabled = !enabled;
       transcriptSend.disabled = !enabled;
@@ -711,8 +745,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function terminalForTaskId(taskId) {
       const task = queueTaskRecords().find((record) => record.id === taskId);
-      if (!task?.agent_id) return null;
-      return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === task.agent_id) || null;
+      const queueItem = queueItems.find((item) => `task/${item.slug}` === taskId);
+      const agentId = task?.agent_id || queueItem?.agentId || '';
+      if (!agentId) return null;
+      return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
     }
 
     function terminalForTarget(target) {
@@ -722,12 +758,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     async function sendTranscriptMessage() {
       const text = transcriptInput.value.trimEnd();
-      if (!text.trim() || !transcriptContext.terminalTarget) return;
+      if (!text.trim() || !transcriptContext.chatAvailable) return;
       transcriptInput.value = '';
-      const payload = await postTerminalText(transcriptContext.terminalTarget, text, {
-        mode: terminalTextMode(text),
-        submit: true,
-      });
+      const payload = await postTaskChatMessage(transcriptContext.taskId, transcriptContext.terminalTarget, text);
       if (!payload.ok) {
         transcriptLog.appendChild(messageNode({
           timestamp: Math.floor(Date.now() / 1000),
@@ -738,6 +771,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         transcriptLog.scrollTop = transcriptLog.scrollHeight;
         return;
       }
+      if (payload.target) transcriptContext.terminalTarget = payload.target;
       window.setTimeout(async () => {
         await loadSnapshot();
         if (!transcriptModal.hidden && transcriptContext.taskId) {
@@ -748,9 +782,40 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }, 350);
     }
 
+    async function postTaskChatMessage(taskId, target, text) {
+      const response = await fetch('/api/task-chat/send', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ task_id: taskId, target, text }),
+      });
+      return response.json().catch(() => ({
+        ok: false,
+        output: response.ok ? 'invalid task chat response' : `HTTP ${response.status}`,
+      }));
+    }
+
+    async function ensureTaskChatTarget(taskId) {
+      try {
+        const response = await fetch('/api/task-chat/target', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ task_id: taskId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) return;
+        if (transcriptContext.taskId !== taskId) return;
+        if (payload.target) transcriptContext.terminalTarget = payload.target;
+        transcriptContext.chatAvailable = true;
+        renderTranscriptComposer();
+        await loadSnapshot();
+      } catch (_) {
+        // The send path reports startup failures; opening the transcript should stay readable.
+      }
+    }
+
     function closeTaskTranscript() {
       transcriptModal.hidden = true;
-      transcriptContext = { taskId: '', terminalTarget: '' };
+      transcriptContext = { taskId: '', terminalTarget: '', chatAvailable: false };
       transcriptInput.value = '';
       transcriptLog.replaceChildren();
       renderTranscriptComposer();

@@ -247,6 +247,18 @@ pub fn terminal_contexts() -> Result<Vec<TerminalAgentContext>> {
         .collect())
 }
 
+pub fn terminate_agent(id: &str) -> Result<bool> {
+    let Some(record) = AgentState::load()?.records.into_iter().find(|record| record.id == id) else {
+        return Ok(false);
+    };
+    if let Some(target) = terminal_target(&record) {
+        terminate_terminal_target(&target)?;
+        return Ok(true);
+    }
+    terminate_process(record.pid)?;
+    Ok(true)
+}
+
 pub fn start_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
     if command.trim().is_empty() {
         bail!("agent command is empty");
@@ -1022,6 +1034,42 @@ fn attach_terminal(record: &AgentRecord) -> Result<()> {
         bail!("terminal attach failed with {status}");
     }
     Ok(())
+}
+
+fn terminate_terminal_target(target: &TerminalTarget) -> Result<()> {
+    let mut command = match target {
+        TerminalTarget::Tmux { session } => {
+            let mut command = Command::new("tmux");
+            command.args(["kill-session", "-t", session]);
+            command
+        }
+        TerminalTarget::Zellij { session, .. } => {
+            let mut command = Command::new("zellij");
+            command.args(["kill-session", session]);
+            command
+        }
+    };
+    let status = command.status().context("failed to terminate terminal agent")?;
+    if !status.success() {
+        bail!("terminal agent termination failed with {status}");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn terminate_process(pid: u32) -> Result<()> {
+    let pid = i32::try_from(pid).context("agent pid is too large")?;
+    // SAFETY: kill(2) is called with a pid previously recorded by Q-COLD.
+    let result = unsafe { libc::kill(pid, libc::SIGTERM) };
+    if result != 0 {
+        return Err(std::io::Error::last_os_error()).context("kill(SIGTERM) failed");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn terminate_process(_pid: u32) -> Result<()> {
+    bail!("agent termination is only supported on unix platforms")
 }
 
 fn terminal_target(record: &AgentRecord) -> Option<TerminalTarget> {

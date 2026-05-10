@@ -462,6 +462,57 @@ pub fn update_web_queue_item(
     Ok(())
 }
 
+pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_items
+             set agent_id = ?3, updated_at_unix = ?4
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id, agent_id, unix_now()],
+        )
+        .context("failed to update web queue item agent")?;
+    Ok(())
+}
+
+pub fn delete_web_queue_item(run_id: &str, item_id: &str) -> Result<QueueItemRow> {
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction()
+        .context("failed to start web queue item delete transaction")?;
+    let item = tx
+        .query_row(
+            "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                    updated_at_unix
+             from web_queue_items
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id],
+            queue_item_from_row,
+        )
+        .optional()
+        .context("failed to query web queue item")?
+        .with_context(|| format!("unknown queue item: {item_id}"))?;
+    tx.execute(
+        "delete from web_queue_items where run_id = ?1 and id = ?2",
+        params![run_id, item_id],
+    )
+    .context("failed to delete web queue item")?;
+    let remaining = tx
+        .query_row(
+            "select count(*) from web_queue_items where run_id = ?1",
+            [run_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .context("failed to count remaining web queue items")?;
+    if remaining == 0 {
+        tx.execute("delete from web_queue_runs where id = ?1", [run_id])
+            .context("failed to delete empty web queue run")?;
+    }
+    tx.commit().context("failed to commit web queue item delete")?;
+    Ok(item)
+}
+
 pub fn save_terminal_metadata(target: &str, name: Option<&str>, scope: Option<&str>) -> Result<()> {
     let connection = open_db()?;
     if name.is_none() && scope.is_none() {

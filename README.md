@@ -167,14 +167,20 @@ Queue rows can be reordered, removed, copied, or opened to an interactive task
 chat. When the related terminal agent is still running, that chat can send
 operator messages back into the pane even before Codex telemetry has captured a
 session transcript; if no transcript is available yet, the modal falls back to
-the live terminal output. Rows without a task record still switch to the Tasks
-view while recording a row-level availability note. Any blocked, failed,
-unknown, or prematurely exited task stops the remaining queue. Queue draft rows
-may still use browser local storage before launch, but live queue state, retry
-counters, agent ids, and generated `task/<slug>` values come from the backend
-snapshot after launch, so refreshing the tab does not stop the active run. When
-Codex telemetry has captured a session path, task records expose the saved chat
-transcript from the Tasks view even after the terminal agent has exited. Its
+the live terminal output. Blocked task chats remain operator-actionable: if the
+original pane has exited but the saved Codex session id is known, Q-COLD starts a
+fresh attachable `resume` terminal target before sending the next operator
+message. Removing a persisted queue row is the cleanup boundary for that work:
+the backend removes the row, removes the matching `task/<slug>` record, and
+terminates the associated executor agent when one is still known. Rows without a
+task record still switch to the Tasks view while recording a row-level
+availability note. Any blocked, failed, unknown, or prematurely exited task stops
+the remaining queue. Queue draft rows may still use browser local storage before
+launch, but live queue state, retry counters, agent ids, and generated
+`task/<slug>` values come from the backend snapshot after launch, so refreshing
+the tab does not stop the active run. When Codex telemetry has captured a
+session path, task records expose the saved chat transcript from the Tasks view
+even after the terminal agent has exited. Its
 Tasks view shows Q-COLD task records for the active repository from SQLite as
 separate active and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported

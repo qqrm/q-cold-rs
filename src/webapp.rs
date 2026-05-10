@@ -316,7 +316,10 @@ fn router() -> Router {
         .route("/api/state", get(api_state))
         .route("/api/agent-limits", get(api_agent_limits))
         .route("/api/task-transcript", get(api_task_transcript))
+        .route("/api/task-chat/target", post(api_task_chat_target))
+        .route("/api/task-chat/send", post(api_task_chat_send))
         .route("/api/queue/run", post(api_queue_run))
+        .route("/api/queue/remove", post(api_queue_remove))
         .route("/api/queue/stop", post(api_queue_stop))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
@@ -370,8 +373,47 @@ async fn api_queue_run(headers: HeaderMap, Json(payload): Json<QueueRunRequest>)
     no_store((status, Json(response)))
 }
 
+async fn api_queue_remove(
+    headers: HeaderMap,
+    Json(payload): Json<QueueRemoveRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_remove(&headers, &payload);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
 async fn api_queue_stop(headers: HeaderMap) -> impl IntoResponse {
     let response = handle_queue_stop(&headers);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_task_chat_target(
+    headers: HeaderMap,
+    Json(payload): Json<TaskChatTargetRequest>,
+) -> impl IntoResponse {
+    let response = handle_task_chat_target(&headers, &payload);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_task_chat_send(
+    headers: HeaderMap,
+    Json(payload): Json<TaskChatSendRequest>,
+) -> impl IntoResponse {
+    let response = handle_task_chat_send(&headers, &payload);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -593,6 +635,56 @@ fn handle_queue_stop_result(headers: &HeaderMap) -> Result<()> {
         require_write_token(headers)?;
     }
     state::request_web_queue_stop()
+}
+
+fn handle_queue_remove(headers: &HeaderMap, payload: &QueueRemoveRequest) -> TerminalSendResponse {
+    match handle_queue_remove_result(headers, payload) {
+        Ok(()) => TerminalSendResponse {
+            ok: true,
+            output: "removed".to_string(),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest) -> Result<()> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let run_id = clean_queue_run_id(&payload.run_id);
+    let item_id = payload.item_id.trim();
+    if item_id.is_empty() || item_id.chars().any(char::is_control) {
+        bail!("invalid queue item id");
+    }
+    let (run, _) = state::load_web_queue_run(&run_id)?;
+    if run.as_ref().is_some_and(|run| {
+        matches!(run.status.as_str(), "running" | "waiting" | "starting" | "stopping")
+    }) {
+        bail!("cannot remove queue items while the queue is running");
+    }
+    let item = state::delete_web_queue_item(&run_id, item_id)?;
+    let task_id = payload
+        .task_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("task/{}", item.slug));
+    let agent_id = payload
+        .agent_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+        .or(item.agent_id);
+    if state::get_task_record(&task_id)?.is_some() {
+        state::delete_task_record(&task_id)?;
+    }
+    if let Some(agent_id) = agent_id {
+        let _ = agents::terminate_agent(&agent_id);
+    }
+    Ok(())
 }
 
 fn spawn_web_queue_worker(run_id: String) {
@@ -1060,6 +1152,153 @@ fn handle_terminal_send_result(headers: &HeaderMap, payload: &TerminalSendReques
     }
 }
 
+fn handle_task_chat_target(
+    headers: &HeaderMap,
+    payload: &TaskChatTargetRequest,
+) -> TaskChatResponse {
+    match handle_task_chat_target_result(headers, payload) {
+        Ok((target, agent_id)) => TaskChatResponse {
+            ok: true,
+            output: "target ready".to_string(),
+            target,
+            agent_id,
+        },
+        Err(err) => TaskChatResponse {
+            ok: false,
+            output: format!("{err:#}"),
+            target: String::new(),
+            agent_id: String::new(),
+        },
+    }
+}
+
+fn handle_task_chat_target_result(
+    headers: &HeaderMap,
+    payload: &TaskChatTargetRequest,
+) -> Result<(String, String)> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    ensure_task_chat_target(&payload.task_id)
+}
+
+fn handle_task_chat_send(headers: &HeaderMap, payload: &TaskChatSendRequest) -> TaskChatResponse {
+    match handle_task_chat_send_result(headers, payload) {
+        Ok((target, agent_id)) => TaskChatResponse {
+            ok: true,
+            output: "sent".to_string(),
+            target,
+            agent_id,
+        },
+        Err(err) => TaskChatResponse {
+            ok: false,
+            output: format!("{err:#}"),
+            target: String::new(),
+            agent_id: String::new(),
+        },
+    }
+}
+
+fn handle_task_chat_send_result(
+    headers: &HeaderMap,
+    payload: &TaskChatSendRequest,
+) -> Result<(String, String)> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let text = payload.text.trim_end();
+    if text.trim().is_empty() {
+        bail!("task chat message is empty");
+    }
+    let (target, agent_id) = if let Some(target) = payload
+        .target
+        .as_deref()
+        .filter(|target| !target.trim().is_empty())
+    {
+        (clean_terminal_target(target)?, String::new())
+    } else {
+        ensure_task_chat_target(&payload.task_id)?
+    };
+    send_task_chat_text(&target, text)?;
+    Ok((target, agent_id))
+}
+
+fn send_task_chat_text(target: &str, text: &str) -> Result<()> {
+    if text.trim_start().starts_with('/') && !text.contains('\n') {
+        send_terminal_literal(target, text, true)
+    } else {
+        send_terminal_paste(target, text, true)
+    }
+}
+
+fn ensure_task_chat_target(task_id: &str) -> Result<(String, String)> {
+    crate::sync_codex_task_records().ok();
+    let mut record = task_record_by_id(task_id)?;
+    let queue_item = queue_item_for_task_id(&record.id)?;
+    if let Some(agent_id) = record
+        .agent_id
+        .clone()
+        .or_else(|| queue_item.as_ref().and_then(|item| item.agent_id.clone()))
+    {
+        if let Some(target) = active_terminal_target_for_agent(&agent_id) {
+            return Ok((target, agent_id));
+        }
+    }
+    if record.status != "closed:blocked" {
+        bail!("task has no live chat target");
+    }
+    let session_id =
+        codex_resume_session_id(&record).context("blocked task has no Codex session id")?;
+    let agent_command = queue_item
+        .as_ref()
+        .map(|item| item.agent_command.clone())
+        .or_else(|| codex_command_from_metadata(record.metadata_json.as_deref()))
+        .unwrap_or_else(|| "c1".to_string());
+    if !agents::available_agent_commands()
+        .iter()
+        .any(|agent| agent.command == agent_command)
+    {
+        bail!("unknown task chat agent command: {agent_command}");
+    }
+    let command = format!("{agent_command} resume {}", shell_quote(&session_id));
+    let cwd = record
+        .cwd
+        .as_deref()
+        .filter(|path| Path::new(path).is_dir())
+        .or(record.repo_root.as_deref().filter(|path| Path::new(path).is_dir()))
+        .map(PathBuf::from);
+    let request = AgentStartRequest {
+        cwd,
+        track: "task-chat".to_string(),
+        command,
+    };
+    let agent = start_web_agent(&request)?;
+    let target = wait_for_agent_terminal_target(&agent.id)
+        .context("task chat terminal did not appear")?;
+    record.agent_id = Some(agent.id.clone());
+    state::upsert_task_record(&record)?;
+    if let Some(item) = queue_item {
+        state::set_web_queue_item_agent(&item.run_id, &item.id, &agent.id)?;
+    }
+    Ok((target, agent.id))
+}
+
+fn task_record_by_id(task_id: &str) -> Result<state::TaskRecordRow> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() || task_id.chars().any(char::is_control) {
+        bail!("invalid task id");
+    }
+    state::get_task_record(task_id)?.with_context(|| format!("unknown task record: {task_id}"))
+}
+
+fn active_terminal_target_for_agent(agent_id: &str) -> Option<String> {
+    agents::terminal_contexts()
+        .ok()?
+        .into_iter()
+        .find(|context| context.id == agent_id)
+        .map(|context| context.target)
+}
+
 fn handle_terminal_metadata(
     headers: &HeaderMap,
     payload: &TerminalMetadataRequest,
@@ -1118,6 +1357,7 @@ fn task_transcript_response(task_id: &str) -> TaskTranscriptResponse {
             title: String::new(),
             status: String::new(),
             session_path: None,
+            chat_available: false,
             messages: Vec::new(),
             output: format!("{err:#}"),
         },
@@ -1139,15 +1379,21 @@ fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
         bail!("refusing to read non-Codex session path: {}", path.display());
     }
     let messages = codex_transcript_messages(&path)?;
+    let chat_available = task_record_chat_available(&record);
     Ok(TaskTranscriptResponse {
         ok: true,
         task_id: record.id,
         title: record.title,
+        chat_available,
         status: record.status,
         session_path: Some(session_path),
         messages,
         output: String::new(),
     })
+}
+
+fn task_record_chat_available(record: &state::TaskRecordRow) -> bool {
+    record.status == "closed:blocked" && codex_resume_session_id(record).is_some()
 }
 
 fn codex_session_path_from_metadata(metadata_json: Option<&str>) -> Option<String> {
@@ -1156,6 +1402,51 @@ fn codex_session_path_from_metadata(metadata_json: Option<&str>) -> Option<Strin
         .get("session_path")
         .and_then(Value::as_str)
         .map(ToString::to_string)
+}
+
+fn codex_command_from_metadata(metadata_json: Option<&str>) -> Option<String> {
+    let metadata = serde_json::from_str::<Value>(metadata_json?).ok()?;
+    metadata
+        .get("command")
+        .and_then(Value::as_str)
+        .and_then(|command| shell_words(command).into_iter().next())
+}
+
+fn codex_resume_session_id(record: &state::TaskRecordRow) -> Option<String> {
+    let metadata = serde_json::from_str::<Value>(record.metadata_json.as_deref()?).ok()?;
+    metadata
+        .get("codex_thread_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .or_else(|| {
+            metadata
+                .get("session_path")
+                .and_then(Value::as_str)
+                .and_then(codex_thread_id_from_session_path)
+        })
+}
+
+fn codex_thread_id_from_session_path(path: &str) -> Option<String> {
+    let stem = Path::new(path).file_stem()?.to_str()?;
+    let id = stem.get(stem.len().saturating_sub(36)..)?;
+    if id.len() == 36
+        && id.chars().enumerate().all(|(index, ch)| {
+            matches!(index, 8 | 13 | 18 | 23) && ch == '-'
+                || !matches!(index, 8 | 13 | 18 | 23) && ch.is_ascii_hexdigit()
+        })
+    {
+        Some(id.to_string())
+    } else {
+        None
+    }
+}
+
+fn queue_item_for_task_id(task_id: &str) -> Result<Option<state::QueueItemRow>> {
+    let (_, items) = state::load_web_queue()?;
+    let Some(slug) = task_id.strip_prefix("task/") else {
+        return Ok(None);
+    };
+    Ok(items.into_iter().find(|item| item.slug == slug))
 }
 
 fn is_codex_session_path(path: &Path) -> bool {
@@ -3064,6 +3355,7 @@ struct TaskTranscriptResponse {
     title: String,
     status: String,
     session_path: Option<String>,
+    chat_available: bool,
     messages: Vec<TaskTranscriptMessage>,
     output: String,
 }
@@ -3095,7 +3387,27 @@ struct QueueRunItemRequest {
 }
 
 #[derive(Deserialize)]
+struct QueueRemoveRequest {
+    run_id: String,
+    item_id: String,
+    task_id: Option<String>,
+    agent_id: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct ChatRequest {
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct TaskChatTargetRequest {
+    task_id: String,
+}
+
+#[derive(Deserialize)]
+struct TaskChatSendRequest {
+    task_id: String,
+    target: Option<String>,
     text: String,
 }
 
@@ -3125,6 +3437,14 @@ struct ChatResponse {
 struct TerminalSendResponse {
     ok: bool,
     output: String,
+}
+
+#[derive(Serialize)]
+struct TaskChatResponse {
+    ok: bool,
+    output: String,
+    target: String,
+    agent_id: String,
 }
 
 const INDEX_HTML: &str = include_str!("webapp_assets/index.html");
