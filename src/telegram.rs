@@ -175,12 +175,6 @@ impl Router {
         else {
             return Ok(None);
         };
-        if self.config.history_enabled {
-            if let Err(err) = history::append("telegram", "operator", text) {
-                eprintln!("Telegram history append failed: {err:#}");
-            }
-        }
-
         if command_matches(text, "status") {
             return Ok(Some(TelegramAction::Send(
                 message.reply(status::telegram_snapshot()?),
@@ -253,6 +247,11 @@ impl Router {
             || Self::is_direct_operator_chat(message)
             || message.reply_to_message.is_some()
         {
+            if self.config.history_enabled {
+                if let Err(err) = history::append("telegram", "operator", text) {
+                    eprintln!("Telegram history append failed: {err:#}");
+                }
+            }
             let response = meta_agent_reply(text, message, &self.config)?;
             return Ok(Some(TelegramAction::Send(message.reply(response))));
         }

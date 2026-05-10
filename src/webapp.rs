@@ -519,7 +519,7 @@ fn event_snapshot() -> Result<EventSnapshot> {
 }
 
 fn web_history() -> Result<Vec<history::HistoryEntry>> {
-    history::load_recent_for_source("web", 20)
+    history::load_recent_meta_visible_for_source("web", 20)
 }
 
 fn handle_queue_run(headers: &HeaderMap, payload: QueueRunRequest) -> TerminalSendResponse {
@@ -2139,7 +2139,6 @@ fn route_chat_text(text: &str) -> Result<String> {
     if text.is_empty() {
         bail!("enter a command or prompt");
     }
-    history::append("web", "operator", text)?;
     if command_matches(text, "status") {
         return respond(status::telegram_snapshot()?);
     }
@@ -2166,12 +2165,10 @@ fn route_chat_text(text: &str) -> Result<String> {
         return match start_web_agent(&request) {
             Ok(record) => {
                 let output = format!("Started agent:\n{}", agents::snapshot_line(&record));
-                history::append("web", "assistant", &output)?;
                 Ok(output)
             }
             Err(err) => {
                 let output = format!("Failed to start agent: {err:#}");
-                history::append("web", "assistant", &output)?;
                 Ok(output)
             }
         };
@@ -2179,13 +2176,13 @@ fn route_chat_text(text: &str) -> Result<String> {
     if text.starts_with('/') {
         bail!("unknown GUI command. Try /status, /repos, /agents, /help, or /agent_start <track> :: <command>");
     }
+    history::append("web", "operator", text)?;
     let output = run_meta_agent(text)?;
     history::append("web", "assistant", &output)?;
     Ok(output)
 }
 
 fn respond(output: String) -> Result<String> {
-    history::append("web", "assistant", &output)?;
     Ok(output)
 }
 

@@ -208,8 +208,10 @@ available for debugging, but terminal readiness ignores task worktrees whose
 task env has already reached a `closed:*` status. It streams state and history
 updates with server-sent events and includes an `Auto`/`Dark`/`Light` theme
 switch stored in browser local storage.
-The web chat displays web-origin messages only, while the meta-agent prompt can
-still use the broader shared local history as context. The Agents view shows
+The web chat displays web-origin meta-agent messages only; GUI slash commands
+such as `/agent_start`, `/status`, and their control-plane responses are kept
+out of the visible chat history and the meta-agent prompt. The meta-agent prompt
+can still use the broader shared local history as context. The Agents view shows
 detected local agent commands and their account/auth/limit probe status before
 the running-process sections. Limit probes run through a cached
 `/api/agent-limits` request when the Agents view is opened or refreshed. Q-COLD
@@ -294,7 +296,8 @@ routed to `QCOLD_META_AGENT_COMMAND` when it is set. If it is unset, Q-COLD
 uses `c1 exec --ephemeral --cd <repo> -` from the active repository, so the
 meta-agent uses the local C1 Codex account while Codex session state is not
 persisted between meta-agent runs. The meta-agent prompt includes the latest
-shared local history entries plus the current operator message.
+shared local history entries plus the current operator message, excluding
+control-plane slash commands and agent-launch transcripts.
 
 In a forum supergroup, `/task <description>` creates a per-task topic when the
 bot has permission to manage topics. Q-COLD stores the topic mapping under
