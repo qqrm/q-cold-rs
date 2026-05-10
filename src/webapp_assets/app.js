@@ -152,8 +152,41 @@ const tg = window.Telegram && window.Telegram.WebApp;
         .slice(0, 64) || 'queued-task';
     }
 
-    function slugForQueueItem(index, runId = queueRun.runId || 'next') {
+    function queueSlug(runId, index) {
       return `task-${runId}-${String(index + 1).padStart(2, '0')}`;
+    }
+
+    function slugForQueueItem(index, runId = queueRun.runId || 'next') {
+      return queueSlug(runId, index);
+    }
+
+    function queueTaskRecords() {
+      return [
+        ...(state?.task_records?.records || []),
+        ...(state?.queue_task_records?.records || []),
+      ];
+    }
+
+    function usedQueueSlugs(runId) {
+      const used = new Set(queueItems.map((item) => item.slug).filter(Boolean));
+      const prefix = `task/task-${runId}-`;
+      for (const task of queueTaskRecords()) {
+        if (task.id?.startsWith(prefix)) {
+          used.add(task.id.slice('task/'.length));
+        }
+      }
+      return used;
+    }
+
+    function nextQueueSlug(runId, used, preferredIndex) {
+      let index = Math.max(preferredIndex, 0);
+      let slug = queueSlug(runId, index);
+      while (used.has(slug)) {
+        index += 1;
+        slug = queueSlug(runId, index);
+      }
+      used.add(slug);
+      return slug;
     }
 
     function queueTrack(runId = queueRun.runId || 'next') {
@@ -407,7 +440,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function syncQueueFromSnapshot() {
-      if (!state?.task_records?.records?.length) return;
+      if (!queueTaskRecords().length) return;
       let changed = false;
       for (const item of queueItems) {
         const view = queueItemView(item);
@@ -1411,12 +1444,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function taskRecordForQueueItem(item) {
-      const records = [
-        ...(state?.task_records?.records || []),
-        ...(state?.queue_task_records?.records || []),
-      ];
       const repo = queueItemRepository(item);
-      return records.find((task) => (
+      return queueTaskRecords().find((task) => (
         task.id === `task/${item.slug}`
         && (!repo?.root || !task.repo_root || task.repo_root === repo.root)
       ));
@@ -1453,7 +1482,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function queueRunIdFromSlug(slug) {
-      const match = /^task-(.+)-\d{2}$/.exec(slug || '');
+      const match = /^task-(.+)-\d+$/.exec(slug || '');
       return match?.[1] || '';
     }
 
@@ -1477,7 +1506,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
         activeIndex: -1,
         runId: existingQueueRunId() || Date.now().toString(36),
       };
+      const usedSlugs = usedQueueSlugs(queueRun.runId);
       queueItems = queueItems.map((item, index) => {
+        const slug = item.slug || nextQueueSlug(queueRun.runId, usedSlugs, index);
         const task = taskRecordForQueueItem(item);
         const repo = item.repoRoot ? queueItemRepository(item) : selectedRepo;
         const closedStatus = task?.status?.startsWith('closed') ? task.status : '';
@@ -1485,7 +1516,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         const prompt = item.prompt.trim();
         return {
           ...item,
-          slug: item.slug || slugForQueueItem(index, queueRun.runId),
+          slug,
           agentId: item.agentId || task?.agent_id || '',
           repoRoot: repo.root || '',
           repoName: repo.name || '',
