@@ -252,6 +252,26 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return records.find((agent) => agent.command === selectedQueueAgent) || records[0] || null;
     }
 
+    function queueAgentLimit(agent) {
+      if (!agent) return null;
+      return (agentLimits?.records || []).find((record) => (
+        record.command === agent.command || record.account === agent.account
+      )) || null;
+    }
+
+    function queueAgentStatusLabel(limit) {
+      if (agentLimitsLoading) return 'checking';
+      if (!limit) return 'not checked';
+      if (limit.state === 'unauthenticated') return 'not logged in';
+      return limit.state || 'unknown';
+    }
+
+    function queueAgentUnavailableMessage(agent) {
+      const limit = queueAgentLimit(agent);
+      if (!agent || !limit || limit.state === 'ok') return '';
+      return `${agent.command} is ${queueAgentStatusLabel(limit)}: ${limit.summary || limit.state}`;
+    }
+
     function renderQueueAgentSelector() {
       const records = queueAgentRecords();
       const current = selectedQueueAgent || queueAgentSelect.value;
@@ -260,10 +280,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
         : (records[0]?.command || '');
       selectedQueueAgent = nextSelected;
       queueAgentSelect.replaceChildren(...records.map((agent) => {
+        const limit = queueAgentLimit(agent);
         const option = document.createElement('option');
         option.value = agent.command;
-        option.textContent = `${agent.command} - ${agent.label}`;
-        option.title = agent.path || agent.command;
+        option.textContent = `${agent.command} - ${agent.label} / ${queueAgentStatusLabel(limit)}`;
+        option.title = [agent.path || agent.command, limit?.summary || ''].filter(Boolean).join('\n');
         return option;
       }));
       if (!records.length) {
@@ -275,11 +296,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
       queueAgentSelect.value = selectedQueueAgent;
       queueAgentSelect.disabled = queueRun.running || !records.length;
       const detected = model?.availableAgents?.records?.length || 0;
-      queueAgentState.textContent = detected === records.length
-        ? `${records.length} available`
-        : `${records.length} accounts`;
+      const okCount = records.filter((agent) => queueAgentLimit(agent)?.state === 'ok').length;
+      queueAgentState.textContent = agentLimitsLoading
+        ? 'checking'
+        : agentLimits
+          ? `${records.length} accounts / ${okCount} ok`
+          : detected === records.length
+            ? `${records.length} available`
+            : `${records.length} accounts`;
       queueAgentState.title = detected === records.length ? '' : `${detected} commands detected`;
-      queueAgentState.className = records.length ? 'badge ready' : 'badge warn';
+      queueAgentState.className = records.length && (!agentLimits || okCount > 0) ? 'badge ready' : 'badge warn';
       if (selectedQueueAgent) localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
     }
 
@@ -1227,6 +1253,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (document.getElementById('view-agents').classList.contains('active') && !agentLimits && !agentLimitsLoading) {
         window.setTimeout(() => loadAgentLimits(false), 0);
       }
+      if (document.getElementById('view-queue').classList.contains('active') && !agentLimits && !agentLimitsLoading) {
+        window.setTimeout(() => loadAgentLimits(false), 0);
+      }
     }
 
     function setLiveState(label, tone = 'ready') {
@@ -1380,6 +1409,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     async function runQueue() {
       if (queueRun.running || !queueItems.length) return;
+      if (!agentLimits) await loadAgentLimits(false);
+      const selectedAgent = selectedQueueAgentRecord();
       queueRun = {
         running: true,
         stop: false,
@@ -1394,7 +1425,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         repoName: selectedQueueRepository().name || '',
         status: item.prompt.trim() ? 'pending' : 'failed',
         message: item.prompt.trim() ? '' : 'empty prompt',
-        agentCommand: selectedQueueAgentRecord()?.command || '',
+        agentCommand: selectedAgent?.command || '',
         startedAt: Math.floor(Date.now() / 1000),
         updatedAt: Math.floor(Date.now() / 1000),
       }));
@@ -1407,6 +1438,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
         if (!selectedQueueAgentRecord()) {
           item.status = 'failed';
           item.message = 'no available agent command';
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
+          renderQueue();
+          break;
+        }
+        const unavailable = queueAgentUnavailableMessage(selectedQueueAgentRecord());
+        if (unavailable) {
+          item.status = 'failed';
+          item.message = unavailable;
           item.updatedAt = Math.floor(Date.now() / 1000);
           saveQueueStorage();
           renderQueue();
@@ -1488,7 +1528,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
           history.replaceState(null, '', `#${next}`);
         }
       }
-      if (next === 'agents' && model) loadAgentLimits(false);
+      if ((next === 'agents' || next === 'queue') && model) loadAgentLimits(false);
     }
 
     async function loadAgentLimits(refresh) {
@@ -1496,6 +1536,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (agentLimitsLoading) return;
       agentLimitsLoading = true;
       renderAgents();
+      renderQueue();
       try {
         const response = await fetch(`/api/agent-limits${refresh ? '?refresh=true' : ''}`, { cache: 'no-store' });
         agentLimits = await response.json();
@@ -1509,6 +1550,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       } finally {
         agentLimitsLoading = false;
         renderAgents();
+        renderQueue();
       }
     }
 

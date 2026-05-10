@@ -146,9 +146,11 @@ The dashboard opens to the meta-agent chat and keeps repository/task/agent
 overview state in a compact always-visible status strip. Its Queue view accepts
 one task prompt at a time, appends it to a visible ordered queue, shows a
 dropdown of registered repositories plus one preferred Codex-like command per
-available account (`c1`, `c2`, or `codexN`), and starts one fresh Q-COLD
-terminal agent per queued prompt through `/agent_start --cwd <repo>`, with
-internal agent track and task slug names generated automatically.
+available account (`c1`, `c2`, or `codexN`) with auth/limit status, and starts
+one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
+<repo>`, with internal agent track and task slug names generated automatically.
+The Queue probes agent account status before running and stops before launch
+when the selected account is known to be logged out, limited, or failing.
 Queue rows can be reordered, removed, copied, or
 opened to the related running terminal or task record. The browser-side queue
 starts the next prompt only after the
