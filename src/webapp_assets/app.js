@@ -106,6 +106,30 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return span;
     }
 
+    function shortAgentId(agentId) {
+      if (!agentId) return '';
+      const parts = String(agentId).split('-').filter(Boolean);
+      if (parts.length >= 2) return `${parts[0]}-${parts[parts.length - 1].slice(-4)}`;
+      return String(agentId).slice(0, 12);
+    }
+
+    function agentLabelForId(agentId, task = null) {
+      if (!agentId && task?.agent_label) return task.agent_label;
+      const terminal = (model?.terminals?.records || []).find((record) => record.agent_id === agentId);
+      if (terminal) return terminalLabel(terminal);
+      const agent = (model?.agents?.records || []).find((record) => record.id === agentId);
+      if (agent?.meta?.name) return agent.meta.name;
+      if (task?.agent_label) return task.agent_label;
+      return shortAgentId(agentId);
+    }
+
+    function agentBadgeText(agentId, task = null) {
+      const label = agentLabelForId(agentId, task);
+      if (!label) return '';
+      const shortId = shortAgentId(agentId);
+      return shortId && shortId !== label ? `agent ${label} / ${shortId}` : `agent ${label}`;
+    }
+
     function loadQueueStorage() {
       try {
         return JSON.parse(localStorage.getItem(queueStorageKey) || '{}');
@@ -359,14 +383,14 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }
         return {
           status: 'running',
-          message: `agent ${activeAgentId}`,
+          message: agentBadgeText(activeAgentId, task),
           detail: queueItemDetail(item, task, agentId),
         };
       }
       if (activeAgentId) {
         return {
           status: item.status === 'starting' ? 'starting' : 'running',
-          message: 'agent running',
+          message: agentBadgeText(activeAgentId, task) || 'agent running',
           detail: queueItemDetail(item, task, agentId),
         };
       }
@@ -390,7 +414,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (repo?.name) parts.push(repo.name);
       if (item.slug) parts.push(`task/${item.slug}`);
       if (task?.status) parts.push(task.status);
-      if (agentId) parts.push(`agent ${agentId}`);
+      const agentText = agentBadgeText(agentId, task);
+      if (agentText) parts.push(agentText);
       if (item.agentCommand) parts.push(item.agentCommand);
       return parts.join(' / ');
     }
@@ -1084,7 +1109,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       meta.className = 'task-meta-stack';
       meta.appendChild(badge(task.source || 'task'));
       if (task.sequence) meta.appendChild(badge(`#${String(task.sequence).padStart(6, '0')}`));
-      if (task.agent_id) meta.appendChild(badge(`agent ${task.agent_id.slice(0, 8)}`));
+      const agentText = agentBadgeText(task.agent_id, task);
+      if (agentText) meta.appendChild(badge(agentText));
+      if (task.agent_track && task.agent_track !== task.agent_label) meta.appendChild(badge(task.agent_track));
       if (task.kind) meta.appendChild(badge(task.kind));
       const usage = document.createElement('div');
       usage.className = 'task-usage';
@@ -1157,10 +1184,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
           node.className = 'task-card';
           const title = document.createElement('div');
           title.innerHTML = '<div class="task-title"></div><div class="task-path"></div>';
-          title.children[0].textContent = agent.meta.name || agent.id;
+          title.children[0].textContent = agentLabelForId(agent.id) || agent.id;
           title.children[1].textContent = agent.meta.cmd || '';
           const trackCell = document.createElement('div');
           trackCell.appendChild(badge(agent.meta.track || 'track'));
+          trackCell.appendChild(badge(shortAgentId(agent.id)));
           const stateCell = document.createElement('div');
           stateCell.appendChild(badge(agent.meta.state || 'unknown'));
           node.append(title, trackCell, stateCell);
@@ -1345,6 +1373,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
       button.textContent = terminalLabel(terminal);
       button.addEventListener('click', () => renderTerminalMetadataForm(wrap, terminal));
       wrap.appendChild(button);
+      if (terminal.agent_id) {
+        const agent = document.createElement('span');
+        agent.className = 'terminal-scope';
+        agent.textContent = shortAgentId(terminal.agent_id);
+        wrap.appendChild(agent);
+      }
       if (terminal.scope) {
         const scope = document.createElement('span');
         scope.className = 'terminal-scope';

@@ -189,9 +189,11 @@ availability note. Any blocked, failed, unknown, or prematurely exited task stop
 the remaining queue. Queue draft rows may still use browser local storage before
 launch, but live queue state, retry counters, agent ids, and generated
 `task/<slug>` values come from the backend snapshot after launch, so refreshing
-the tab does not stop the active run. When Codex telemetry has captured a
-session path, task records expose the saved chat transcript from the Tasks view
-even after the terminal agent has exited. Its
+the tab does not stop the active run. Queue rows, task cards, agent cards, and
+terminal cards share the same terminal agent display name when one is known, with
+short technical ids kept as secondary diagnostics. When Codex telemetry has
+captured a session path, task records expose the saved chat transcript from the
+Tasks view even after the terminal agent has exited. Its
 Tasks view shows Q-COLD task records for the active repository from SQLite as
 separate active and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported

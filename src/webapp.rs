@@ -2378,6 +2378,45 @@ fn terminal_metadata_by_target() -> HashMap<String, state::TerminalMetadataRow> 
         .collect()
 }
 
+#[derive(Clone)]
+struct AgentLabelRecord {
+    label: String,
+    track: String,
+    target: String,
+}
+
+fn agent_labels_by_id() -> HashMap<String, AgentLabelRecord> {
+    let metadata = terminal_metadata_by_target();
+    agents::terminal_contexts()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|context| {
+            let label = metadata
+                .get(&context.target)
+                .and_then(|metadata| metadata.name.as_deref())
+                .filter(|name| !name.trim().is_empty())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| generated_agent_label(&context));
+            (
+                context.id.clone(),
+                AgentLabelRecord {
+                    label,
+                    track: context.track,
+                    target: context.target,
+                },
+            )
+        })
+        .collect()
+}
+
+fn generated_agent_label(context: &agents::TerminalAgentContext) -> String {
+    let suffix = short_terminal_id(&context.id);
+    if let Some(summary) = terminal_command_summary(&context.command) {
+        return format!("{}: {} #{suffix}", context.track, summary);
+    }
+    format!("{} #{suffix}", context.track)
+}
+
 fn apply_terminal_details(
     pane: &mut TerminalPane,
     context: Option<&agents::TerminalAgentContext>,
@@ -2406,11 +2445,7 @@ fn generated_terminal_label(
     context: Option<&agents::TerminalAgentContext>,
 ) -> String {
     if let Some(context) = context {
-        let suffix = short_terminal_id(&context.id);
-        if let Some(summary) = terminal_command_summary(&context.command) {
-            return format!("{}: {} #{suffix}", context.track, summary);
-        }
-        return format!("{} #{suffix}", context.track);
+        return generated_agent_label(context);
     }
     fallback_terminal_label(pane)
 }
@@ -2911,7 +2946,11 @@ struct TaskRecordSnapshot {
 
 impl TaskRecordSnapshot {
     fn from_rows(rows: Vec<state::TaskRecordRow>, error: Option<String>) -> Self {
-        let records = rows.into_iter().map(WebTaskRecord::from_row).collect::<Vec<_>>();
+        let agent_labels = agent_labels_by_id();
+        let records = rows
+            .into_iter()
+            .map(|row| WebTaskRecord::from_row(row, &agent_labels))
+            .collect::<Vec<_>>();
         let count = records.len();
         let open = records
             .iter()
@@ -2979,6 +3018,9 @@ struct WebTaskRecord {
     repo_root: Option<String>,
     cwd: Option<String>,
     agent_id: Option<String>,
+    agent_label: Option<String>,
+    agent_track: Option<String>,
+    agent_target: Option<String>,
     kind: Option<String>,
     codex_thread_id: Option<String>,
     session_path: Option<String>,
@@ -2987,7 +3029,10 @@ struct WebTaskRecord {
 }
 
 impl WebTaskRecord {
-    fn from_row(row: state::TaskRecordRow) -> Self {
+    fn from_row(
+        row: state::TaskRecordRow,
+        agent_labels: &HashMap<String, AgentLabelRecord>,
+    ) -> Self {
         let metadata = row
             .metadata_json
             .as_deref()
@@ -3015,6 +3060,10 @@ impl WebTaskRecord {
             .and_then(|value| value.get("session_path"))
             .and_then(Value::as_str)
             .map(ToString::to_string);
+        let agent = row
+            .agent_id
+            .as_deref()
+            .and_then(|agent_id| agent_labels.get(agent_id));
         Self {
             id: row.id,
             source: row.source,
@@ -3027,6 +3076,9 @@ impl WebTaskRecord {
             repo_root: row.repo_root,
             cwd: row.cwd,
             agent_id: row.agent_id,
+            agent_label: agent.map(|agent| agent.label.clone()),
+            agent_track: agent.map(|agent| agent.track.clone()),
+            agent_target: agent.map(|agent| agent.target.clone()),
             kind,
             codex_thread_id,
             session_path,
