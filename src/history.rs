@@ -79,6 +79,7 @@ fn is_control_plane_history(entry: &HistoryEntry) -> bool {
     text.starts_with("Started agent:\n")
         || text.starts_with("Failed to start agent:")
         || text.starts_with("qcold-status\t")
+        || text.starts_with("Q-COLD status")
         || text.starts_with("agent-summary\t")
         || text.starts_with("Q-COLD connected repositories")
         || text.starts_with("Q-COLD Web control plane")
@@ -114,6 +115,10 @@ mod tests {
         assert!(is_control_plane_history(&entry(
             "assistant",
             "Started agent:\nagent\tqueue-1\tcmd=zellij ..."
+        )));
+        assert!(is_control_plane_history(&entry(
+            "assistant",
+            "Q-COLD status\nqcold-status\tterminal_ready=yes"
         )));
         assert!(!is_control_plane_history(&entry(
             "operator",
