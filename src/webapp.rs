@@ -706,6 +706,13 @@ fn spawn_web_queue_worker(run_id: String) {
     });
 }
 
+fn web_queue_worker_active(run_id: &str) -> bool {
+    WEB_QUEUE_WORKERS
+        .get()
+        .and_then(|workers| workers.lock().ok())
+        .is_some_and(|active| active.contains(run_id))
+}
+
 fn run_web_queue(run_id: &str) -> Result<()> {
     let (_, items) = state::load_web_queue_run(run_id)?;
     if items.is_empty() {
@@ -1034,6 +1041,114 @@ fn cleanup_queue_agent(agent_id: &str) -> String {
         Ok(true) => "agent terminal closed".to_string(),
         Ok(false) => "agent already stopped".to_string(),
         Err(err) => format!("agent cleanup failed: {err:#}"),
+    }
+}
+
+fn reconcile_stale_web_queue_run() -> Result<()> {
+    let (run, items) = state::load_web_queue()?;
+    let Some(run) = run else {
+        return Ok(());
+    };
+    if !matches!(
+        run.status.as_str(),
+        "running" | "waiting" | "starting" | "stopping"
+    ) || web_queue_worker_active(&run.id)
+    {
+        return Ok(());
+    }
+
+    crate::sync_codex_task_records().ok();
+    cleanup_orphaned_queue_agents(&run, &items);
+    for item in items {
+        if let Some(status) = queue_task_status(&item)? {
+            if status == "closed:success" {
+                if item.status != "success"
+                    || item
+                        .agent_id
+                        .as_deref()
+                        .is_some_and(agent_running)
+                {
+                    update_successful_queue_item(
+                        &run.id,
+                        &item,
+                        item.agent_id.as_deref(),
+                        item.attempts,
+                    )?;
+                }
+                continue;
+            }
+            if status.starts_with("closed") && item.status != "success" {
+                state::update_web_queue_item(
+                    &run.id,
+                    &item.id,
+                    "failed",
+                    &status,
+                    item.agent_id.as_deref(),
+                    item.attempts,
+                    None,
+                )?;
+                state::update_web_queue_run(&run.id, "failed", item.position, &status)?;
+                return Ok(());
+            }
+        }
+
+        if item.status == "success" {
+            if item
+                .agent_id
+                .as_deref()
+                .is_some_and(agent_running)
+            {
+                update_successful_queue_item(
+                    &run.id,
+                    &item,
+                    item.agent_id.as_deref(),
+                    item.attempts,
+                )?;
+            }
+            continue;
+        }
+        if let Some(agent_id) = item.agent_id.as_deref() {
+            if matches!(item.status.as_str(), "running" | "starting") && !agent_running(agent_id) {
+                let message = "agent exited before task closeout";
+                state::update_web_queue_item(
+                    &run.id,
+                    &item.id,
+                    "failed",
+                    message,
+                    Some(agent_id),
+                    item.attempts,
+                    None,
+                )?;
+                state::update_web_queue_run(&run.id, "failed", item.position, message)?;
+                return Ok(());
+            }
+        }
+        state::update_web_queue_run(
+            &run.id,
+            "running",
+            item.position,
+            &format!("running {}", item.slug),
+        )?;
+        return Ok(());
+    }
+
+    state::update_web_queue_run(&run.id, "success", -1, "closed successfully")?;
+    Ok(())
+}
+
+fn cleanup_orphaned_queue_agents(run: &state::QueueRunRow, items: &[state::QueueItemRow]) {
+    let known_agents = items
+        .iter()
+        .filter_map(|item| item.agent_id.as_deref())
+        .collect::<HashSet<_>>();
+    let track = queue_track(&run.id);
+    let Ok(contexts) = agents::terminal_contexts() else {
+        return;
+    };
+    for context in contexts {
+        if context.track == track && !known_agents.contains(context.id.as_str()) {
+            let _ = agents::terminate_agent(&context.id);
+        }
     }
 }
 
@@ -2192,6 +2307,9 @@ fn all_task_record_snapshot() -> TaskRecordSnapshot {
 }
 
 fn queue_snapshot() -> QueueSnapshot {
+    let reconcile_error = reconcile_stale_web_queue_run()
+        .err()
+        .map(|err| format!("{err:#}"));
     match state::load_web_queue() {
         Ok((run, records)) => QueueSnapshot {
             count: records.len(),
@@ -2200,7 +2318,7 @@ fn queue_snapshot() -> QueueSnapshot {
             }),
             run,
             records,
-            error: None,
+            error: reconcile_error,
         },
         Err(err) => QueueSnapshot {
             count: 0,
