@@ -291,7 +291,19 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     }
     run_git(
         &task.primary_repo_path,
+        ["fetch", "origin", &task.base_branch],
+    )?;
+    run_git(
+        &task.primary_repo_path,
         ["merge", "--ff-only", &task.task_branch],
+    )?;
+    run_git(
+        &task.primary_repo_path,
+        ["push", "origin", &task.base_branch],
+    )?;
+    run_git(
+        &task.primary_repo_path,
+        ["fetch", "origin", &task.base_branch],
     )?;
     task.status = "closed:success".to_string();
     task.updated_at = unix_now().to_string();

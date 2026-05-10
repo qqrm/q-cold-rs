@@ -284,8 +284,9 @@ This repository follows the task-flow and delegation discipline captured in
 [`AGENTS.md`](AGENTS.md). Q-COLD owns a minimal self-hosted task-flow adapter
 for dogfooding: managed worktrees are created under `../WT/qcold/`, success
 closeout runs `cargo fmt --check` plus the serial `cargo-qcold` unit suite,
-then fast-forwards the primary checkout when possible. Repository-specific
-proof semantics for other projects remain behind their adapters.
+then fast-forwards the primary checkout, pushes the base branch to `origin`,
+and refreshes the remote-tracking ref before terminal cleanup.
+Repository-specific proof semantics for other projects remain behind their adapters.
 The planned extraction backlog for moving deterministic task-flow ownership
 into Q-COLD is tracked in
 [`docs/taskflow-extraction/`](docs/taskflow-extraction/README.md).
