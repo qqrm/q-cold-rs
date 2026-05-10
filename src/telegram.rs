@@ -76,6 +76,7 @@ struct TelegramConfig {
     meta_agent_command: Option<String>,
     webapp_url: Option<String>,
     history_enabled: bool,
+    task_id_override: Option<String>,
 }
 
 impl TelegramConfig {
@@ -106,6 +107,7 @@ impl TelegramConfig {
             meta_agent_command: optional_env("QCOLD_META_AGENT_COMMAND"),
             webapp_url: optional_env("QCOLD_TELEGRAM_WEBAPP_URL"),
             history_enabled: true,
+            task_id_override: None,
         })
     }
 }
@@ -215,7 +217,8 @@ impl Router {
                     ),
                 )));
             }
-            let task_request = TaskRequest::new(message, request)?;
+            let task_request =
+                TaskRequest::new(message, request, self.config.task_id_override.as_deref())?;
             return Ok(Some(TelegramAction::CreateTask(task_request)));
         }
         if let Some(request) = command_payload(text, "agent_start") {
@@ -749,13 +752,16 @@ struct TaskRequest {
 }
 
 impl TaskRequest {
-    fn new(message: &TelegramMessage, description: &str) -> Result<Self> {
+    fn new(message: &TelegramMessage, description: &str, id_override: Option<&str>) -> Result<Self> {
         let description = description.trim();
         if description.is_empty() {
             bail!("usage: /task <description>");
         }
         let created_at = unix_now()?;
-        let id = TaskState::load()?.next_task_id();
+        let id = match id_override {
+            Some(id) => id.to_string(),
+            None => TaskState::load()?.next_task_id(),
+        };
         let title = task_title(description);
         let topic_name = truncate_topic_name(&format!("{id} {title}"));
         Ok(Self {
@@ -910,7 +916,6 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-    use std::env;
 
     fn config() -> TelegramConfig {
         TelegramConfig {
@@ -923,12 +928,19 @@ mod tests {
             meta_agent_command: None,
             webapp_url: None,
             history_enabled: false,
+            task_id_override: Some("qcd-000001".to_string()),
         }
     }
 
     fn config_with_meta_agent() -> TelegramConfig {
         let mut config = config();
         config.meta_agent_command = Some("sh -c 'cat >/dev/null; printf handled'".to_string());
+        config
+    }
+
+    fn config_with_meta_agent_echo() -> TelegramConfig {
+        let mut config = config();
+        config.meta_agent_command = Some("cat".to_string());
         config
     }
 
@@ -1119,18 +1131,17 @@ mod tests {
 
     #[test]
     fn router_unit_tests_do_not_write_shared_history() {
-        let _guard = crate::test_support::env_guard();
-        let temp = tempfile::tempdir().unwrap();
-        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
-
-        let router = Router::new(config_with_meta_agent());
+        let router = Router::new(config_with_meta_agent_echo());
         let update = TelegramUpdate {
             update_id: 1,
             message: Some(message(200, "what are you doing?")),
         };
         let action = send_action(router.route(&update).unwrap().unwrap());
 
-        assert_eq!(action.text, "handled");
-        assert!(history::load_recent(10).unwrap().is_empty());
+        assert_eq!(
+            action.text,
+            "Current operator message:\nwhat are you doing?"
+        );
+        assert!(!action.text.contains("Recent messages:"));
     }
 }

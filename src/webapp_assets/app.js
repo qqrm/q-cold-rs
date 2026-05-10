@@ -23,6 +23,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const transcriptTitle = document.getElementById('transcript-title');
     const transcriptSubtitle = document.getElementById('transcript-subtitle');
     const transcriptLog = document.getElementById('transcript-log');
+    const transcriptCompose = document.getElementById('transcript-compose');
+    const transcriptInput = document.getElementById('transcript-input');
+    const transcriptSend = document.getElementById('send-transcript');
     const themeButtons = Array.from(document.querySelectorAll('[data-theme-choice]'));
     const liveState = document.getElementById('live-state');
     let fallbackTimer = null;
@@ -40,6 +43,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
     let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
+    let transcriptContext = { taskId: '', terminalTarget: '' };
     let agentLimits = null;
     let agentLimitsLoading = false;
 
@@ -551,14 +555,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!item) return;
       const target = queueItemContextTarget(item);
       if (target?.kind === 'transcript') {
-        openTaskTranscript(target.task.id);
+        openTaskTranscript(target.task.id, { terminal: target.terminal });
         return;
       }
-      if (target?.kind === 'terminal') {
-        setActiveView('terminals');
-        window.setTimeout(() => {
-          focusDashboardNode(`.terminal-card[data-target="${cssEscape(target.terminal.target)}"]`);
-        }, 0);
+      if (target?.kind === 'terminal-chat') {
+        openTaskTranscript(target.task.id, { terminal: target.terminal });
         return;
       }
       if (target?.kind === 'task-card') {
@@ -591,11 +592,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!item) return null;
       const task = taskRecordForQueueItem(item);
       if (task?.id && task.session_path) {
-        return { kind: 'transcript', task };
+        return { kind: 'transcript', task, terminal: terminalForQueueItem(item, task) };
       }
       const terminal = terminalForQueueItem(item, task);
-      if (terminal) {
-        return { kind: 'terminal', terminal };
+      if (task?.id && terminal) {
+        return { kind: 'terminal-chat', task, terminal };
       }
       if (task?.id) {
         return { kind: 'task-card', task };
@@ -623,10 +624,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return true;
     }
 
-    async function openTaskTranscript(taskId) {
+    async function openTaskTranscript(taskId, options = {}) {
       if (!taskId) return;
+      const terminal = options.terminal || terminalForTaskId(taskId);
+      transcriptContext = {
+        taskId,
+        terminalTarget: terminal?.target || '',
+      };
       transcriptTitle.textContent = 'Task Chat';
       transcriptSubtitle.textContent = taskId;
+      renderTranscriptComposer();
       transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
         className: 'empty',
         textContent: 'Loading transcript.',
@@ -636,28 +643,29 @@ const tg = window.Telegram && window.Telegram.WebApp;
         const response = await fetch(`/api/task-transcript?id=${encodeURIComponent(taskId)}`, { cache: 'no-store' });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload.ok === false) {
-          transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
-            className: 'empty',
-            textContent: payload.output || 'Transcript is not available.',
-          }));
+          renderTranscriptFallback(payload.output || 'Transcript is not available.');
           return;
         }
         transcriptTitle.textContent = payload.title || payload.task_id || 'Task Chat';
-        transcriptSubtitle.textContent = [payload.task_id, payload.status, payload.session_path].filter(Boolean).join(' / ');
+        transcriptSubtitle.textContent = [
+          payload.task_id,
+          payload.status,
+          payload.session_path || (terminal ? `agent ${terminal.agent_id || terminal.label || terminal.target}` : ''),
+        ].filter(Boolean).join(' / ');
         const messages = payload.messages || [];
         if (!messages.length) {
-          transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
-            className: 'empty',
-            textContent: 'No chat messages found in transcript.',
-          }));
+          renderTranscriptFallback('No chat messages found in transcript.');
           return;
         }
-        transcriptLog.replaceChildren(...messages.map((entry) => messageNode({
+        const nodes = messages.map((entry) => messageNode({
           timestamp: Date.parse(entry.timestamp) ? Math.floor(Date.parse(entry.timestamp) / 1000) : 0,
           source: 'task',
           role: entry.role || 'assistant',
           text: entry.text || '',
-        })));
+        }));
+        const liveOutput = transcriptTerminalOutputNode(terminal);
+        if (liveOutput) nodes.push(liveOutput);
+        transcriptLog.replaceChildren(...nodes);
         transcriptLog.scrollTop = transcriptLog.scrollHeight;
       } catch (err) {
         transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
@@ -667,9 +675,85 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
     }
 
+    function renderTranscriptFallback(message) {
+      const terminal = terminalForTarget(transcriptContext.terminalTarget);
+      const wrap = transcriptTerminalOutputNode(terminal);
+      if (wrap) {
+        transcriptLog.replaceChildren(wrap);
+        transcriptLog.scrollTop = transcriptLog.scrollHeight;
+        return;
+      }
+      transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
+        className: 'empty',
+        textContent: transcriptContext.terminalTarget
+          ? `${message} Send a message below to continue in the live terminal.`
+          : message,
+      }));
+    }
+
+    function transcriptTerminalOutputNode(terminal) {
+      if (!terminal?.output) return null;
+      const wrap = document.createElement('div');
+      wrap.className = 'terminal-output transcript-terminal-output';
+      wrap.tabIndex = 0;
+      wrap.addEventListener('keydown', (event) => handleTerminalKeyboard(event, terminal.target));
+      renderAnsi(wrap, terminal.output);
+      return wrap;
+    }
+
+    function renderTranscriptComposer() {
+      const enabled = Boolean(transcriptContext.terminalTarget);
+      transcriptCompose.hidden = !enabled;
+      transcriptInput.disabled = !enabled;
+      transcriptSend.disabled = !enabled;
+      transcriptInput.placeholder = enabled ? 'Message this task agent' : 'No active task terminal';
+    }
+
+    function terminalForTaskId(taskId) {
+      const task = queueTaskRecords().find((record) => record.id === taskId);
+      if (!task?.agent_id) return null;
+      return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === task.agent_id) || null;
+    }
+
+    function terminalForTarget(target) {
+      if (!target) return null;
+      return (model?.terminals?.records || []).find((terminal) => terminal.target === target) || null;
+    }
+
+    async function sendTranscriptMessage() {
+      const text = transcriptInput.value.trimEnd();
+      if (!text.trim() || !transcriptContext.terminalTarget) return;
+      transcriptInput.value = '';
+      const payload = await postTerminalText(transcriptContext.terminalTarget, text, {
+        mode: terminalTextMode(text),
+        submit: true,
+      });
+      if (!payload.ok) {
+        transcriptLog.appendChild(messageNode({
+          timestamp: Math.floor(Date.now() / 1000),
+          source: 'task',
+          role: 'error',
+          text: payload.output || 'failed to send task message',
+        }));
+        transcriptLog.scrollTop = transcriptLog.scrollHeight;
+        return;
+      }
+      window.setTimeout(async () => {
+        await loadSnapshot();
+        if (!transcriptModal.hidden && transcriptContext.taskId) {
+          openTaskTranscript(transcriptContext.taskId, {
+            terminal: terminalForTarget(transcriptContext.terminalTarget),
+          });
+        }
+      }, 350);
+    }
+
     function closeTaskTranscript() {
       transcriptModal.hidden = true;
+      transcriptContext = { taskId: '', terminalTarget: '' };
+      transcriptInput.value = '';
       transcriptLog.replaceChildren();
+      renderTranscriptComposer();
     }
 
     function formatNumber(value) {
@@ -920,10 +1004,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
       path.className = 'task-path';
       path.textContent = task.cwd || task.repo_root || task.session_path || '';
       title.appendChild(path);
-      if (task.session_path) {
+      const taskTerminal = terminalForTaskId(task.id);
+      if (task.session_path || taskTerminal) {
         const actions = document.createElement('div');
         actions.className = 'task-card-actions';
-        actions.appendChild(queueActionButton('Open chat', () => openTaskTranscript(task.id), 'Open task chat transcript'));
+        actions.appendChild(queueActionButton('Open chat', () => openTaskTranscript(task.id, {
+          terminal: terminalForTaskId(task.id),
+        }), 'Open task chat'));
         title.appendChild(actions);
       }
       const stateCell = document.createElement('div');
@@ -1672,6 +1759,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     document.getElementById('send-chat').addEventListener('click', () => sendChat(chatInput.value));
     document.getElementById('close-transcript').addEventListener('click', closeTaskTranscript);
+    transcriptSend.addEventListener('click', sendTranscriptMessage);
+    transcriptInput.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendTranscriptMessage();
+    });
     transcriptModal.addEventListener('click', (event) => {
       if (event.target === transcriptModal) closeTaskTranscript();
     });

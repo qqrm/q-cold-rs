@@ -163,18 +163,18 @@ managed `task/<slug>` record to reach `closed:success`, and then advances to
 the next row. If the selected agent account is temporarily unavailable, the
 backend waits and retries the next launch three times after roughly 1, 5, and
 10 minutes before failing the row; unauthenticated accounts fail immediately.
-Queue rows can be reordered, removed, copied, or
-opened to the related running terminal or task record. Rows with a task record
-but no captured chat transcript open the Tasks card instead of a transcript
-modal, and rows without a task record still switch to the Tasks view while
-recording a row-level availability note. Any blocked, failed, unknown, or
-prematurely exited task stops the remaining queue. Queue draft rows may still
-use browser local storage before launch, but live queue state, retry counters,
-agent ids, and generated `task/<slug>` values come from the backend snapshot
-after launch, so refreshing the tab does not stop the active run. When Codex
-telemetry has captured a session path, task records
-expose the saved chat transcript from the Tasks view even after the terminal
-agent has exited. Its
+Queue rows can be reordered, removed, copied, or opened to an interactive task
+chat. When the related terminal agent is still running, that chat can send
+operator messages back into the pane even before Codex telemetry has captured a
+session transcript; if no transcript is available yet, the modal falls back to
+the live terminal output. Rows without a task record still switch to the Tasks
+view while recording a row-level availability note. Any blocked, failed,
+unknown, or prematurely exited task stops the remaining queue. Queue draft rows
+may still use browser local storage before launch, but live queue state, retry
+counters, agent ids, and generated `task/<slug>` values come from the backend
+snapshot after launch, so refreshing the tab does not stop the active run. When
+Codex telemetry has captured a session path, task records expose the saved chat
+transcript from the Tasks view even after the terminal agent has exited. Its
 Tasks view shows Q-COLD task records for the active repository from SQLite as
 separate active and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported

@@ -610,7 +610,7 @@
       width: min(960px, 100%);
       max-height: min(760px, calc(100vh - 36px));
       display: grid;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
       border: 1px solid var(--line);
       border-radius: 8px;
       background: var(--panel);
@@ -621,6 +621,27 @@
       max-height: none;
       border-top: 1px solid var(--line);
       padding: 10px;
+    }
+    .transcript-terminal-output {
+      min-height: 100%;
+      max-height: none;
+      border-radius: 6px;
+    }
+    .transcript-compose {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 8px;
+      padding: 10px;
+      border-top: 1px solid var(--line);
+      background: rgba(11, 16, 32, .18);
+      align-items: stretch;
+    }
+    .transcript-compose[hidden] { display: none; }
+    .transcript-compose textarea {
+      min-height: 42px;
+      max-height: 140px;
+      resize: vertical;
+      line-height: 1.35;
     }
     select {
       width: 100%;
