@@ -481,7 +481,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const down = queueActionButton('↓', () => moveQueueItem(index, 1), 'Move task down');
       down.disabled = queueRun.running || index === queueItems.length - 1;
       const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task context');
-      open.disabled = !queueItems[index]?.slug && !queueItems[index]?.agentId;
+      open.disabled = !queueItemContextTarget(queueItems[index]);
       const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
       copy.classList.add('icon-copy');
       const remove = queueActionButton('×', () => removeQueueItem(index), 'Remove');
@@ -528,27 +528,35 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function openQueueItemContext(index) {
       const item = queueItems[index];
       if (!item) return;
-      const task = taskRecordForQueueItem(item);
-      const terminal = terminalForQueueItem(item, task);
-      if (terminal) {
+      const target = queueItemContextTarget(item);
+      if (target?.kind === 'transcript') {
+        openTaskTranscript(target.task.id);
+        return;
+      }
+      if (target?.kind === 'terminal') {
         setActiveView('terminals');
         window.setTimeout(() => {
-          focusDashboardNode(`.terminal-card[data-target="${cssEscape(terminal.target)}"]`);
+          focusDashboardNode(`.terminal-card[data-target="${cssEscape(target.terminal.target)}"]`);
         }, 0);
         return;
       }
-      if (task?.session_path) {
-        openTaskTranscript(task.id);
-        return;
-      }
+      item.message = 'task context is not available yet';
+      item.updatedAt = Math.floor(Date.now() / 1000);
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function queueItemContextTarget(item) {
+      if (!item) return null;
+      const task = taskRecordForQueueItem(item);
       if (task?.id) {
-        setActiveView('tasks');
-        window.setTimeout(() => {
-          focusDashboardNode(`.task-record-card[data-task-id="${cssEscape(task.id)}"]`);
-        }, 0);
-        return;
+        return { kind: 'transcript', task };
       }
-      setActiveView('chat');
+      const terminal = terminalForQueueItem(item, task);
+      if (terminal) {
+        return { kind: 'terminal', terminal };
+      }
+      return null;
     }
 
     function terminalForQueueItem(item, task = taskRecordForQueueItem(item)) {
