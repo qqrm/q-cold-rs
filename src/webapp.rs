@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::convert::Infallible;
 use std::env;
 use std::fs::{self, File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
@@ -313,6 +313,7 @@ fn router() -> Router {
         .route("/assets/app.js", get(app_js))
         .route("/api/state", get(api_state))
         .route("/api/agent-limits", get(api_agent_limits))
+        .route("/api/task-transcript", get(api_task_transcript))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
         .route("/api/history", get(api_history))
@@ -343,6 +344,16 @@ async fn api_state() -> impl IntoResponse {
 async fn api_agent_limits(Query(query): Query<AgentLimitQuery>) -> impl IntoResponse {
     let refresh = query.refresh.as_deref() == Some("true");
     no_store(Json(agent_limit_snapshot(refresh)))
+}
+
+async fn api_task_transcript(Query(query): Query<TaskTranscriptQuery>) -> impl IntoResponse {
+    let response = task_transcript_response(&query.id);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
 }
 
 async fn api_history() -> Response {
@@ -513,6 +524,168 @@ fn clean_terminal_metadata_value(value: Option<&str>) -> Option<String> {
         return None;
     }
     Some(truncate_chars(compact, 80))
+}
+
+fn task_transcript_response(task_id: &str) -> TaskTranscriptResponse {
+    match task_transcript_result(task_id) {
+        Ok(response) => response,
+        Err(err) => TaskTranscriptResponse {
+            ok: false,
+            task_id: task_id.to_string(),
+            title: String::new(),
+            status: String::new(),
+            session_path: None,
+            messages: Vec::new(),
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
+    let task_id = task_id.trim();
+    if task_id.is_empty() || task_id.chars().any(char::is_control) {
+        bail!("invalid task id");
+    }
+    crate::sync_codex_task_records().ok();
+    let record = state::get_task_record(task_id)?
+        .with_context(|| format!("unknown task record: {task_id}"))?;
+    let session_path = codex_session_path_from_metadata(record.metadata_json.as_deref())
+        .context("task record has no Codex session transcript")?;
+    let path = PathBuf::from(&session_path);
+    if !is_codex_session_path(&path) {
+        bail!("refusing to read non-Codex session path: {}", path.display());
+    }
+    let messages = codex_transcript_messages(&path)?;
+    Ok(TaskTranscriptResponse {
+        ok: true,
+        task_id: record.id,
+        title: record.title,
+        status: record.status,
+        session_path: Some(session_path),
+        messages,
+        output: String::new(),
+    })
+}
+
+fn codex_session_path_from_metadata(metadata_json: Option<&str>) -> Option<String> {
+    let metadata = serde_json::from_str::<Value>(metadata_json?).ok()?;
+    metadata
+        .get("session_path")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn is_codex_session_path(path: &Path) -> bool {
+    let Ok(path) = path.canonicalize() else {
+        return false;
+    };
+    let Some(home) = env::var_os("HOME").map(PathBuf::from) else {
+        return false;
+    };
+    let Ok(home) = home.canonicalize() else {
+        return false;
+    };
+    let account_root = home.join(".codex-accounts");
+    let default_root = home.join(".codex").join("sessions");
+    (path.starts_with(account_root) && path.components().any(|part| part.as_os_str() == "sessions"))
+        || path.starts_with(default_root)
+}
+
+fn codex_transcript_messages(path: &Path) -> Result<Vec<TaskTranscriptMessage>> {
+    let file = File::open(path)
+        .with_context(|| format!("failed to open Codex session {}", path.display()))?;
+    let mut messages = Vec::new();
+    for line in BufReader::new(file).lines() {
+        let line = line.with_context(|| format!("failed to read Codex session {}", path.display()))?;
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if let Some(message) = transcript_message_from_json(&value) {
+            push_transcript_message(&mut messages, message);
+        }
+    }
+    Ok(messages)
+}
+
+fn transcript_message_from_json(value: &Value) -> Option<TaskTranscriptMessage> {
+    let timestamp = value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    match value.get("type").and_then(Value::as_str)? {
+        "event_msg" => {
+            let payload = value.get("payload")?;
+            match payload.get("type").and_then(Value::as_str)? {
+                "user_message" => transcript_message(
+                    timestamp,
+                    "user",
+                    payload.get("message").and_then(Value::as_str)?,
+                ),
+                "agent_message" => transcript_message(
+                    timestamp,
+                    "assistant",
+                    payload.get("message").and_then(Value::as_str)?,
+                ),
+                _ => None,
+            }
+        }
+        "response_item" => {
+            let payload = value.get("payload")?;
+            if payload.get("type").and_then(Value::as_str) != Some("message") {
+                return None;
+            }
+            let role = payload.get("role").and_then(Value::as_str)?;
+            if !matches!(role, "user" | "assistant") {
+                return None;
+            }
+            transcript_message(timestamp, role, &response_content_text(payload)?)
+        }
+        _ => None,
+    }
+}
+
+fn transcript_message(timestamp: String, role: &str, text: &str) -> Option<TaskTranscriptMessage> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(TaskTranscriptMessage {
+        timestamp,
+        role: role.to_string(),
+        text: truncate_chars(text, 30_000),
+    })
+}
+
+fn response_content_text(payload: &Value) -> Option<String> {
+    let text = payload
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter_map(|item| {
+            let item_type = item.get("type").and_then(Value::as_str)?;
+            if !matches!(item_type, "input_text" | "output_text" | "text") {
+                return None;
+            }
+            item.get("text").and_then(Value::as_str)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    if text.trim().is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+fn push_transcript_message(messages: &mut Vec<TaskTranscriptMessage>, message: TaskTranscriptMessage) {
+    if messages
+        .last()
+        .is_some_and(|last| last.role == message.role && last.text == message.text)
+    {
+        return;
+    }
+    messages.push(message);
 }
 
 fn send_tmux_terminal_input(target: &str, text: &str) -> Result<()> {
@@ -1971,6 +2144,29 @@ struct AgentLimitQuery {
 }
 
 #[derive(Deserialize)]
+struct TaskTranscriptQuery {
+    id: String,
+}
+
+#[derive(Serialize)]
+struct TaskTranscriptResponse {
+    ok: bool,
+    task_id: String,
+    title: String,
+    status: String,
+    session_path: Option<String>,
+    messages: Vec<TaskTranscriptMessage>,
+    output: String,
+}
+
+#[derive(Serialize)]
+struct TaskTranscriptMessage {
+    timestamp: String,
+    role: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
 struct ChatRequest {
     text: String,
 }
@@ -2150,5 +2346,28 @@ mod tests {
             Some("refactoring terminal labels")
         );
         assert_eq!(clean_terminal_metadata_value(Some(" \n\t ")), None);
+    }
+
+    #[test]
+    fn codex_transcript_messages_include_user_and_agent_text() {
+        let temp = tempdir().unwrap();
+        let session = temp.path().join("session.jsonl");
+        fs::write(
+            &session,
+            concat!(
+                "{\"timestamp\":\"2026-05-10T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"fix queue\",\"images\":[]}}\n",
+                "{\"timestamp\":\"2026-05-10T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"queue fixed\"}]}}\n",
+                "{\"timestamp\":\"2026-05-10T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":null}}\n"
+            ),
+        )
+        .unwrap();
+
+        let messages = codex_transcript_messages(&session).unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].text, "fix queue");
+        assert_eq!(messages[1].role, "assistant");
+        assert_eq!(messages[1].text, "queue fixed");
     }
 }

@@ -251,6 +251,16 @@
     .task-usage strong { font-size: 17px; line-height: 1.1; }
     .task-usage span, .task-usage small { color: var(--muted); }
     .task-usage small { overflow-wrap: anywhere; }
+    .task-card-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .task-card-actions button {
+      padding: 6px 8px;
+      font-size: 12px;
+    }
     .empty {
       border: 1px dashed var(--line);
       border-radius: 8px;
@@ -443,6 +453,7 @@
       background: var(--soft);
     }
     .message.operator { border-left: 4px solid var(--accent); }
+    .message.user { border-left: 4px solid var(--accent); }
     .message.assistant { border-left: 4px solid var(--ok); }
     .message.error { border-left: 4px solid var(--bad); }
     .message-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
@@ -531,6 +542,32 @@
       max-height: 120px;
       resize: vertical;
       line-height: 1.35;
+    }
+    .transcript-modal[hidden] { display: none; }
+    .transcript-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 20;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(0, 0, 0, .56);
+    }
+    .transcript-dialog {
+      width: min(960px, 100%);
+      max-height: min(760px, calc(100vh - 36px));
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .32);
+      overflow: hidden;
+    }
+    .transcript-log {
+      max-height: none;
+      border-top: 1px solid var(--line);
+      padding: 10px;
     }
     select {
       width: 100%;

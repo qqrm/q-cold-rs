@@ -144,6 +144,19 @@
       </div>
       <div class="status-bar compact" id="task-bar"></div>
     </aside>
+
+    <div class="transcript-modal" id="transcript-modal" hidden>
+      <div class="transcript-dialog" role="dialog" aria-modal="true" aria-labelledby="transcript-title">
+        <div class="panel-head">
+          <div>
+            <h2 id="transcript-title">Task Chat</h2>
+            <span class="task-path" id="transcript-subtitle"></span>
+          </div>
+          <button class="secondary" id="close-transcript">Close</button>
+        </div>
+        <div class="chat-log transcript-log" id="transcript-log"></div>
+      </div>
+    </div>
   </main>
   <script src="/assets/app.js"></script>
 

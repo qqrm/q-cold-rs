@@ -18,6 +18,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueStatus = document.getElementById('queue-status');
     const chatLog = document.getElementById('chat-log');
     const chatInput = document.getElementById('chat-input');
+    const transcriptModal = document.getElementById('transcript-modal');
+    const transcriptTitle = document.getElementById('transcript-title');
+    const transcriptSubtitle = document.getElementById('transcript-subtitle');
+    const transcriptLog = document.getElementById('transcript-log');
     const themeButtons = Array.from(document.querySelectorAll('[data-theme-choice]'));
     const liveState = document.getElementById('live-state');
     let fallbackTimer = null;
@@ -410,6 +414,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }, 0);
         return;
       }
+      if (task?.session_path) {
+        openTaskTranscript(task.id);
+        return;
+      }
       if (task?.id) {
         setActiveView('tasks');
         window.setTimeout(() => {
@@ -435,6 +443,55 @@ const tg = window.Telegram && window.Telegram.WebApp;
       node.classList.add('dashboard-focus');
       window.setTimeout(() => node.classList.remove('dashboard-focus'), 2400);
       return true;
+    }
+
+    async function openTaskTranscript(taskId) {
+      if (!taskId) return;
+      transcriptTitle.textContent = 'Task Chat';
+      transcriptSubtitle.textContent = taskId;
+      transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
+        className: 'empty',
+        textContent: 'Loading transcript.',
+      }));
+      transcriptModal.hidden = false;
+      try {
+        const response = await fetch(`/api/task-transcript?id=${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
+            className: 'empty',
+            textContent: payload.output || 'Transcript is not available.',
+          }));
+          return;
+        }
+        transcriptTitle.textContent = payload.title || payload.task_id || 'Task Chat';
+        transcriptSubtitle.textContent = [payload.task_id, payload.status, payload.session_path].filter(Boolean).join(' / ');
+        const messages = payload.messages || [];
+        if (!messages.length) {
+          transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
+            className: 'empty',
+            textContent: 'No chat messages found in transcript.',
+          }));
+          return;
+        }
+        transcriptLog.replaceChildren(...messages.map((entry) => messageNode({
+          timestamp: Date.parse(entry.timestamp) ? Math.floor(Date.parse(entry.timestamp) / 1000) : 0,
+          source: 'task',
+          role: entry.role || 'assistant',
+          text: entry.text || '',
+        })));
+        transcriptLog.scrollTop = transcriptLog.scrollHeight;
+      } catch (err) {
+        transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
+          className: 'empty',
+          textContent: String(err),
+        }));
+      }
+    }
+
+    function closeTaskTranscript() {
+      transcriptModal.hidden = true;
+      transcriptLog.replaceChildren();
     }
 
     function formatNumber(value) {
@@ -680,6 +737,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
       title.children[0].textContent = task.title || task.id;
       title.children[1].textContent = task.description || '';
       title.children[2].textContent = task.cwd || task.repo_root || task.session_path || '';
+      if (task.session_path) {
+        const actions = document.createElement('div');
+        actions.className = 'task-card-actions';
+        actions.appendChild(queueActionButton('Open chat', () => openTaskTranscript(task.id), 'Open task chat transcript'));
+        title.appendChild(actions);
+      }
       const stateCell = document.createElement('div');
       stateCell.appendChild(badge(task.status));
       const meta = document.createElement('div');
@@ -1343,6 +1406,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     document.getElementById('send-chat').addEventListener('click', () => sendChat(chatInput.value));
+    document.getElementById('close-transcript').addEventListener('click', closeTaskTranscript);
+    transcriptModal.addEventListener('click', (event) => {
+      if (event.target === transcriptModal) closeTaskTranscript();
+    });
     document.getElementById('add-queue-task').addEventListener('click', addQueueTask);
     document.getElementById('run-queue').addEventListener('click', runQueue);
     document.getElementById('stop-queue').addEventListener('click', stopQueue);
