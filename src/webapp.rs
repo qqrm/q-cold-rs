@@ -3958,6 +3958,8 @@ const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use crate::test_support;
+
     use super::*;
     use tempfile::tempdir;
 
@@ -4169,49 +4171,141 @@ mod tests {
     }
 
     #[test]
-    fn running_queue_removal_allows_finished_and_future_pending_only() {
-        let run = state::QueueRunRow {
-            id: "run".to_string(),
-            status: "running".to_string(),
+    fn running_queue_removal_contract_covers_active_future_and_terminal_rows() {
+        let run = queue_run_fixture("run", "running", 3);
+        let cases = [
+            ("success", 2, None, true),
+            ("failed", 2, None, true),
+            ("blocked", 2, None, true),
+            ("stopped", 2, None, true),
+            ("pending", 4, None, true),
+            ("waiting", 4, None, true),
+            ("pending", 3, None, false),
+            ("running", 4, None, false),
+            ("waiting", 4, Some("queue-run-1"), false),
+        ];
+
+        for (status, position, agent_id, expected) in cases {
+            let item = queue_item_fixture("run", "item", position, status, agent_id);
+            assert_eq!(
+                queue_item_removable_while_running(&run, &item).unwrap(),
+                expected,
+                "status={status} position={position} agent_id={agent_id:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn queue_persistence_contract_preserves_order_and_deletes_empty_run() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("run-contract", "running", 1);
+        let items = vec![
+            queue_item_fixture("run-contract", "third", 3, "pending", None),
+            queue_item_fixture("run-contract", "first", 1, "success", Some("agent-1")),
+            queue_item_fixture("run-contract", "second", 2, "pending", None),
+        ];
+
+        state::replace_web_queue(&run, &items).unwrap();
+        let (stored_run, stored_items) = state::load_web_queue_run("run-contract").unwrap();
+
+        assert_eq!(stored_run.unwrap().id, "run-contract");
+        assert_eq!(
+            stored_items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second", "third"]
+        );
+
+        let deleted = state::delete_web_queue_item("run-contract", "second").unwrap();
+        assert_eq!(deleted.position, 2);
+        let (_, remaining) = state::load_web_queue_run("run-contract").unwrap();
+        assert_eq!(remaining.len(), 2);
+
+        state::delete_web_queue_item("run-contract", "first").unwrap();
+        state::delete_web_queue_item("run-contract", "third").unwrap();
+        let (empty_run, empty_items) = state::load_web_queue_run("run-contract").unwrap();
+        assert!(empty_run.is_none());
+        assert!(empty_items.is_empty());
+    }
+
+    #[test]
+    fn queue_storage_contract_handles_realistic_batch_with_budget() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("run-batch", "running", 20);
+        let items = (0..200)
+            .map(|index| {
+                queue_item_fixture(
+                    "run-batch",
+                    &format!("item-{index:03}"),
+                    index,
+                    if index < 20 { "success" } else { "pending" },
+                    (index < 20).then_some("agent"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let started = std::time::Instant::now();
+
+        state::replace_web_queue(&run, &items).unwrap();
+        let (_, loaded) = state::load_web_queue_run("run-batch").unwrap();
+        let removable = loaded
+            .iter()
+            .filter(|item| queue_item_removable_while_running(&run, item).unwrap())
+            .count();
+
+        assert_eq!(loaded.len(), 200);
+        assert_eq!(removable, 199);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "queue batch contract exceeded budget: {:?}",
+            started.elapsed()
+        );
+    }
+
+    fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
+        state::QueueRunRow {
+            id: id.to_string(),
+            status: status.to_string(),
             selected_agent_command: "c1".to_string(),
             selected_repo_root: None,
             selected_repo_name: None,
             track: "queue-run".to_string(),
-            current_index: 3,
+            current_index,
             stop_requested: false,
-            message: "running".to_string(),
+            message: status.to_string(),
             created_at: 0,
             updated_at: 0,
-        };
-        let mut item = state::QueueItemRow {
-            id: "item".to_string(),
-            run_id: "run".to_string(),
-            position: 4,
-            prompt: "future".to_string(),
-            slug: "task-run-05".to_string(),
+        }
+    }
+
+    fn queue_item_fixture(
+        run_id: &str,
+        id: &str,
+        position: i64,
+        status: &str,
+        agent_id: Option<&str>,
+    ) -> state::QueueItemRow {
+        state::QueueItemRow {
+            id: id.to_string(),
+            run_id: run_id.to_string(),
+            position,
+            prompt: format!("prompt {id}"),
+            slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
             agent_command: "c1".to_string(),
-            agent_id: None,
-            status: "pending".to_string(),
+            agent_id: agent_id.map(str::to_string),
+            status: status.to_string(),
             message: String::new(),
             attempts: 0,
             next_attempt_at: None,
             started_at: 0,
             updated_at: 0,
-        };
-
-        assert!(queue_item_removable_while_running(&run, &item).unwrap());
-
-        item.position = 3;
-        assert!(!queue_item_removable_while_running(&run, &item).unwrap());
-
-        item.position = 4;
-        item.agent_id = Some("queue-run-1".to_string());
-        assert!(!queue_item_removable_while_running(&run, &item).unwrap());
-
-        item.status = "success".to_string();
-        assert!(queue_item_removable_while_running(&run, &item).unwrap());
+        }
     }
 
     #[test]

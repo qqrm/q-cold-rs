@@ -47,6 +47,27 @@ that binary was built. A dirty local rebuild reports the next build number so
 changed-but-uncommitted operator binaries are distinguishable from the last
 clean commit build.
 
+## Local iteration checks
+
+Run the same preflight gate locally before closing a task or asking CI to
+evaluate it:
+
+```bash
+scripts/preflight.sh
+```
+
+The gate checks Rust formatting, web asset JavaScript syntax, binary unit tests,
+and stable integration suites that do not require the external task-flow fixture
+adapter. `cargo qcold verify` and successful managed task closeout run this
+script through the repository-local `xtask` adapter. Optional heavier profiles
+are available when the local environment has the required fixtures:
+
+```bash
+scripts/preflight.sh --full
+scripts/preflight.sh --task-flow
+act -W .github/workflows/preflight.yml -j preflight
+```
+
 ## Task records
 
 Q-COLD stores lightweight task records in its local SQLite database. Use

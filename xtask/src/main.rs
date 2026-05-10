@@ -288,20 +288,7 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     let message = message.context("--message is required for success closeout")?;
     let agent_worktree = agent_return_worktree();
     ensure_clean(&task.primary_repo_path, "primary checkout")?;
-    run_required("cargo", ["fmt", "--check"].map(OsString::from).to_vec())?;
-    run_required(
-        "cargo",
-        [
-            "test",
-            "--bin",
-            "cargo-qcold",
-            "--locked",
-            "--",
-            "--test-threads=1",
-        ]
-        .map(OsString::from)
-        .to_vec(),
-    )?;
+    run_local_preflight(&[])?;
     if !git_output(&task.task_worktree, ["status", "--porcelain"])?.is_empty() {
         run_git(&task.task_worktree, ["add", "-A"])?;
         run_git(&task.task_worktree, ["commit", "-m", message])?;
@@ -450,21 +437,15 @@ fn verify_command(args: &[OsString]) -> Result<u8> {
     if !args.is_empty() {
         println!("verify-profile\t{}", display_args(args));
     }
-    run_required("cargo", ["fmt", "--check"].map(OsString::from).to_vec())?;
-    run_required(
-        "cargo",
-        [
-            "test",
-            "--bin",
-            "cargo-qcold",
-            "--locked",
-            "--",
-            "--test-threads=1",
-        ]
-        .map(OsString::from)
-        .to_vec(),
-    )?;
+    run_local_preflight(args)?;
     Ok(0)
+}
+
+fn run_local_preflight(args: &[OsString]) -> Result<()> {
+    let script = repo_root()?.join("scripts/preflight.sh");
+    let mut command_args = Vec::new();
+    command_args.extend(args.iter().cloned());
+    run_required(path_arg(&script), command_args)
 }
 
 fn install_command(args: &[OsString]) -> Result<u8> {
