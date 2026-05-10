@@ -178,8 +178,10 @@ agent has exited. Its
 Tasks view shows Q-COLD task records for the active repository from SQLite as
 separate active and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported
-from session JSONL metadata. Raw managed-worktree status remains available for
-debugging. It streams state and history updates with server-sent events and
+from session JSONL metadata. Long task descriptions are collapsed into a
+single-line preview with a prompt disclosure so task cards stay scannable while
+the full prompt remains available in place. Raw managed-worktree status remains
+available for debugging. It streams state and history updates with server-sent events and
 includes an `Auto`/`Dark`/`Light` theme switch stored in browser local storage.
 The web chat displays web-origin messages only, while the meta-agent prompt can
 still use the broader shared local history as context. The Agents view shows

@@ -928,10 +928,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
       node.dataset.taskId = task.id;
       if (task.agent_id) node.dataset.agentId = task.agent_id;
       const title = document.createElement('div');
-      title.innerHTML = '<div class="task-title"></div><div class="task-description"></div><div class="task-path"></div>';
-      title.children[0].textContent = task.title || task.id;
-      title.children[1].textContent = task.description || '';
-      title.children[2].textContent = task.cwd || task.repo_root || task.session_path || '';
+      const titleText = document.createElement('div');
+      titleText.className = 'task-title';
+      titleText.textContent = task.title || task.id;
+      title.appendChild(titleText);
+      if (task.description) title.appendChild(taskDescriptionNode(task.description));
+      const path = document.createElement('div');
+      path.className = 'task-path';
+      path.textContent = task.cwd || task.repo_root || task.session_path || '';
+      title.appendChild(path);
       if (task.session_path) {
         const actions = document.createElement('div');
         actions.className = 'task-card-actions';
@@ -964,6 +969,30 @@ const tg = window.Telegram && window.Telegram.WebApp;
       meta.appendChild(dates);
       node.append(title, stateCell, meta, usage);
       return node;
+    }
+
+    function compactTaskDescription(description) {
+      const text = String(description || '').split(/\s+/).filter(Boolean).join(' ');
+      if (text.length <= 180) return text;
+      return `${text.slice(0, 177).trimEnd()}...`;
+    }
+
+    function taskDescriptionNode(description) {
+      const wrap = document.createElement('details');
+      wrap.className = 'task-description';
+      const summary = document.createElement('summary');
+      const preview = document.createElement('span');
+      preview.className = 'task-description-preview';
+      preview.textContent = compactTaskDescription(description);
+      const hint = document.createElement('span');
+      hint.className = 'task-description-hint';
+      hint.textContent = String(description).length > 180 ? 'Full prompt' : 'Prompt';
+      summary.append(preview, hint);
+      const full = document.createElement('pre');
+      full.className = 'task-description-full';
+      full.textContent = description;
+      wrap.append(summary, full);
+      return wrap;
     }
 
     function sumTokens(records) {
