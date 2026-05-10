@@ -289,22 +289,7 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
         run_git(&task.task_worktree, ["add", "-A"])?;
         run_git(&task.task_worktree, ["commit", "-m", message])?;
     }
-    run_git(
-        &task.primary_repo_path,
-        ["fetch", "origin", &task.base_branch],
-    )?;
-    run_git(
-        &task.primary_repo_path,
-        ["merge", "--ff-only", &task.task_branch],
-    )?;
-    run_git(
-        &task.primary_repo_path,
-        ["push", "origin", &task.base_branch],
-    )?;
-    run_git(
-        &task.primary_repo_path,
-        ["fetch", "origin", &task.base_branch],
-    )?;
+    deliver_task_branch_to_primary(task)?;
     task.status = "closed:success".to_string();
     task.updated_at = unix_now().to_string();
     write_task_env(task)?;
@@ -331,6 +316,20 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     run_git(&task.primary_repo_path, ["branch", "-d", &branch])?;
     println!("task-closeout\tsuccess\t{}", task.task_name);
     Ok(0)
+}
+
+fn deliver_task_branch_to_primary(task: &TaskEnv) -> Result<()> {
+    run_git(&task.primary_repo_path, ["fetch", "origin"])?;
+    run_git(
+        &task.primary_repo_path,
+        ["merge", "--ff-only", &task.task_branch],
+    )?;
+    run_git(
+        &task.primary_repo_path,
+        ["push", "origin", &task.base_branch],
+    )?;
+    run_git(&task.primary_repo_path, ["fetch", "origin"])?;
+    Ok(())
 }
 
 fn agent_return_worktree() -> Option<PathBuf> {
@@ -789,6 +788,87 @@ mod tests {
             Some(Path::new("/workspace/WT/repo/agents/c1"))
         );
         std::env::remove_var("QCOLD_AGENT_WORKTREE");
+    }
+
+    #[test]
+    fn deliver_task_branch_pushes_base_and_refreshes_origin_tracking() {
+        let root = unique_test_dir("qcold-self-closeout-push");
+        let remote = root.join("remote.git");
+        let primary = root.join("primary");
+
+        run_git_in(&root, ["init", "--bare", path_arg(&remote)]);
+        run_git_in(&root, ["clone", path_arg(&remote), path_arg(&primary)]);
+        run_git_in(&primary, ["config", "user.name", "tester"]);
+        run_git_in(&primary, ["config", "user.email", "tester@example.com"]);
+        run_git_in(&primary, ["checkout", "-B", "main"]);
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        run_git_in(&primary, ["add", "README.md"]);
+        run_git_in(&primary, ["commit", "-m", "seed"]);
+        run_git_in(&primary, ["push", "-u", "origin", "main"]);
+
+        let worktree = root.join("task");
+        run_git_in(
+            &primary,
+            [
+                "worktree",
+                "add",
+                "-b",
+                "task/push-proof",
+                path_arg(&worktree),
+                "HEAD",
+            ],
+        );
+        fs::write(worktree.join("proof.txt"), "proof\n").unwrap();
+        run_git_in(&worktree, ["add", "proof.txt"]);
+        run_git_in(&worktree, ["commit", "-m", "add proof"]);
+
+        let task = TaskEnv {
+            task_id: "task/push-proof".into(),
+            task_name: "push-proof".into(),
+            task_branch: "task/push-proof".into(),
+            task_execution_anchor: "001".into(),
+            task_description: "push proof".into(),
+            task_worktree: worktree,
+            task_profile: "default".into(),
+            primary_repo_path: primary.clone(),
+            base_branch: "main".into(),
+            base_head: git_output(&primary, ["rev-parse", "main"]).unwrap(),
+            task_head: String::new(),
+            started_at: "1".into(),
+            status: "open".into(),
+            updated_at: "1".into(),
+            devcontainer_name: "host-shell".into(),
+            delivery_mode: "self-hosted-qcold".into(),
+        };
+
+        deliver_task_branch_to_primary(&task).unwrap();
+
+        let local_main = git_output(&primary, ["rev-parse", "main"]).unwrap();
+        let origin_main = git_output(&primary, ["rev-parse", "origin/main"]).unwrap();
+        let remote_main = git_output(&remote, ["rev-parse", "refs/heads/main"]).unwrap();
+
+        assert_eq!(local_main, origin_main);
+        assert_eq!(local_main, remote_main);
+        assert_eq!(
+            fs::read_to_string(primary.join("proof.txt")).unwrap(),
+            "proof\n"
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn unique_test_dir(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("{name}-{}-{}", std::process::id(), unix_now()));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn run_git_in<const N: usize>(repo: &Path, args: [&str; N]) {
+        run_git(repo, args).unwrap();
     }
 }
 
