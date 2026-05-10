@@ -742,7 +742,7 @@ fn run_web_queue(run_id: &str) -> Result<()> {
                 state::update_web_queue_run(run_id, "stopped", index, "stopped by operator")?;
                 return Ok(());
             }
-            QueueItemOutcome::Failed(message) => {
+            QueueItemOutcome::Failed { message, .. } => {
                 state::update_web_queue_run(run_id, "failed", index, &message)?;
                 return Ok(());
             }
@@ -755,7 +755,23 @@ fn run_web_queue(run_id: &str) -> Result<()> {
 enum QueueItemOutcome {
     Success,
     Stopped,
-    Failed(String),
+    Failed { message: String, retryable: bool },
+}
+
+impl QueueItemOutcome {
+    fn failed(message: impl Into<String>) -> Self {
+        Self::Failed {
+            message: message.into(),
+            retryable: false,
+        }
+    }
+
+    fn retryable_failure(message: impl Into<String>) -> Self {
+        Self::Failed {
+            message: message.into(),
+            retryable: true,
+        }
+    }
 }
 
 fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueItemOutcome> {
@@ -774,7 +790,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                 item.attempts,
                 None,
             )?;
-            return Ok(QueueItemOutcome::Failed(status));
+            return Ok(QueueItemOutcome::failed(status));
         }
     }
 
@@ -809,7 +825,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                         retries,
                         None,
                     )?;
-                    return Ok(QueueItemOutcome::Failed(message));
+                    return Ok(QueueItemOutcome::failed(message));
                 }
                 let delay = WEB_QUEUE_RETRY_DELAYS[retries as usize];
                 retries += 1;
@@ -857,7 +873,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                 retries,
                 None,
             )?;
-            return Ok(QueueItemOutcome::Failed(message));
+            return Ok(QueueItemOutcome::failed(message));
         }
 
         state::update_web_queue_item(
@@ -870,8 +886,10 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             None,
         )?;
         match start_web_queue_item(run_id, item, retries)? {
-            QueueItemOutcome::Failed(message)
-                if (retries as usize) < WEB_QUEUE_RETRY_DELAYS.len() =>
+            QueueItemOutcome::Failed {
+                message,
+                retryable: true,
+            } if (retries as usize) < WEB_QUEUE_RETRY_DELAYS.len() =>
             {
                 let delay = WEB_QUEUE_RETRY_DELAYS[retries as usize];
                 retries += 1;
@@ -912,7 +930,7 @@ fn start_web_queue_item(
     };
     let agent = match start_web_agent(&request) {
         Ok(agent) => agent,
-        Err(err) => return Ok(QueueItemOutcome::Failed(format!("{err:#}"))),
+        Err(err) => return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}"))),
     };
     state::update_web_queue_item(
         run_id,
@@ -924,17 +942,17 @@ fn start_web_queue_item(
         None,
     )?;
     let Some(target) = wait_for_agent_terminal_target(&agent.id) else {
-        return Ok(QueueItemOutcome::Failed(
-            "agent terminal did not appear".to_string(),
+        return Ok(QueueItemOutcome::retryable_failure(
+            "agent terminal did not appear",
         ));
     };
     thread::sleep(Duration::from_secs(1));
     if let Err(err) = send_terminal_text_to_target(&target, "/new") {
-        return Ok(QueueItemOutcome::Failed(format!("{err:#}")));
+        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
     }
     thread::sleep(Duration::from_millis(500));
     if let Err(err) = send_terminal_text_to_target(&target, &queue_task_instruction(item)) {
-        return Ok(QueueItemOutcome::Failed(format!("{err:#}")));
+        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
     }
     state::update_web_queue_item(
         run_id,
@@ -984,7 +1002,7 @@ fn wait_for_queue_item_closeout(
                     attempts,
                     None,
                 )?;
-                return Ok(QueueItemOutcome::Failed(status));
+                return Ok(QueueItemOutcome::failed(status));
             }
             if status == "open" && !agent_running(agent_id) {
                 let message = "agent exited before task closeout".to_string();
@@ -997,7 +1015,7 @@ fn wait_for_queue_item_closeout(
                     attempts,
                     None,
                 )?;
-                return Ok(QueueItemOutcome::Failed(message));
+                return Ok(QueueItemOutcome::failed(message));
             }
         } else if !agent_running(agent_id) {
             let message = "agent exited before opening task record".to_string();
@@ -1010,7 +1028,7 @@ fn wait_for_queue_item_closeout(
                 attempts,
                 None,
             )?;
-            return Ok(QueueItemOutcome::Failed(message));
+            return Ok(QueueItemOutcome::retryable_failure(message));
         }
     }
 }
@@ -3752,6 +3770,25 @@ mod tests {
             clean_queue_slug("task-run-01", "run", 1, &mut used),
             "task-run-02"
         );
+    }
+
+    #[test]
+    fn queue_item_outcome_distinguishes_retryable_launch_failures() {
+        match QueueItemOutcome::retryable_failure("terminal setup failed") {
+            QueueItemOutcome::Failed { message, retryable } => {
+                assert_eq!(message, "terminal setup failed");
+                assert!(retryable);
+            }
+            _ => panic!("expected failed outcome"),
+        }
+
+        match QueueItemOutcome::failed("agent exited before task closeout") {
+            QueueItemOutcome::Failed { message, retryable } => {
+                assert_eq!(message, "agent exited before task closeout");
+                assert!(!retryable);
+            }
+            _ => panic!("expected failed outcome"),
+        }
     }
 
     #[test]

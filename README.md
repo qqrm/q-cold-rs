@@ -170,6 +170,10 @@ terminals before reporting the run state. If the selected agent account is
 temporarily unavailable, the
 backend waits and retries the next launch three times after roughly 1, 5, and
 10 minutes before failing the row; unauthenticated accounts fail immediately.
+Launch and terminal setup failures before a managed task record exists are
+retryable on the same schedule. Once the matching `task/<slug>` record exists,
+Q-COLD will not start a second executor for that row; non-success closeout or a
+prematurely exited executor stops the row for operator diagnostics.
 Queue rows can be reordered, removed, copied, or opened to an interactive task
 chat. When the related terminal agent is still running, that chat can send
 operator messages back into the pane even before Codex telemetry has captured a
