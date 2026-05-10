@@ -217,6 +217,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (view.status === 'starting') return 'starting';
       if (view.status === 'running') return 'running';
       if (view.status === 'success') return 'done';
+      if (view.status === 'blocked') return 'blocked';
       if (view.status === 'stopped') return 'stopped';
       if (view.status === 'failed') return 'failed';
       return 'waiting';
@@ -230,6 +231,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
         return {
           status: 'success',
           message: 'closed successfully',
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
+      if (task?.status === 'closed:blocked') {
+        return {
+          status: 'blocked',
+          message: task.status,
           detail: queueItemDetail(item, task, agentId),
         };
       }
