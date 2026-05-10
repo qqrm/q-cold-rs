@@ -194,6 +194,11 @@ Launch and terminal setup failures before a managed task record exists are
 retryable on the same schedule. Once the matching `task/<slug>` record exists,
 Q-COLD will not start a second executor for that row; non-success closeout or a
 prematurely exited executor stops the row for operator diagnostics.
+The Queue Stop action stops the backend worker immediately and marks the
+current row as stopped without deleting it or treating it as complete. The same
+control becomes Continue for a stopped run; continuing clears the stop flag and
+resumes from that row, reusing its still-running executor agent when one exists
+or launching a fresh executor when needed.
 Queue rows can be reordered, removed, copied, cleared in bulk, or opened to an
 interactive task chat. While a queue is running, the active executor row is
 protected, but completed rows and not-yet-started pending rows remain removable.

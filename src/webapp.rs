@@ -325,6 +325,7 @@ fn router() -> Router {
         .route("/api/queue/remove", post(api_queue_remove))
         .route("/api/queue/clear", post(api_queue_clear))
         .route("/api/queue/stop", post(api_queue_stop))
+        .route("/api/queue/continue", post(api_queue_continue))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
         .route("/api/history", get(api_history))
@@ -422,6 +423,19 @@ async fn api_queue_clear(
 
 async fn api_queue_stop(headers: HeaderMap) -> impl IntoResponse {
     let response = handle_queue_stop(&headers);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_continue(
+    headers: HeaderMap,
+    Json(payload): Json<QueueContinueRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_continue(&headers, &payload);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -673,8 +687,11 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
     let Some(run) = run else {
         bail!("unknown queue run: {run_id}");
     };
-    if !matches!(run.status.as_str(), "running" | "waiting" | "starting") {
-        bail!("queue is not running");
+    if !matches!(
+        run.status.as_str(),
+        "running" | "waiting" | "starting" | "stopped"
+    ) {
+        bail!("queue is not appendable");
     }
     let prompts = payload
         .items
@@ -767,6 +784,35 @@ fn handle_queue_stop_result(headers: &HeaderMap) -> Result<()> {
         require_write_token(headers)?;
     }
     state::request_web_queue_stop()
+}
+
+fn handle_queue_continue(
+    headers: &HeaderMap,
+    payload: &QueueContinueRequest,
+) -> TerminalSendResponse {
+    match handle_queue_continue_result(headers, payload) {
+        Ok(()) => TerminalSendResponse {
+            ok: true,
+            output: "queue continued".to_string(),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_continue_result(
+    headers: &HeaderMap,
+    payload: &QueueContinueRequest,
+) -> Result<()> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let run_id = clean_queue_run_id(&payload.run_id);
+    state::continue_web_queue_run(&run_id)?;
+    spawn_web_queue_worker(run_id);
+    Ok(())
 }
 
 fn handle_queue_remove(headers: &HeaderMap, payload: &QueueRemoveRequest) -> TerminalSendResponse {
@@ -977,15 +1023,7 @@ fn run_web_queue(run_id: &str) -> Result<()> {
         };
         let index = item.position;
         if state::web_queue_stop_requested(run_id)? {
-            state::update_web_queue_item(
-                run_id,
-                &item.id,
-                "stopped",
-                "stopped by operator",
-                None,
-                item.attempts,
-                None,
-            )?;
+            pause_web_queue_item(run_id, &item, item.agent_id.as_deref(), item.attempts)?;
             state::update_web_queue_run(run_id, "stopped", index, "stopped by operator")?;
             return Ok(());
         }
@@ -1005,7 +1043,7 @@ fn run_web_queue(run_id: &str) -> Result<()> {
 }
 
 fn queue_item_terminal(status: &str) -> bool {
-    matches!(status, "success" | "failed" | "stopped" | "blocked")
+    matches!(status, "success" | "failed" | "blocked")
 }
 
 enum QueueItemOutcome {
@@ -1067,19 +1105,27 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             return Ok(QueueItemOutcome::failed(message));
         }
     }
+    if matches!(item.status.as_str(), "stopped" | "paused") {
+        if let Some(agent_id) = item.agent_id.as_deref() {
+            if agent_running(agent_id) {
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "running",
+                    &format!("resumed agent {agent_id}"),
+                    Some(agent_id),
+                    item.attempts,
+                    None,
+                )?;
+                return wait_for_queue_item_closeout(run_id, item, agent_id, item.attempts);
+            }
+        }
+    }
 
     let mut retries = item.attempts.max(0);
     loop {
         if state::web_queue_stop_requested(run_id)? {
-            state::update_web_queue_item(
-                run_id,
-                &item.id,
-                "stopped",
-                "stopped by operator",
-                None,
-                retries,
-                None,
-            )?;
+            pause_web_queue_item(run_id, item, None, retries)?;
             return Ok(QueueItemOutcome::Stopped);
         }
 
@@ -1123,15 +1169,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                     Some(next_attempt_at),
                 )?;
                 if !sleep_queue_retry(run_id, delay)? {
-                    state::update_web_queue_item(
-                        run_id,
-                        &item.id,
-                        "stopped",
-                        "stopped by operator",
-                        None,
-                        retries,
-                        None,
-                    )?;
+                    pause_web_queue_item(run_id, item, None, retries)?;
                     return Ok(QueueItemOutcome::Stopped);
                 }
                 continue;
@@ -1260,15 +1298,7 @@ fn wait_for_queue_item_closeout(
 ) -> Result<QueueItemOutcome> {
     loop {
         if state::web_queue_stop_requested(run_id)? {
-            state::update_web_queue_item(
-                run_id,
-                &item.id,
-                "stopped",
-                "stopped by operator",
-                Some(agent_id),
-                attempts,
-                None,
-            )?;
+            pause_web_queue_item(run_id, item, Some(agent_id), attempts)?;
             return Ok(QueueItemOutcome::Stopped);
         }
         thread::sleep(Duration::from_secs(5));
@@ -1317,6 +1347,23 @@ fn wait_for_queue_item_closeout(
             return Ok(QueueItemOutcome::retryable_failure(message));
         }
     }
+}
+
+fn pause_web_queue_item(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    agent_id: Option<&str>,
+    attempts: i64,
+) -> Result<()> {
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "stopped",
+        "stopped by operator; press Continue to resume",
+        agent_id,
+        attempts,
+        None,
+    )
 }
 
 fn update_successful_queue_item(
@@ -3878,6 +3925,11 @@ struct QueueAppendRequest {
 }
 
 #[derive(Deserialize)]
+struct QueueContinueRequest {
+    run_id: String,
+}
+
+#[derive(Deserialize)]
 struct QueueRemoveRequest {
     run_id: String,
     item_id: String,
@@ -4171,13 +4223,55 @@ mod tests {
     }
 
     #[test]
+    fn stopped_queue_item_is_resumable_not_terminal() {
+        assert!(!queue_item_terminal("stopped"));
+        assert!(!queue_item_terminal("paused"));
+        assert!(queue_item_terminal("success"));
+        assert!(queue_item_terminal("failed"));
+        assert!(queue_item_terminal("blocked"));
+    }
+
+    #[test]
+    fn stopped_queue_run_can_continue_without_deleting_current_item() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("run-stopped", "stopped", 1);
+        run.stop_requested = true;
+        let items = vec![
+            queue_item_fixture("run-stopped", "first", 0, "success", Some("agent-1")),
+            queue_item_fixture("run-stopped", "second", 1, "stopped", Some("agent-2")),
+            queue_item_fixture("run-stopped", "third", 2, "pending", None),
+        ];
+
+        state::replace_web_queue(&run, &items).unwrap();
+        state::continue_web_queue_run("run-stopped").unwrap();
+        let (stored_run, stored_items) = state::load_web_queue_run("run-stopped").unwrap();
+        let stored_run = stored_run.unwrap();
+
+        assert_eq!(stored_run.status, "running");
+        assert!(!stored_run.stop_requested);
+        assert_eq!(
+            stored_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("first", "success"),
+                ("second", "stopped"),
+                ("third", "pending")
+            ]
+        );
+    }
+
+    #[test]
     fn running_queue_removal_contract_covers_active_future_and_terminal_rows() {
         let run = queue_run_fixture("run", "running", 3);
         let cases = [
             ("success", 2, None, true),
             ("failed", 2, None, true),
             ("blocked", 2, None, true),
-            ("stopped", 2, None, true),
+            ("stopped", 2, None, false),
             ("pending", 4, None, true),
             ("waiting", 4, None, true),
             ("pending", 3, None, false),

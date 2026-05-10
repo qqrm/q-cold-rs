@@ -461,7 +461,7 @@
     .queue-step.success { border-left: 4px solid var(--ok); }
     .queue-step.failed { border-left: 4px solid var(--bad); }
     .queue-step.running, .queue-step.starting { border-left: 4px solid var(--info); }
-    .queue-step.blocked, .queue-step.stopped { border-left: 4px solid var(--warn); }
+    .queue-step.blocked, .queue-step.stopped, .queue-step.paused { border-left: 4px solid var(--warn); }
     .agent-limit-toolbar {
       justify-content: flex-start;
       margin: 0 0 8px;

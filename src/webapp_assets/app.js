@@ -42,7 +42,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueSaved = loadQueueStorage();
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
-    let queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
+    let queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
     let transcriptContext = { taskId: '', terminalTarget: '', chatAvailable: false };
     let agentLimits = null;
     let agentLimitsLoading = false;
@@ -353,6 +353,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (view.status === 'success') return 'done';
       if (view.status === 'blocked') return 'blocked';
       if (view.status === 'stopped') return 'stopped';
+      if (view.status === 'paused') return 'stopped';
       if (view.status === 'failed') return 'failed';
       return 'waiting';
     }
@@ -379,6 +380,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
         return {
           status: 'failed',
           message: task.status,
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
+      if (queueRun.stopped && ['stopped', 'paused'].includes(item.status)) {
+        return {
+          status: 'stopped',
+          message: item.message || 'stopped by operator; press Continue to resume',
           detail: queueItemDetail(item, task, agentId),
         };
       }
@@ -437,13 +445,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
           .filter((item) => !removingQueueItems.has(queueItemKey(item)));
         queueRun = {
           running: Boolean(state.queue.running),
+          stopped: state.queue.run?.status === 'stopped',
           stop: false,
           activeIndex: Number(state.queue.run?.current_index ?? -1),
           runId: state.queue.run?.id || existingQueueRunId(),
+          status: state.queue.run?.status || '',
         };
         return;
       }
-      queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
+      queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
       let changed = false;
       const beforeCount = queueItems.length;
       queueItems = queueItems.filter((item) => !isStaleQueueItem(item));
@@ -479,7 +489,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (task?.status?.startsWith('closed')) return true;
       if (item.runId && !task) return true;
       if (item.slug && !task) return true;
-      if (item.slug && ['success', 'failed', 'blocked', 'stopped'].includes(item.status)) return true;
+      if (item.slug && ['success', 'failed', 'blocked'].includes(item.status)) return true;
       return false;
     }
 
@@ -506,21 +516,23 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function renderQueue() {
       document.getElementById('nav-queue').textContent = String(queueItems.length);
-      queueState.textContent = queueRun.running ? queueRunningText() : 'idle';
+      queueState.textContent = queueRun.running ? queueRunningText() : queueRun.stopped ? 'stopped' : 'idle';
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
       queueInput.disabled = false;
       renderQueueRepoSelector();
       renderQueueAgentSelector();
       document.getElementById('add-queue-task').disabled = !queueInput.value.trim();
       document.getElementById('clear-queue').disabled = !queueItems.length;
-      document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length || !selectedQueueAgentRecord();
-      document.getElementById('run-queue').classList.toggle('visible', Boolean(queueItems.length));
+      document.getElementById('run-queue').disabled = queueRun.running || queueRun.stopped || !queueItems.length || !selectedQueueAgentRecord();
+      document.getElementById('run-queue').classList.toggle('visible', Boolean(queueItems.length) && !queueRun.stopped);
+      const stopButton = document.getElementById('stop-queue');
+      stopButton.textContent = queueRun.stopped ? 'Continue' : 'Stop';
+      stopButton.classList.toggle('visible', queueRun.running || queueRun.stopped);
       if (!queueItems.length) {
         const empty = document.createElement('div');
         empty.className = 'empty';
         empty.textContent = 'No queued tasks.';
         queueStatus.replaceChildren(empty);
-        document.getElementById('stop-queue').classList.toggle('visible', queueRun.running);
         return;
       }
       queueStatus.replaceChildren(...queueItems.map((item, index) => {
@@ -544,7 +556,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         node.append(title, statusNode, message, controls);
         return node;
       }));
-      document.getElementById('stop-queue').classList.toggle('visible', queueRun.running);
+      stopButton.classList.toggle('visible', queueRun.running || queueRun.stopped);
     }
 
     function queueRunningText() {
@@ -559,7 +571,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     async function addQueueTask() {
       const prompt = queueInput.value.trim();
       if (!prompt) return;
-      if (queueRun.running) {
+      if (queueRun.running || queueRun.stopped) {
         await appendQueueTask(prompt);
         return;
       }
@@ -668,7 +680,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function queueItemTerminal(item) {
-      return ['success', 'failed', 'blocked', 'stopped'].includes(queueItemView(item).status);
+      return ['success', 'failed', 'blocked'].includes(queueItemView(item).status);
     }
 
     function queueItemKey(item) {
@@ -744,7 +756,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }
       }
       queueItems = [];
-      queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
+      queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
       saveQueueStorage();
       await loadSnapshot();
       renderQueue();
@@ -1905,9 +1917,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const selectedRepo = selectedQueueRepository();
       queueRun = {
         running: true,
+        stopped: false,
         stop: false,
         activeIndex: -1,
         runId: existingQueueRunId() || Date.now().toString(36),
+        status: 'running',
       };
       const usedSlugs = usedQueueSlugs(queueRun.runId);
       queueItems = queueItems.map((item, index) => {
@@ -1963,9 +1977,34 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     async function stopQueue() {
+      if (queueRun.stopped) {
+        await continueQueue();
+        return;
+      }
       queueRun.stop = true;
       try {
         await fetch('/api/queue/stop', { method: 'POST' });
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
+      renderQueue();
+    }
+
+    async function continueQueue() {
+      const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
+      if (!runId) return;
+      try {
+        const response = await fetch('/api/queue/continue', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ run_id: runId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to continue queue');
+          return;
+        }
         await loadSnapshot();
       } catch (err) {
         appendLocalMessage('error', String(err));

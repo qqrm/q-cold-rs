@@ -481,6 +481,23 @@ pub fn request_web_queue_stop() -> Result<()> {
     Ok(())
 }
 
+pub fn continue_web_queue_run(run_id: &str) -> Result<()> {
+    let connection = open_db()?;
+    let updated = connection
+        .execute(
+            "update web_queue_runs
+             set stop_requested = 0, status = 'running', message = 'continued',
+                 updated_at_unix = ?2
+             where id = ?1 and status = 'stopped'",
+            params![run_id, unix_now()],
+        )
+        .context("failed to continue web queue")?;
+    if updated == 0 {
+        bail!("queue is not stopped: {run_id}");
+    }
+    Ok(())
+}
+
 pub fn web_queue_stop_requested(run_id: &str) -> Result<bool> {
     let connection = open_db()?;
     let requested = connection
