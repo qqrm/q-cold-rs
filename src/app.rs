@@ -479,11 +479,15 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
 
 pub(crate) fn sync_codex_task_records() -> Result<usize> {
     let agent_rows = state::load_agents(&agents::registry_path()?)?;
-    let existing = state::load_task_records(None, 1000)?;
     let preferred_cwd = repository::active_root()
         .ok()
         .or_else(|| std::env::current_dir().ok());
     let mut synced = 0;
+    let mut existing = state::load_task_records(None, 1000)?;
+
+    synced += sync_task_flow_records(&existing)?;
+    existing = state::load_task_records(None, 1000)?;
+    let mut claimed_session_paths = claimed_codex_session_paths(&existing);
 
     for agent in agent_rows {
         if is_queue_agent_track(&agent.track) {
@@ -496,9 +500,9 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
         let existing_record = existing
             .iter()
             .find(|record| record.agent_id.as_deref() == Some(agent.id.as_str()));
-        let mut claimed_session_paths = claimed_codex_session_paths(&existing);
+        let mut available_session_paths = claimed_session_paths.clone();
         if let Some(path) = existing_record.and_then(codex_session_path_from_task_record) {
-            claimed_session_paths.remove(&path);
+            available_session_paths.remove(&path);
         }
         let agent_preferred_cwd = agent.cwd.as_deref().or(preferred_cwd.as_deref());
         let summary =
@@ -508,7 +512,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
                 find_codex_session_summary(
                     &account,
                     agent.started_at,
-                    &claimed_session_paths,
+                    &available_session_paths,
                     agent_preferred_cwd,
                 )?
             };
@@ -580,11 +584,12 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             Some(agent.id),
             Some(metadata_json),
         );
-        state::upsert_task_record(&record)?;
+        let stored = state::upsert_task_record(&record)?;
+        if let Some(path) = codex_session_path_from_task_record(&stored) {
+            claimed_session_paths.insert(path);
+        }
         synced += 1;
     }
-
-    synced += sync_task_flow_records(&existing)?;
 
     Ok(synced)
 }
@@ -753,6 +758,12 @@ fn codex_session_path_from_task_record(record: &state::TaskRecordRow) -> Option<
 }
 
 fn sync_task_flow_records(records: &[state::TaskRecordRow]) -> Result<usize> {
+    let mut worktrees = std::collections::BTreeMap::new();
+    for root in task_flow_scan_roots(records) {
+        for worktree in task_flow_worktrees_for_repo(&root)? {
+            worktrees.entry(worktree).or_insert(None);
+        }
+    }
     let mut synced = 0;
     for record in records {
         if record.source != "task-flow" {
@@ -761,7 +772,10 @@ fn sync_task_flow_records(records: &[state::TaskRecordRow]) -> Result<usize> {
         let Some(worktree) = task_flow_worktree_for_record(record) else {
             continue;
         };
-        if sync_task_flow_record_for_worktree(&worktree, Some(record.status.as_str()))? {
+        worktrees.insert(worktree, Some(record.status.clone()));
+    }
+    for (worktree, status_override) in worktrees {
+        if sync_task_flow_record_for_worktree(&worktree, status_override.as_deref())? {
             synced += 1;
         }
     }
@@ -781,7 +795,7 @@ fn sync_task_flow_record_for_worktree(
             .get("TASK_NAME")
             .cloned()
             .unwrap_or_else(|| record_id.trim_start_matches("task/").to_string());
-        state::new_task_record(
+        let mut record = state::new_task_record(
             record_id.clone(),
             "task-flow".to_string(),
             title_from_slug(&task_name),
@@ -793,7 +807,12 @@ fn sync_task_flow_record_for_worktree(
             Some(worktree.display().to_string()),
             None,
             None,
-        )
+        );
+        record.sequence = env
+            .get("TASK_SEQUENCE")
+            .or_else(|| env.get("TASK_EXECUTION_ANCHOR"))
+            .and_then(|value| value.parse::<u64>().ok());
+        record
     });
     let original_status = record.status.clone();
     let original_repo_root = record.repo_root.clone();
@@ -977,6 +996,42 @@ fn task_flow_worktree_for_record(record: &state::TaskRecordRow) -> Option<PathBu
         }
     }
     None
+}
+
+fn task_flow_scan_roots(records: &[state::TaskRecordRow]) -> Vec<PathBuf> {
+    let mut roots = std::collections::BTreeSet::new();
+    if let Ok(root) = repository::active_root() {
+        roots.insert(root);
+    }
+    for record in records {
+        if let Some(root) = record.repo_root.as_deref() {
+            roots.insert(PathBuf::from(root));
+        }
+    }
+    roots.into_iter().collect()
+}
+
+fn task_flow_worktrees_for_repo(repo_root: &Path) -> Result<Vec<PathBuf>> {
+    let managed_root = managed_root_for(repo_root);
+    let entries = match fs::read_dir(&managed_root) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read {}", managed_root.display()));
+        }
+    };
+    let mut worktrees = Vec::new();
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("failed to read entry in {}", managed_root.display()))?;
+        let worktree = entry.path();
+        if worktree.join(".task/task.env").is_file() {
+            worktrees.push(worktree);
+        }
+    }
+    worktrees.sort();
+    Ok(worktrees)
 }
 
 fn task_record_id_from_worktree(worktree: &Path) -> Option<String> {

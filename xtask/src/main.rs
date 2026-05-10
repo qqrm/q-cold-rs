@@ -502,6 +502,12 @@ fn run_preflight(profile: PreflightProfile) -> Result<()> {
             .map(OsString::from)
             .to_vec(),
     )?;
+    run_required(
+        "cargo",
+        ["test", "--locked", "--test", "task_flow_record_sync"]
+            .map(OsString::from)
+            .to_vec(),
+    )?;
 
     if profile.full {
         run_required("cargo", ["test", "--locked"].map(OsString::from).to_vec())?;
