@@ -1308,11 +1308,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const output = node.querySelector('.terminal-output');
       const nextOutput = terminal.output || '';
       if (terminalOutputCache.get(terminal.target) !== nextOutput) {
+        const shouldFollowTail = isTerminalAtTail(output);
+        const previousScrollTop = output.scrollTop;
         renderAnsi(output, nextOutput);
+        if (shouldFollowTail) {
+          output.scrollTop = output.scrollHeight;
+        } else {
+          output.scrollTop = Math.min(previousScrollTop, output.scrollHeight);
+        }
         terminalOutputCache.set(terminal.target, nextOutput);
       }
       const input = node.querySelector('.terminal-input');
       if (input) input.placeholder = `send to ${terminalLabel(terminal)}`;
+    }
+
+    function isTerminalAtTail(output) {
+      return output.scrollHeight - output.scrollTop - output.clientHeight <= 24;
     }
 
     function terminalKind(terminal) {
