@@ -679,18 +679,18 @@ fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest)
     }) {
         bail!("cannot remove queue items while the queue is running");
     }
-    let item = state::delete_web_queue_item(&run_id, item_id)?;
-    cleanup_queue_item_artifacts(
-        &item,
-        payload
-            .task_id
-            .as_deref()
-            .filter(|id| !id.trim().is_empty()),
-        payload
-            .agent_id
-            .as_deref()
-            .filter(|id| !id.trim().is_empty()),
-    )
+    let task_id = payload
+        .task_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty());
+    let agent_id = payload
+        .agent_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty());
+    match state::delete_web_queue_item_if_exists(&run_id, item_id)? {
+        Some(item) => cleanup_queue_item_artifacts(&item, task_id, agent_id),
+        None => cleanup_task_agent_artifacts(task_id, agent_id),
+    }
 }
 
 fn handle_queue_clear(headers: &HeaderMap, payload: &QueueClearRequest) -> TerminalSendResponse {
@@ -742,18 +742,48 @@ fn cleanup_queue_item_artifacts(
     task_id: Option<&str>,
     agent_id: Option<&str>,
 ) -> Result<()> {
+    let default_task_id = format!("task/{}", item.slug);
     let task_id = task_id
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)
-        .unwrap_or_else(|| format!("task/{}", item.slug));
+        .unwrap_or(default_task_id);
     let task = state::get_task_record(&task_id)?;
     let agent_id = agent_id
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)
         .or_else(|| item.agent_id.clone())
         .or_else(|| task.as_ref().and_then(|task| task.agent_id.clone()));
+    cleanup_existing_task_agent_artifacts(&task_id, task, agent_id)
+}
+
+fn cleanup_task_agent_artifacts(task_id: Option<&str>, agent_id: Option<&str>) -> Result<()> {
+    let task_id = task_id
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string);
+    let task = task_id
+        .as_deref()
+        .map(state::get_task_record)
+        .transpose()?
+        .flatten();
+    let agent_id = agent_id
+        .filter(|id| !id.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| task.as_ref().and_then(|task| task.agent_id.clone()));
+    if let Some(task_id) = task_id {
+        cleanup_existing_task_agent_artifacts(&task_id, task, agent_id)?;
+    } else if let Some(agent_id) = agent_id {
+        let _ = agents::terminate_agent(&agent_id);
+    }
+    Ok(())
+}
+
+fn cleanup_existing_task_agent_artifacts(
+    task_id: &str,
+    task: Option<state::TaskRecordRow>,
+    agent_id: Option<String>,
+) -> Result<()> {
     if task.is_some() {
-        state::delete_task_record(&task_id)?;
+        state::delete_task_record(task_id)?;
     }
     if let Some(agent_id) = agent_id {
         let _ = agents::terminate_agent(&agent_id);

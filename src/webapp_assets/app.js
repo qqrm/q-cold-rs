@@ -568,15 +568,29 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const item = queueItems[index];
       const task = taskRecordForQueueItem(item);
       if (item?.runId) {
-        removeServerQueueItem(item, task);
+        removeServerQueueItem(item, task, index);
         return;
       }
-      queueItems.splice(index, 1);
+      removeQueueItemLocally(index, item);
+    }
+
+    function removeQueueItemLocally(index, item) {
+      let currentIndex = item?.id
+        ? queueItems.findIndex((candidate) => candidate.id === item.id && candidate.runId === item.runId)
+        : -1;
+      if (currentIndex === -1 && item?.slug) {
+        currentIndex = queueItems.findIndex((candidate) => candidate.slug === item.slug);
+      }
+      if (currentIndex === -1 && queueItems[index] === item) {
+        currentIndex = index;
+      }
+      if (currentIndex === -1) return;
+      queueItems.splice(currentIndex, 1);
       saveQueueStorage();
       renderQueue();
     }
 
-    async function removeServerQueueItem(item, task) {
+    async function removeServerQueueItem(item, task, index) {
       try {
         const response = await fetch('/api/queue/remove', {
           method: 'POST',
@@ -593,6 +607,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
           appendLocalMessage('error', payload.output || 'failed to remove queue item');
           return;
         }
+        removeQueueItemLocally(index, item);
         await loadSnapshot();
       } catch (err) {
         appendLocalMessage('error', String(err));

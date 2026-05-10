@@ -476,6 +476,14 @@ pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> 
 }
 
 pub fn delete_web_queue_item(run_id: &str, item_id: &str) -> Result<QueueItemRow> {
+    delete_web_queue_item_if_exists(run_id, item_id)?
+        .with_context(|| format!("unknown queue item: {item_id}"))
+}
+
+pub fn delete_web_queue_item_if_exists(
+    run_id: &str,
+    item_id: &str,
+) -> Result<Option<QueueItemRow>> {
     let mut connection = open_db()?;
     let tx = connection
         .transaction()
@@ -491,14 +499,24 @@ pub fn delete_web_queue_item(run_id: &str, item_id: &str) -> Result<QueueItemRow
             queue_item_from_row,
         )
         .optional()
-        .context("failed to query web queue item")?
-        .with_context(|| format!("unknown queue item: {item_id}"))?;
+        .context("failed to query web queue item")?;
+    let Some(item) = item else {
+        delete_web_queue_run_if_empty(&tx, run_id)?;
+        tx.commit().context("failed to commit web queue item delete")?;
+        return Ok(None);
+    };
     tx.execute(
         "delete from web_queue_items where run_id = ?1 and id = ?2",
         params![run_id, item_id],
     )
     .context("failed to delete web queue item")?;
-    let remaining = tx
+    delete_web_queue_run_if_empty(&tx, run_id)?;
+    tx.commit().context("failed to commit web queue item delete")?;
+    Ok(Some(item))
+}
+
+fn delete_web_queue_run_if_empty(connection: &Connection, run_id: &str) -> Result<()> {
+    let remaining = connection
         .query_row(
             "select count(*) from web_queue_items where run_id = ?1",
             [run_id],
@@ -506,11 +524,11 @@ pub fn delete_web_queue_item(run_id: &str, item_id: &str) -> Result<QueueItemRow
         )
         .context("failed to count remaining web queue items")?;
     if remaining == 0 {
-        tx.execute("delete from web_queue_runs where id = ?1", [run_id])
+        connection
+            .execute("delete from web_queue_runs where id = ?1", [run_id])
             .context("failed to delete empty web queue run")?;
     }
-    tx.commit().context("failed to commit web queue item delete")?;
-    Ok(item)
+    Ok(())
 }
 
 pub fn save_terminal_metadata(target: &str, name: Option<&str>, scope: Option<&str>) -> Result<()> {
