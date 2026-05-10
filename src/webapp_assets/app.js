@@ -547,6 +547,26 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }, 0);
         return;
       }
+      if (target?.kind === 'task-card') {
+        setActiveView('tasks');
+        window.setTimeout(() => {
+          if (!focusDashboardNode(`.task-record-card[data-task-id="${cssEscape(target.task.id)}"]`)) {
+            item.message = 'task record is not visible yet';
+            item.updatedAt = Math.floor(Date.now() / 1000);
+            saveQueueStorage();
+            renderQueue();
+          }
+        }, 0);
+        return;
+      }
+      if (target?.kind === 'tasks') {
+        setActiveView('tasks');
+        item.message = 'task record is not available yet';
+        item.updatedAt = Math.floor(Date.now() / 1000);
+        saveQueueStorage();
+        renderQueue();
+        return;
+      }
       item.message = 'task context is not available yet';
       item.updatedAt = Math.floor(Date.now() / 1000);
       saveQueueStorage();
@@ -556,12 +576,18 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function queueItemContextTarget(item) {
       if (!item) return null;
       const task = taskRecordForQueueItem(item);
-      if (task?.id) {
+      if (task?.id && task.session_path) {
         return { kind: 'transcript', task };
       }
       const terminal = terminalForQueueItem(item, task);
       if (terminal) {
         return { kind: 'terminal', terminal };
+      }
+      if (task?.id) {
+        return { kind: 'task-card', task };
+      }
+      if (item.slug || item.prompt?.trim()) {
+        return { kind: 'tasks' };
       }
       return null;
     }

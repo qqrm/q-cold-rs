@@ -152,8 +152,10 @@ one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 The Queue probes agent account status before running and stops before launch
 when the selected account is known to be logged out, limited, or failing.
 Queue rows can be reordered, removed, copied, or
-opened to the related running terminal or task record. The browser-side queue
-starts the next prompt only after the
+opened to the related running terminal or task record. Rows with a task record
+but no captured chat transcript open the Tasks card instead of a transcript
+modal, and rows without a task record still switch to the Tasks view while
+recording a row-level availability note. The browser-side queue starts the next prompt only after the
 matching task record reaches `closed:success`; any blocked, failed, unknown,
 prematurely exited, or unavailable-agent task stops the remaining queue. Queue
 runtime metadata is stored in browser local storage, so rows keep showing the
