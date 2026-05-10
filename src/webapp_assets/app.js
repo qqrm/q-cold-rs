@@ -46,6 +46,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let transcriptContext = { taskId: '', terminalTarget: '', chatAvailable: false };
     let agentLimits = null;
     let agentLimitsLoading = false;
+    const removingQueueItems = new Set();
 
     function applyTheme(choice) {
       const value = choice || localStorage.getItem('qcold-theme') || 'auto';
@@ -139,17 +140,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function saveQueueStorage() {
+      const draftItems = queueItems.filter((item) => !item.runId);
+      if (!draftItems.length) {
+        localStorage.removeItem(queueStorageKey);
+        return;
+      }
       localStorage.setItem(queueStorageKey, JSON.stringify({
-        items: queueItems.map((item) => ({
+        items: draftItems.map((item) => ({
           id: item.id,
-          runId: item.runId,
+          runId: '',
           prompt: item.prompt,
-          slug: item.slug,
-          agentId: item.agentId,
+          slug: '',
+          agentId: '',
           agentCommand: item.agentCommand,
           repoRoot: item.repoRoot,
           repoName: item.repoName,
-          position: item.position,
+          position: null,
           status: item.status,
           message: item.message,
           startedAt: item.startedAt,
@@ -425,7 +431,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function syncQueueFromSnapshot() {
       if (state?.queue?.run || state?.queue?.records?.length) {
-        queueItems = (state.queue.records || []).map(queueItemFromServer);
+        localStorage.removeItem(queueStorageKey);
+        queueItems = (state.queue.records || [])
+          .map(queueItemFromServer)
+          .filter((item) => !removingQueueItems.has(queueItemKey(item)));
         queueRun = {
           running: Boolean(state.queue.running),
           stop: false,
@@ -603,7 +612,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
       copy.classList.add('icon-copy');
       const remove = queueActionButton('×', () => removeQueueItem(index), 'Remove');
       remove.classList.add('danger', 'icon-remove');
-      remove.disabled = queueRun.running && !queueItemTerminal(queueItems[index]);
+      if (queueItemRemoving(queueItems[index])) {
+        remove.textContent = '…';
+      }
+      remove.disabled = queueItemRemoving(queueItems[index]) || !queueItemRemovable(queueItems[index]);
       controls.append(up, down, open, copy, remove);
       return controls;
     }
@@ -630,7 +642,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function removeQueueItem(index) {
       const item = queueItems[index];
-      if (queueRun.running && !queueItemTerminal(item)) return;
+      if (!queueItemRemovable(item) || queueItemRemoving(item)) return;
       const task = taskRecordForQueueItem(item);
       if (item?.runId) {
         removeServerQueueItem(item, task, index);
@@ -659,7 +671,30 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return ['success', 'failed', 'blocked', 'stopped'].includes(queueItemView(item).status);
     }
 
+    function queueItemKey(item) {
+      return `${item?.runId || ''}:${item?.id || item?.slug || ''}`;
+    }
+
+    function queueItemRemoving(item) {
+      return removingQueueItems.has(queueItemKey(item));
+    }
+
+    function queueItemRemovable(item) {
+      if (!item) return false;
+      if (!queueRun.running) return true;
+      if (queueItemTerminal(item)) return true;
+      const view = queueItemView(item);
+      const activePosition = Number(queueRun.activeIndex);
+      return Boolean(item.runId)
+        && ['pending', 'waiting'].includes(view.status)
+        && !item.agentId
+        && Number(item.position) > activePosition;
+    }
+
     async function removeServerQueueItem(item, task, index) {
+      const key = queueItemKey(item);
+      removingQueueItems.add(key);
+      removeQueueItemLocally(index, item);
       try {
         const response = await fetch('/api/queue/remove', {
           method: 'POST',
@@ -673,13 +708,18 @@ const tg = window.Telegram && window.Telegram.WebApp;
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload.ok === false) {
+          removingQueueItems.delete(key);
           appendLocalMessage('error', payload.output || 'failed to remove queue item');
+          await loadSnapshot();
           return;
         }
-        removeQueueItemLocally(index, item);
         await loadSnapshot();
       } catch (err) {
+        removingQueueItems.delete(key);
         appendLocalMessage('error', String(err));
+        await loadSnapshot();
+      } finally {
+        removingQueueItems.delete(key);
       }
     }
 
@@ -2020,7 +2060,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
     });
     applyTheme();
     setActiveView(preferredView(), false);
-    renderQueue();
     connectEvents();
     window.addEventListener('hashchange', () => setActiveView(preferredView()));
     document.addEventListener('visibilitychange', () => {

@@ -168,7 +168,9 @@ retryable on the same schedule. Once the matching `task/<slug>` record exists,
 Q-COLD will not start a second executor for that row; non-success closeout or a
 prematurely exited executor stops the row for operator diagnostics.
 Queue rows can be reordered, removed, copied, cleared in bulk, or opened to an
-interactive task chat. Bulk clearing removes persisted queue rows, removes the
+interactive task chat. While a queue is running, the active executor row is
+protected, but completed rows and not-yet-started pending rows remain removable.
+Bulk clearing removes persisted queue rows, removes the
 matching task records, and terminates any associated executor agents. When the
 related terminal agent is still running, that chat can send
 operator messages back into the pane even before Codex telemetry has captured a

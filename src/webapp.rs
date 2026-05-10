@@ -793,13 +793,16 @@ fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest)
     }
     let (run, items) = state::load_web_queue_run(&run_id)?;
     let item = items.iter().find(|item| item.id == item_id);
-    if run.as_ref().is_some_and(|run| {
-        matches!(run.status.as_str(), "running" | "waiting" | "starting" | "stopping")
+    if let Some(run) = run.as_ref().filter(|run| {
+        matches!(
+            run.status.as_str(),
+            "running" | "waiting" | "starting" | "stopping"
+        )
     }) {
         let Some(item) = item else {
             return Ok(());
         };
-        if !queue_item_removable_while_running(item)? {
+        if !queue_item_removable_while_running(run, item)? {
             bail!("cannot remove active queue items while the queue is running");
         }
     }
@@ -817,8 +820,17 @@ fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest)
     }
 }
 
-fn queue_item_removable_while_running(item: &state::QueueItemRow) -> Result<bool> {
+fn queue_item_removable_while_running(
+    run: &state::QueueRunRow,
+    item: &state::QueueItemRow,
+) -> Result<bool> {
     if queue_item_terminal(&item.status) {
+        return Ok(true);
+    }
+    if matches!(item.status.as_str(), "pending" | "waiting")
+        && item.agent_id.is_none()
+        && item.position > run.current_index
+    {
         return Ok(true);
     }
     Ok(queue_task_status(item)?.is_some_and(|status| status.starts_with("closed")))
@@ -4154,6 +4166,52 @@ mod tests {
             }
             _ => panic!("expected failed outcome"),
         }
+    }
+
+    #[test]
+    fn running_queue_removal_allows_finished_and_future_pending_only() {
+        let run = state::QueueRunRow {
+            id: "run".to_string(),
+            status: "running".to_string(),
+            selected_agent_command: "c1".to_string(),
+            selected_repo_root: None,
+            selected_repo_name: None,
+            track: "queue-run".to_string(),
+            current_index: 3,
+            stop_requested: false,
+            message: "running".to_string(),
+            created_at: 0,
+            updated_at: 0,
+        };
+        let mut item = state::QueueItemRow {
+            id: "item".to_string(),
+            run_id: "run".to_string(),
+            position: 4,
+            prompt: "future".to_string(),
+            slug: "task-run-05".to_string(),
+            repo_root: None,
+            repo_name: None,
+            agent_command: "c1".to_string(),
+            agent_id: None,
+            status: "pending".to_string(),
+            message: String::new(),
+            attempts: 0,
+            next_attempt_at: None,
+            started_at: 0,
+            updated_at: 0,
+        };
+
+        assert!(queue_item_removable_while_running(&run, &item).unwrap());
+
+        item.position = 3;
+        assert!(!queue_item_removable_while_running(&run, &item).unwrap());
+
+        item.position = 4;
+        item.agent_id = Some("queue-run-1".to_string());
+        assert!(!queue_item_removable_while_running(&run, &item).unwrap());
+
+        item.status = "success".to_string();
+        assert!(queue_item_removable_while_running(&run, &item).unwrap());
     }
 
     #[test]
