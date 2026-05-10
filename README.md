@@ -191,7 +191,9 @@ launch, but live queue state, retry counters, agent ids, and generated
 `task/<slug>` values come from the backend snapshot after launch, so refreshing
 the tab does not stop the active run. Queue rows, task cards, agent cards, and
 terminal cards share the same terminal agent display name when one is known, with
-short technical ids kept as secondary diagnostics. When Codex telemetry has
+short technical ids kept as secondary diagnostics. Queue executor terminals use
+their terminal scope for the managed `task/<slug>` id, so the Terminals view
+keeps both the agent name and the task anchor visible. When Codex telemetry has
 captured a session path, task records expose the saved chat transcript from the
 Tasks view even after the terminal agent has exited. Its
 Tasks view shows Q-COLD task records for the active repository from SQLite as

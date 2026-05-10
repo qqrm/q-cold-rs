@@ -946,6 +946,7 @@ fn start_web_queue_item(
             "agent terminal did not appear",
         ));
     };
+    set_queue_terminal_scope(&target, item)?;
     thread::sleep(Duration::from_secs(1));
     if let Err(err) = send_terminal_text_to_target(&target, "/new") {
         return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
@@ -964,6 +965,17 @@ fn start_web_queue_item(
         None,
     )?;
     wait_for_queue_item_closeout(run_id, item, &agent.id, attempts)
+}
+
+fn set_queue_terminal_scope(target: &str, item: &state::QueueItemRow) -> Result<()> {
+    let metadata = terminal_metadata_by_target();
+    let name = metadata.get(target).and_then(|metadata| metadata.name.as_deref());
+    let scope = queue_terminal_scope(item);
+    state::save_terminal_metadata(target, name, Some(&scope))
+}
+
+fn queue_terminal_scope(item: &state::QueueItemRow) -> String {
+    format!("task/{}", item.slug)
 }
 
 fn wait_for_queue_item_closeout(
@@ -3809,6 +3821,29 @@ mod tests {
         assert!(instruction.contains("cargo qcold task open task-run-01"));
         assert!(instruction.contains("then do: do focused work"));
         assert!(instruction.contains("Drive the task to terminal closeout unless blocked"));
+    }
+
+    #[test]
+    fn queue_terminal_scope_uses_managed_task_slug() {
+        let item = state::QueueItemRow {
+            id: "item".to_string(),
+            run_id: "run".to_string(),
+            position: 0,
+            prompt: "do focused work".to_string(),
+            slug: "task-mozgpaqk-03".to_string(),
+            repo_root: Some("/workspace/repo".to_string()),
+            repo_name: Some("repo".to_string()),
+            agent_command: "c1".to_string(),
+            agent_id: None,
+            status: "pending".to_string(),
+            message: String::new(),
+            attempts: 0,
+            next_attempt_at: None,
+            started_at: 0,
+            updated_at: 0,
+        };
+
+        assert_eq!(queue_terminal_scope(&item), "task/task-mozgpaqk-03");
     }
 
     #[test]
