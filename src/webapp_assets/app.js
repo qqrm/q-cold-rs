@@ -142,6 +142,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       localStorage.setItem(queueStorageKey, JSON.stringify({
         items: queueItems.map((item) => ({
           id: item.id,
+          runId: item.runId,
           prompt: item.prompt,
           slug: item.slug,
           agentId: item.agentId,
@@ -431,8 +432,17 @@ const tg = window.Telegram && window.Telegram.WebApp;
         };
         return;
       }
-      if (!queueTaskRecords().length) return;
+      queueRun = { running: false, stop: false, activeIndex: -1, runId: '' };
       let changed = false;
+      const beforeCount = queueItems.length;
+      queueItems = queueItems.filter((item) => !isStaleQueueItem(item));
+      if (queueItems.length !== beforeCount) {
+        changed = true;
+      }
+      if (!queueTaskRecords().length) {
+        if (changed) saveQueueStorage();
+        return;
+      }
       for (const item of queueItems) {
         const view = queueItemView(item);
         const task = taskRecordForQueueItem(item);
@@ -450,6 +460,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }
       }
       if (changed) saveQueueStorage();
+    }
+
+    function isStaleQueueItem(item) {
+      if (!item) return true;
+      const task = taskRecordForQueueItem(item);
+      if (task?.status?.startsWith('closed')) return true;
+      if (item.runId && !task) return true;
+      if (item.slug && !task) return true;
+      if (item.slug && ['success', 'failed', 'blocked', 'stopped'].includes(item.status)) return true;
+      return false;
     }
 
     function queueItemFromServer(item) {
