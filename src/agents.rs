@@ -267,6 +267,17 @@ pub fn start_terminal_shell_agent(track: &str, command: &str) -> Result<AgentRec
     start_terminal_agent(None, track, command, None)
 }
 
+pub fn start_terminal_shell_agent_in_cwd(
+    track: &str,
+    command: &str,
+    cwd: PathBuf,
+) -> Result<AgentRecord> {
+    if command.trim().is_empty() {
+        bail!("agent command is empty");
+    }
+    start_terminal_agent(None, track, command, Some(cwd))
+}
+
 fn start_agent(
     id: Option<String>,
     track: String,

@@ -836,8 +836,8 @@ fn route_chat_text(text: &str) -> Result<String> {
         );
     }
     if let Some(request) = command_payload(text, "agent_start") {
-        let (track, command) = parse_agent_start(request)?;
-        return match agents::start_terminal_shell_agent(track, command) {
+        let request = parse_agent_start(request)?;
+        return match start_web_agent(&request) {
             Ok(record) => {
                 let output = format!("Started agent:\n{}", agents::snapshot_line(&record));
                 history::append("web", "assistant", &output)?;
@@ -881,7 +881,7 @@ fn help_text() -> String {
         "/status - show repository task state",
         "/repos - show connected repository context",
         "/agents - show Q-COLD managed agents",
-        "/agent_start <track> :: <command> - start an agent through Q-COLD",
+        "/agent_start [--cwd <repo>] <track> :: <command> - start an agent through Q-COLD",
         "/app - show dashboard context",
         "/help - show this help",
         "",
@@ -890,16 +890,74 @@ fn help_text() -> String {
     .join("\n")
 }
 
-fn parse_agent_start(request: &str) -> Result<(&str, &str)> {
+fn parse_agent_start(request: &str) -> Result<AgentStartRequest> {
     let Some((track, command)) = request.split_once("::") else {
-        bail!("usage: /agent_start <track> :: <command>");
+        bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
     };
-    let track = track.trim();
+    let mut words = shell_words(track);
+    let cwd = if words.first().is_some_and(|word| word == "--cwd") {
+        if words.len() < 3 {
+            bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
+        }
+        words.remove(0);
+        Some(PathBuf::from(words.remove(0)))
+    } else {
+        None
+    };
+    if words.len() != 1 {
+        bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
+    }
+    let track = words.remove(0);
     let command = command.trim();
     if track.is_empty() || command.is_empty() {
-        bail!("usage: /agent_start <track> :: <command>");
+        bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
     }
-    Ok((track, command))
+    Ok(AgentStartRequest {
+        cwd,
+        track,
+        command: command.to_string(),
+    })
+}
+
+fn start_web_agent(request: &AgentStartRequest) -> Result<agents::AgentRecord> {
+    if let Some(cwd) = request.cwd.clone() {
+        agents::start_terminal_shell_agent_in_cwd(&request.track, &request.command, cwd)
+    } else {
+        agents::start_terminal_shell_agent(&request.track, &request.command)
+    }
+}
+
+fn shell_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escape = false;
+    for ch in command.chars() {
+        if escape {
+            current.push(ch);
+            escape = false;
+            continue;
+        }
+        if ch == '\\' {
+            escape = true;
+            continue;
+        }
+        match quote {
+            Some(q) if ch == q => quote = None,
+            Some(_) => current.push(ch),
+            None if ch == '\'' || ch == '"' => quote = Some(ch),
+            None if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    words.push(std::mem::take(&mut current));
+                }
+            }
+            None => current.push(ch),
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
 }
 
 fn run_meta_agent(text: &str) -> Result<String> {
@@ -998,6 +1056,7 @@ fn dashboard_state() -> DashboardState {
         }),
         agents: SnapshotBlock::capture("running managed agents", agents::running_snapshot),
         task_records: task_record_snapshot(&root),
+        queue_task_records: all_task_record_snapshot(),
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),
         available_agents: AvailableAgentSnapshot::discover(),
@@ -1009,13 +1068,34 @@ fn dashboard_state() -> DashboardState {
 
 fn agent_start_template(root: &str) -> String {
     format!(
-        "/agent_start <track> :: codex exec \"Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\""
+        "/agent_start --cwd {cwd} <track> :: codex exec \"Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\"",
+        cwd = shell_quote(root),
     )
 }
 
 fn task_record_snapshot(repo_root: &str) -> TaskRecordSnapshot {
     let sync_error = crate::sync_codex_task_records().err().map(|err| format!("{err:#}"));
     match state::load_task_records_for_repo(repo_root, None, 250) {
+        Ok(rows) => TaskRecordSnapshot::from_rows(rows, sync_error),
+        Err(err) => TaskRecordSnapshot {
+            count: 0,
+            open: 0,
+            closed: 0,
+            failed: 0,
+            total_displayed_tokens: 0,
+            total_output_tokens: 0,
+            total_reasoning_tokens: 0,
+            total_tool_output_tokens: 0,
+            total_large_tool_outputs: 0,
+            records: Vec::new(),
+            error: Some(format!("{err:#}")),
+        },
+    }
+}
+
+fn all_task_record_snapshot() -> TaskRecordSnapshot {
+    let sync_error = crate::sync_codex_task_records().err().map(|err| format!("{err:#}"));
+    match state::load_task_records(None, 500) {
         Ok(rows) => TaskRecordSnapshot::from_rows(rows, sync_error),
         Err(err) => TaskRecordSnapshot {
             count: 0,
@@ -1539,6 +1619,7 @@ struct DashboardState {
     status: SnapshotBlock,
     agents: SnapshotBlock,
     task_records: TaskRecordSnapshot,
+    queue_task_records: TaskRecordSnapshot,
     host_agents: HostAgentSnapshot,
     terminals: TerminalSnapshot,
     available_agents: AvailableAgentSnapshot,
@@ -1777,6 +1858,12 @@ impl SnapshotBlock {
 #[derive(Serialize)]
 struct CommandTemplates {
     agent_start_template: String,
+}
+
+struct AgentStartRequest {
+    cwd: Option<PathBuf>,
+    track: String,
+    command: String,
 }
 
 #[derive(Serialize)]
@@ -2288,9 +2375,19 @@ mod tests {
     #[test]
     fn agent_start_template_keeps_agent_workspace_host_side() {
         let template = agent_start_template("/workspace/repo");
+        assert!(template.contains("/agent_start --cwd '/workspace/repo' <track>"));
         assert!(template.contains("host-side agent workspace"));
         assert!(template.contains("do not enter a devcontainer from $QCOLD_AGENT_WORKTREE"));
         assert!(template.contains("enter that managed task worktree and its devcontainer"));
+    }
+
+    #[test]
+    fn agent_start_parser_accepts_cwd_prefix() {
+        let request = parse_agent_start("--cwd '/workspace/repo with space' queue :: c1 exec 'do work'").unwrap();
+
+        assert_eq!(request.cwd.as_deref(), Some(Path::new("/workspace/repo with space")));
+        assert_eq!(request.track, "queue");
+        assert_eq!(request.command, "c1 exec 'do work'");
     }
 
     #[test]

@@ -12,6 +12,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const hostAgentList = document.getElementById('host-agent-list');
     const terminalList = document.getElementById('terminal-list');
     const queueInput = document.getElementById('queue-input');
+    const queueRepoSelect = document.getElementById('queue-repo');
     const queueAgentSelect = document.getElementById('queue-agent');
     const queueAgentState = document.getElementById('queue-agent-state');
     const queueState = document.getElementById('queue-state');
@@ -32,7 +33,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
     const queueStorageKey = 'qcold-task-queue-v4';
     const queueAgentStorageKey = 'qcold-task-queue-agent-v1';
+    const queueRepoStorageKey = 'qcold-task-queue-repo-v1';
     let selectedQueueAgent = localStorage.getItem(queueAgentStorageKey) || '';
+    let selectedQueueRepoRoot = localStorage.getItem(queueRepoStorageKey) || '';
     const queueSaved = loadQueueStorage();
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
@@ -115,6 +118,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
           slug: item.slug,
           agentId: item.agentId,
           agentCommand: item.agentCommand,
+          repoRoot: item.repoRoot,
+          repoName: item.repoName,
           status: item.status,
           message: item.message,
           startedAt: item.startedAt,
@@ -130,6 +135,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         slug: '',
         agentId: '',
         agentCommand: '',
+        repoRoot: '',
+        repoName: '',
         status: 'pending',
         message: '',
         startedAt: 0,
@@ -158,9 +165,63 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function taskInstruction(item, index) {
-      const root = state?.repository?.root || '<repo>';
+      const repo = queueItemRepository(item);
+      const root = repo.root || '<repo>';
       const taskSlug = item.slug || slugForQueueItem(index);
       return `Use the launched host-side agent workspace as your home base for ${root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task ${taskSlug} with cargo qcold task open ${taskSlug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: ${item.prompt.trim()} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.`;
+    }
+
+    function queueRepositories() {
+      const repos = state?.repositories?.length ? state.repositories : [state?.repository].filter(Boolean);
+      const byRoot = new Map();
+      for (const repo of repos) {
+        if (repo?.root && !byRoot.has(repo.root)) byRoot.set(repo.root, repo);
+      }
+      if (state?.repository?.root && !byRoot.has(state.repository.root)) {
+        byRoot.set(state.repository.root, state.repository);
+      }
+      return Array.from(byRoot.values());
+    }
+
+    function selectedQueueRepository() {
+      const repos = queueRepositories();
+      return repos.find((repo) => repo.root === selectedQueueRepoRoot)
+        || repos.find((repo) => repo.active)
+        || repos[0]
+        || state?.repository
+        || { root: '', name: 'repository' };
+    }
+
+    function queueItemRepository(item) {
+      const repos = queueRepositories();
+      return repos.find((repo) => repo.root === item?.repoRoot)
+        || (item?.repoRoot ? { root: item.repoRoot, name: item.repoName || item.repoRoot } : null)
+        || selectedQueueRepository();
+    }
+
+    function renderQueueRepoSelector() {
+      const repos = queueRepositories();
+      const current = selectedQueueRepoRoot || queueRepoSelect.value;
+      const nextSelected = repos.some((repo) => repo.root === current)
+        ? current
+        : (repos.find((repo) => repo.active)?.root || repos[0]?.root || '');
+      selectedQueueRepoRoot = nextSelected;
+      queueRepoSelect.replaceChildren(...repos.map((repo) => {
+        const option = document.createElement('option');
+        option.value = repo.root;
+        option.textContent = `${repo.name}${repo.active ? ' *' : ''}`;
+        option.title = repo.root;
+        return option;
+      }));
+      if (!repos.length) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = 'No repositories found';
+        queueRepoSelect.appendChild(option);
+      }
+      queueRepoSelect.value = selectedQueueRepoRoot;
+      queueRepoSelect.disabled = queueRun.running || !repos.length;
+      if (selectedQueueRepoRoot) localStorage.setItem(queueRepoStorageKey, selectedQueueRepoRoot);
     }
 
     function queueAgentRecords() {
@@ -209,7 +270,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function queueCommand(item, index) {
       const command = queueAgentCommand(taskInstruction(item, index));
-      return `/agent_start ${queueTrack()} :: ${command}`;
+      const repo = queueItemRepository(item);
+      const cwd = repo.root ? ` --cwd ${shellQuote(repo.root)}` : '';
+      return `/agent_start${cwd} ${queueTrack()} :: ${command}`;
     }
 
     function queueStatusText(item) {
@@ -278,6 +341,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function queueItemDetail(item, task, agentId) {
       const parts = [];
+      const repo = queueItemRepository(item);
+      if (repo?.name) parts.push(repo.name);
       if (item.slug) parts.push(`task/${item.slug}`);
       if (task?.status) parts.push(task.status);
       if (agentId) parts.push(`agent ${agentId}`);
@@ -312,6 +377,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       queueState.textContent = queueRun.running ? `running ${queueRun.activeIndex + 1}/${queueItems.length}` : 'idle';
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
       queueInput.disabled = queueRun.running;
+      renderQueueRepoSelector();
       renderQueueAgentSelector();
       document.getElementById('add-queue-task').disabled = queueRun.running || !queueInput.value.trim();
       document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length || !selectedQueueAgentRecord();
@@ -1122,6 +1188,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         status: parseStatus(state.status.text),
         agents: parseAgents(state.agents.text),
         taskRecords: state.task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
+        queueTaskRecords: state.queue_task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
         hostAgents: state.host_agents || { count: 0, records: [] },
         terminals: state.terminals || { count: 0, records: [] },
         availableAgents: state.available_agents || { count: 0, records: [] },
@@ -1251,8 +1318,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function taskRecordForQueueItem(item) {
-      const records = state?.task_records?.records || [];
-      return records.find((task) => task.id === `task/${item.slug}`);
+      const records = [
+        ...(state?.task_records?.records || []),
+        ...(state?.queue_task_records?.records || []),
+      ];
+      const repo = queueItemRepository(item);
+      return records.find((task) => (
+        task.id === `task/${item.slug}`
+        && (!repo?.root || !task.repo_root || task.repo_root === repo.root)
+      ));
     }
 
     function runningAgent(agentId) {
@@ -1293,6 +1367,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         ...item,
         slug: slugForQueueItem(index, queueRun.runId),
         agentId: '',
+        repoRoot: selectedQueueRepository().root || '',
+        repoName: selectedQueueRepository().name || '',
         status: item.prompt.trim() ? 'pending' : 'failed',
         message: item.prompt.trim() ? '' : 'empty prompt',
         agentCommand: selectedQueueAgentRecord()?.command || '',
@@ -1426,6 +1502,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addQueueTask();
     });
     queueInput.addEventListener('input', renderQueue);
+    queueRepoSelect.addEventListener('change', () => {
+      selectedQueueRepoRoot = queueRepoSelect.value;
+      localStorage.setItem(queueRepoStorageKey, selectedQueueRepoRoot);
+      renderQueue();
+    });
     queueAgentSelect.addEventListener('change', () => {
       selectedQueueAgent = queueAgentSelect.value;
       localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
