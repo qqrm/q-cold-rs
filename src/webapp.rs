@@ -311,6 +311,8 @@ fn router() -> Router {
     Router::new()
         .route("/", get(index))
         .route("/index.html", get(index))
+        .route("/favicon.ico", get(favicon_svg))
+        .route("/favicon.svg", get(favicon_svg))
         .route("/assets/app.css", get(app_css))
         .route("/assets/app.js", get(app_js))
         .route("/api/state", get(api_state))
@@ -344,6 +346,10 @@ async fn app_js() -> impl IntoResponse {
         [(CONTENT_TYPE, "application/javascript; charset=utf-8")],
         APP_JS,
     ))
+}
+
+async fn favicon_svg() -> impl IntoResponse {
+    no_store(([(CONTENT_TYPE, "image/svg+xml; charset=utf-8")], FAVICON_SVG))
 }
 
 async fn api_state() -> impl IntoResponse {
@@ -3928,6 +3934,13 @@ struct TaskChatResponse {
 const INDEX_HTML: &str = include_str!("webapp_assets/index.html");
 const APP_CSS: &str = include_str!("webapp_assets/app.css");
 const APP_JS: &str = include_str!("webapp_assets/app.js");
+const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#101820"/>
+  <path d="M16 18h18c8.8 0 16 7.2 16 16 0 3.2-.9 6.2-2.6 8.7L54 49.3 49.3 54l-6.7-6.6A16 16 0 0 1 34 50H16V18Z" fill="#2dd4bf"/>
+  <path d="M23 25h11a9 9 0 1 1 0 18H23V25Z" fill="#101820"/>
+  <path d="M29 31h5a3 3 0 1 1 0 6h-5v-6Z" fill="#f8fafc"/>
+  <circle cx="50" cy="16" r="5" fill="#facc15"/>
+</svg>"##;
 
 #[cfg(test)]
 mod tests {
