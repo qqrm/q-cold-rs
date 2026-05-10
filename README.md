@@ -187,8 +187,10 @@ aggregate Codex token telemetry, and average closed-task token cost imported
 from session JSONL metadata. Long task descriptions are collapsed into a
 single-line preview with a prompt disclosure so task cards stay scannable while
 the full prompt remains available in place. Raw managed-worktree status remains
-available for debugging. It streams state and history updates with server-sent events and
-includes an `Auto`/`Dark`/`Light` theme switch stored in browser local storage.
+available for debugging, but terminal readiness ignores task worktrees whose
+task env has already reached a `closed:*` status. It streams state and history
+updates with server-sent events and includes an `Auto`/`Dark`/`Light` theme
+switch stored in browser local storage.
 The web chat displays web-origin messages only, while the meta-agent prompt can
 still use the broader shared local history as context. The Agents view shows
 detected local agent commands and their account/auth/limit probe status before

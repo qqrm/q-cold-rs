@@ -101,6 +101,9 @@ fn managed_tasks(managed_root: &Path) -> Result<Vec<ManagedTask>> {
             .filter(|value| !value.is_empty())
             .cloned()
             .unwrap_or_else(|| "open".to_string());
+        if !task_blocks_terminal(&status) {
+            continue;
+        }
         tasks.push(ManagedTask {
             name: raw_name,
             status,
@@ -109,6 +112,10 @@ fn managed_tasks(managed_root: &Path) -> Result<Vec<ManagedTask>> {
     }
     tasks.sort_by(|left, right| left.name.cmp(&right.name));
     Ok(tasks)
+}
+
+fn task_blocks_terminal(status: &str) -> bool {
+    status.is_empty() || status == "open" || status == "failed-closeout"
 }
 
 struct ManagedTask {
@@ -467,5 +474,34 @@ task\tprimary-read-lifecycle-live-surface-broadening\topen\t/workspace/repos/git
         assert!(formatted.contains("1. review-batch-4"));
         assert!(formatted.contains("status: failed closeout"));
         assert!(!formatted.contains("qcold-status\t"));
+    }
+
+    #[test]
+    fn managed_tasks_ignore_terminal_closed_statuses() {
+        let temp = tempfile::tempdir().unwrap();
+        let managed = temp.path().join("WT").join("repo");
+        write_task_env(&managed.join("001-open"), "open", "open");
+        write_task_env(&managed.join("002-blocked"), "blocked", "closed:blocked");
+        write_task_env(&managed.join("003-failed-closeout"), "tail", "failed-closeout");
+
+        let tasks = managed_tasks(&managed).unwrap();
+
+        assert_eq!(
+            tasks.iter().map(|task| task.name.as_str()).collect::<Vec<_>>(),
+            vec!["open", "tail"]
+        );
+    }
+
+    fn write_task_env(worktree: &Path, name: &str, status: &str) {
+        let task_dir = worktree.join(".task");
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(
+            task_dir.join("task.env"),
+            format!(
+                "TASK_NAME={name}\nSTATUS={status}\nTASK_WORKTREE={}\n",
+                worktree.display()
+            ),
+        )
+        .unwrap();
     }
 }

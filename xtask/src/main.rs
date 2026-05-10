@@ -226,20 +226,37 @@ fn list_command() -> Result<u8> {
 
 fn terminal_check_command() -> Result<u8> {
     let repo = task_inventory_repo_root()?;
-    let tasks = open_tasks(&repo)?;
+    let tasks = open_tasks(&repo)?
+        .into_iter()
+        .filter(|task| task_blocks_terminal(&task.status))
+        .collect::<Vec<_>>();
     if tasks.is_empty() {
         let branch = git_output(&repo, ["branch", "--show-current"]).unwrap_or_default();
         println!("terminal-ok\t{}\t{}", repo.display(), branch);
         return Ok(0);
     }
+    let mut incomplete_closeout = false;
     for task in &tasks {
         println!(
             "open-task\t{}\t{}",
             task.task_name,
             task.task_worktree.display()
         );
+        if task.status == "failed-closeout" {
+            incomplete_closeout = true;
+            println!(
+                "incomplete-task\t{}\t{}\t{}",
+                task.task_name,
+                task.status,
+                task.task_worktree.display()
+            );
+        }
     }
-    eprintln!("terminal-check blocked: managed task worktrees remain open");
+    if incomplete_closeout {
+        eprintln!("terminal-check blocked: incomplete failed-closeout task state remains");
+    } else {
+        eprintln!("terminal-check blocked: managed task worktrees remain open");
+    }
     Ok(1)
 }
 
@@ -518,6 +535,10 @@ fn open_tasks(repo: &Path) -> Result<Vec<TaskEnv>> {
     Ok(tasks)
 }
 
+fn task_blocks_terminal(status: &str) -> bool {
+    status.is_empty() || status == "open" || status == "failed-closeout"
+}
+
 fn find_task(repo: &Path, task_slug: &str) -> Result<Option<TaskEnv>> {
     Ok(open_tasks(repo)?.into_iter().find(|task| {
         task.task_name == task_slug
@@ -794,6 +815,16 @@ mod tests {
             Some(Path::new("/workspace/WT/repo/agents/c1"))
         );
         std::env::remove_var("QCOLD_AGENT_WORKTREE");
+    }
+
+    #[test]
+    fn terminal_blocking_status_ignores_terminal_closeouts() {
+        assert!(task_blocks_terminal(""));
+        assert!(task_blocks_terminal("open"));
+        assert!(task_blocks_terminal("failed-closeout"));
+        assert!(!task_blocks_terminal("closed:success"));
+        assert!(!task_blocks_terminal("closed:blocked"));
+        assert!(!task_blocks_terminal("closed:failed"));
     }
 
     #[test]
