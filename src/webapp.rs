@@ -976,11 +976,7 @@ fn wait_for_agent_terminal_target(agent_id: &str) -> Option<String> {
 }
 
 fn send_terminal_text_to_target(target: &str, text: &str) -> Result<()> {
-    if let Some((session, pane)) = parse_zellij_target(target) {
-        send_zellij_terminal_input(session, pane, text)
-    } else {
-        send_tmux_terminal_input(target, text)
-    }
+    send_terminal_paste(target, text, true)
 }
 
 fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
@@ -1054,18 +1050,14 @@ fn handle_terminal_send_result(headers: &HeaderMap, payload: &TerminalSendReques
         require_write_token(headers)?;
     }
     let target = payload.target.trim();
-    let text = payload.text.trim_end();
     if target.is_empty() {
         bail!("terminal target is empty");
     }
-    if text.is_empty() {
-        bail!("terminal input is empty");
+    match terminal_input_from_request(payload)? {
+        TerminalInput::Paste { text, submit } => send_terminal_paste(target, &text, submit),
+        TerminalInput::Literal { text, submit } => send_terminal_literal(target, &text, submit),
+        TerminalInput::Key(key) => send_terminal_key(target, key),
     }
-    if let Some((session, pane)) = parse_zellij_target(target) {
-        send_zellij_terminal_input(session, pane, text)?;
-        return Ok(());
-    }
-    send_tmux_terminal_input(target, text)
 }
 
 fn handle_terminal_metadata(
@@ -1279,20 +1271,186 @@ fn push_transcript_message(messages: &mut Vec<TaskTranscriptMessage>, message: T
     messages.push(message);
 }
 
-fn send_tmux_terminal_input(target: &str, text: &str) -> Result<()> {
+fn parse_zellij_target(target: &str) -> Option<(&str, &str)> {
+    let rest = target.strip_prefix("zellij:")?;
+    rest.split_once(':')
+}
+
+enum TerminalInput {
+    Paste { text: String, submit: bool },
+    Literal { text: String, submit: bool },
+    Key(TerminalKey),
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum TerminalKey {
+    Up,
+    Down,
+    Left,
+    Right,
+    Enter,
+    Backspace,
+    Delete,
+    Escape,
+    Tab,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+}
+
+impl TerminalKey {
+    fn tmux(self) -> &'static str {
+        match self {
+            Self::Up => "Up",
+            Self::Down => "Down",
+            Self::Left => "Left",
+            Self::Right => "Right",
+            Self::Enter => "Enter",
+            Self::Backspace => "BSpace",
+            Self::Delete => "DC",
+            Self::Escape => "Escape",
+            Self::Tab => "Tab",
+            Self::Home => "Home",
+            Self::End => "End",
+            Self::PageUp => "PageUp",
+            Self::PageDown => "PageDown",
+        }
+    }
+
+    fn zellij(self) -> &'static str {
+        match self {
+            Self::Up => "Up",
+            Self::Down => "Down",
+            Self::Left => "Left",
+            Self::Right => "Right",
+            Self::Enter => "Enter",
+            Self::Backspace => "Backspace",
+            Self::Delete => "Delete",
+            Self::Escape => "Esc",
+            Self::Tab => "Tab",
+            Self::Home => "Home",
+            Self::End => "End",
+            Self::PageUp => "PageUp",
+            Self::PageDown => "PageDown",
+        }
+    }
+}
+
+fn terminal_input_from_request(payload: &TerminalSendRequest) -> Result<TerminalInput> {
+    let mode = payload.mode.as_deref().unwrap_or("paste").trim();
+    match mode {
+        "key" => {
+            let key = payload
+                .key
+                .as_deref()
+                .context("terminal key is empty")?;
+            Ok(TerminalInput::Key(clean_terminal_key(key)?))
+        }
+        "literal" => {
+            let text = terminal_request_text(payload)?;
+            Ok(TerminalInput::Literal {
+                text,
+                submit: payload.submit.unwrap_or(false),
+            })
+        }
+        "paste" | "" => {
+            let text = terminal_request_text(payload)?;
+            Ok(TerminalInput::Paste {
+                text,
+                submit: payload.submit.unwrap_or(true),
+            })
+        }
+        _ => bail!("unsupported terminal input mode"),
+    }
+}
+
+fn terminal_request_text(payload: &TerminalSendRequest) -> Result<String> {
+    let text = payload.text.as_deref().unwrap_or_default().trim_end();
+    if text.trim().is_empty() {
+        bail!("terminal input is empty");
+    }
+    Ok(text.to_string())
+}
+
+fn clean_terminal_key(key: &str) -> Result<TerminalKey> {
+    match key.trim() {
+        "Up" | "ArrowUp" => Ok(TerminalKey::Up),
+        "Down" | "ArrowDown" => Ok(TerminalKey::Down),
+        "Left" | "ArrowLeft" => Ok(TerminalKey::Left),
+        "Right" | "ArrowRight" => Ok(TerminalKey::Right),
+        "Enter" => Ok(TerminalKey::Enter),
+        "Backspace" => Ok(TerminalKey::Backspace),
+        "Delete" => Ok(TerminalKey::Delete),
+        "Escape" | "Esc" => Ok(TerminalKey::Escape),
+        "Tab" => Ok(TerminalKey::Tab),
+        "Home" => Ok(TerminalKey::Home),
+        "End" => Ok(TerminalKey::End),
+        "PageUp" => Ok(TerminalKey::PageUp),
+        "PageDown" => Ok(TerminalKey::PageDown),
+        _ => bail!("unsupported terminal key"),
+    }
+}
+
+fn send_terminal_paste(target: &str, text: &str, submit: bool) -> Result<()> {
+    if let Some((session, pane)) = parse_zellij_target(target) {
+        send_zellij_terminal_paste(session, pane, text, submit)
+    } else {
+        send_tmux_terminal_paste(target, text, submit)
+    }
+}
+
+fn send_terminal_literal(target: &str, text: &str, submit: bool) -> Result<()> {
+    if let Some((session, pane)) = parse_zellij_target(target) {
+        send_zellij_terminal_literal(session, pane, text, submit)
+    } else {
+        send_tmux_terminal_literal(target, text, submit)
+    }
+}
+
+fn send_terminal_key(target: &str, key: TerminalKey) -> Result<()> {
+    if let Some((session, pane)) = parse_zellij_target(target) {
+        send_zellij_terminal_key(session, pane, key)
+    } else {
+        send_tmux_terminal_key(target, key)
+    }
+}
+
+fn send_tmux_terminal_paste(target: &str, text: &str, submit: bool) -> Result<()> {
     paste_terminal_text(target, text)?;
-    thread::sleep(Duration::from_millis(100));
+    if submit {
+        thread::sleep(Duration::from_millis(100));
+        send_tmux_terminal_key(target, TerminalKey::Enter)?;
+    }
+    Ok(())
+}
+
+fn send_tmux_terminal_literal(target: &str, text: &str, submit: bool) -> Result<()> {
     let status = Command::new("tmux")
-        .args(["send-keys", "-t", target, "Enter"])
+        .args(["send-keys", "-t", target, "-l", text])
         .status()
-        .context("failed to submit terminal input through tmux")?;
+        .context("failed to send literal terminal input through tmux")?;
+    if !status.success() {
+        bail!("tmux send-keys literal failed with {status}");
+    }
+    if submit {
+        send_tmux_terminal_key(target, TerminalKey::Enter)?;
+    }
+    Ok(())
+}
+
+fn send_tmux_terminal_key(target: &str, key: TerminalKey) -> Result<()> {
+    let status = Command::new("tmux")
+        .args(["send-keys", "-t", target, key.tmux()])
+        .status()
+        .context("failed to send terminal key through tmux")?;
     if !status.success() {
         bail!("tmux send-keys failed with {status}");
     }
     Ok(())
 }
 
-fn send_zellij_terminal_input(session: &str, pane: &str, text: &str) -> Result<()> {
+fn send_zellij_terminal_paste(session: &str, pane: &str, text: &str, submit: bool) -> Result<()> {
     let status = Command::new("zellij")
         .args(["--session", session, "action", "paste", "--pane-id", pane, text])
         .status()
@@ -1300,7 +1458,36 @@ fn send_zellij_terminal_input(session: &str, pane: &str, text: &str) -> Result<(
     if !status.success() {
         bail!("zellij action paste failed with {status}");
     }
-    thread::sleep(Duration::from_millis(100));
+    if submit {
+        thread::sleep(Duration::from_millis(100));
+        send_zellij_terminal_key(session, pane, TerminalKey::Enter)?;
+    }
+    Ok(())
+}
+
+fn send_zellij_terminal_literal(session: &str, pane: &str, text: &str, submit: bool) -> Result<()> {
+    let status = Command::new("zellij")
+        .args([
+            "--session",
+            session,
+            "action",
+            "write-chars",
+            "--pane-id",
+            pane,
+            text,
+        ])
+        .status()
+        .context("failed to write terminal input through zellij")?;
+    if !status.success() {
+        bail!("zellij action write-chars failed with {status}");
+    }
+    if submit {
+        send_zellij_terminal_key(session, pane, TerminalKey::Enter)?;
+    }
+    Ok(())
+}
+
+fn send_zellij_terminal_key(session: &str, pane: &str, key: TerminalKey) -> Result<()> {
     let status = Command::new("zellij")
         .args([
             "--session",
@@ -1309,19 +1496,14 @@ fn send_zellij_terminal_input(session: &str, pane: &str, text: &str) -> Result<(
             "send-keys",
             "--pane-id",
             pane,
-            "Enter",
+            key.zellij(),
         ])
         .status()
-        .context("failed to submit terminal input through zellij")?;
+        .context("failed to send terminal key through zellij")?;
     if !status.success() {
         bail!("zellij action send-keys failed with {status}");
     }
     Ok(())
-}
-
-fn parse_zellij_target(target: &str) -> Option<(&str, &str)> {
-    let rest = target.strip_prefix("zellij:")?;
-    rest.split_once(':')
 }
 
 fn paste_terminal_text(target: &str, text: &str) -> Result<()> {
@@ -2920,7 +3102,10 @@ struct ChatRequest {
 #[derive(Deserialize)]
 struct TerminalSendRequest {
     target: String,
-    text: String,
+    text: Option<String>,
+    mode: Option<String>,
+    key: Option<String>,
+    submit: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -3029,6 +3214,35 @@ mod tests {
             default_meta_agent_command(Path::new("/workspace/repo")),
             "c1 exec --ephemeral --cd '/workspace/repo' -"
         );
+    }
+
+    #[test]
+    fn terminal_key_mapping_supports_history_navigation() {
+        let key = clean_terminal_key("ArrowUp").unwrap();
+
+        assert_eq!(key, TerminalKey::Up);
+        assert_eq!(key.tmux(), "Up");
+        assert_eq!(key.zellij(), "Up");
+        assert!(clean_terminal_key("$(touch /tmp/nope)").is_err());
+    }
+
+    #[test]
+    fn terminal_send_request_supports_literal_slash_commands() {
+        let request = TerminalSendRequest {
+            target: "main:0.1".to_string(),
+            text: Some("/new".to_string()),
+            mode: Some("literal".to_string()),
+            key: None,
+            submit: Some(true),
+        };
+
+        match terminal_input_from_request(&request).unwrap() {
+            TerminalInput::Literal { text, submit } => {
+                assert_eq!(text, "/new");
+                assert!(submit);
+            }
+            _ => panic!("expected literal input"),
+        }
     }
 
     #[test]

@@ -1136,6 +1136,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
       head.innerHTML = '<div data-role="title"></div><span data-role="kind"></span><span data-role="cwd"></span>';
       const output = document.createElement('pre');
       output.className = 'terminal-output';
+      output.tabIndex = 0;
+      output.addEventListener('keydown', (event) => handleTerminalKeyboard(event, terminal.target));
       const compose = terminalComposer(terminal);
       node.append(head, output, compose);
       return node;
@@ -1231,6 +1233,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
         terminalDrafts.set(terminal.target, input.value);
       });
       input.addEventListener('keydown', (event) => {
+        if (!input.value && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          event.preventDefault();
+          sendTerminalKey(terminal.target, terminalKeyName(event.key));
+          return;
+        }
         if (event.key === 'Enter' && !event.shiftKey) {
           event.preventDefault();
           sendTerminal(terminal.target, input);
@@ -1414,19 +1421,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!trimmed.trim() || !target) return;
       input.value = '';
       terminalDrafts.delete(target);
-      const payload = await postTerminalText(target, trimmed);
+      const payload = await postTerminalText(target, trimmed, {
+        mode: terminalTextMode(trimmed),
+        submit: true,
+      });
       if (!payload.ok) appendLocalMessage('error', payload.output || 'failed to send terminal input');
       window.setTimeout(loadSnapshot, 250);
     }
 
-    async function postTerminalText(target, text) {
+    async function postTerminalText(target, text, options = {}) {
       try {
         const response = await fetch('/api/terminal/send', {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ target, text }),
+          body: JSON.stringify({ target, text, ...options }),
         });
         const payload = await response.json();
         if (!response.ok && payload.ok !== false) payload.ok = false;
@@ -1434,6 +1444,57 @@ const tg = window.Telegram && window.Telegram.WebApp;
       } catch (err) {
         return { ok: false, output: String(err) };
       }
+    }
+
+    async function sendTerminalKey(target, key) {
+      if (!target || !key) return;
+      const payload = await postTerminalText(target, '', { mode: 'key', key });
+      if (!payload.ok) appendLocalMessage('error', payload.output || 'failed to send terminal key');
+      window.setTimeout(loadSnapshot, 100);
+    }
+
+    async function sendTerminalLiteral(target, text) {
+      if (!target || !text) return;
+      const payload = await postTerminalText(target, text, { mode: 'literal', submit: false });
+      if (!payload.ok) appendLocalMessage('error', payload.output || 'failed to send terminal input');
+      window.setTimeout(loadSnapshot, 100);
+    }
+
+    function handleTerminalKeyboard(event, target) {
+      if (event.defaultPrevented || event.metaKey) return;
+      const key = terminalKeyName(event.key);
+      if (key) {
+        event.preventDefault();
+        sendTerminalKey(target, key);
+        return;
+      }
+      if (!event.ctrlKey && !event.altKey && event.key.length === 1) {
+        event.preventDefault();
+        sendTerminalLiteral(target, event.key);
+      }
+    }
+
+    function terminalKeyName(key) {
+      const names = {
+        ArrowUp: 'Up',
+        ArrowDown: 'Down',
+        ArrowLeft: 'Left',
+        ArrowRight: 'Right',
+        Enter: 'Enter',
+        Backspace: 'Backspace',
+        Delete: 'Delete',
+        Escape: 'Escape',
+        Tab: 'Tab',
+        Home: 'Home',
+        End: 'End',
+        PageUp: 'PageUp',
+        PageDown: 'PageDown',
+      };
+      return names[key] || '';
+    }
+
+    function terminalTextMode(text) {
+      return text.trimStart().startsWith('/') && !text.includes('\n') ? 'literal' : 'paste';
     }
 
     async function saveTerminalMetadata(target, name, scope) {

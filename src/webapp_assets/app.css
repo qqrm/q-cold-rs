@@ -577,6 +577,10 @@
       overflow-wrap: normal;
       tab-size: 8;
     }
+    .terminal-output:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+    }
     .terminal-compose {
       display: grid;
       grid-template-columns: 1fr auto;

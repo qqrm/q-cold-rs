@@ -197,9 +197,13 @@ Exited Q-COLD agent records remain available through the CLI registry surface,
 but the dashboard omits them as historical noise. Task-flow helper programs
 such as `xtask` are not counted as agents.
 The Terminals view exposes attachable terminal panes for agent programs,
-captures recent pane output with ANSI color/style attributes, and sends input
-from each terminal card through backend-native paste plus a submit key. The
-view gives Q-COLD-started terminals short generated Greek philosopher names
+captures recent pane output with ANSI color/style attributes, sends prompt
+composer text through backend-native paste plus a submit key, and can forward
+focused terminal-output keystrokes as terminal input. Single-line slash
+commands are sent as literal key input instead of bracketed paste so Codex TUI
+slash commands can open normally, and empty composer history arrows are
+forwarded to the underlying pane. The view gives Q-COLD-started terminals short
+generated Greek philosopher names
 such as `Socrates` or `Diogenes` and keeps them unique among running agents.
 Existing discoverable terminals fall back to their session and current
 command. Click a terminal title in the browser to override its name or set a
