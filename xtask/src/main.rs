@@ -320,6 +320,12 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
 
 fn deliver_task_branch_to_primary(task: &TaskEnv) -> Result<()> {
     run_git(&task.primary_repo_path, ["fetch", "origin"])?;
+    let remote_base = format!("refs/remotes/origin/{}", task.base_branch);
+    run_git(
+        &task.primary_repo_path,
+        ["merge", "--ff-only", &remote_base],
+    )?;
+    run_git(&task.task_worktree, ["rebase", &remote_base])?;
     run_git(
         &task.primary_repo_path,
         ["merge", "--ff-only", &task.task_branch],
@@ -822,6 +828,15 @@ mod tests {
         run_git_in(&worktree, ["add", "proof.txt"]);
         run_git_in(&worktree, ["commit", "-m", "add proof"]);
 
+        let updater = root.join("updater");
+        run_git_in(&root, ["clone", path_arg(&remote), path_arg(&updater)]);
+        run_git_in(&updater, ["config", "user.name", "tester"]);
+        run_git_in(&updater, ["config", "user.email", "tester@example.com"]);
+        fs::write(updater.join("remote.txt"), "remote\n").unwrap();
+        run_git_in(&updater, ["add", "remote.txt"]);
+        run_git_in(&updater, ["commit", "-m", "advance remote"]);
+        run_git_in(&updater, ["push", "origin", "main"]);
+
         let task = TaskEnv {
             task_id: "task/push-proof".into(),
             task_name: "push-proof".into(),
@@ -852,6 +867,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(primary.join("proof.txt")).unwrap(),
             "proof\n"
+        );
+        assert_eq!(
+            fs::read_to_string(primary.join("remote.txt")).unwrap(),
+            "remote\n"
         );
 
         fs::remove_dir_all(root).unwrap();

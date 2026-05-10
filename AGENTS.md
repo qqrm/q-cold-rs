@@ -126,10 +126,11 @@ fixture or debugging task explicitly needs them.
   If managed task-flow prerequisites are absent or failing, commit after normal
   Cargo validation and report that task-flow closeout was not applicable.
 - For Q-COLD self-development, successful managed closeout fetches `origin`,
-  fast-forward integrates the task branch into the primary base branch, pushes
-  that base branch to `origin`, refreshes the remote-tracking ref, and only
-  then marks the task terminal. A local-only commit is not a successful
-  terminal closeout when the push-capable managed flow is available.
+  fast-forwards the primary checkout to the current remote base, rebases the
+  task branch onto that base, fast-forward integrates it into the primary base
+  branch, pushes that base branch to `origin`, refreshes the remote-tracking
+  ref, and only then marks the task terminal. A local-only commit is not a
+  successful terminal closeout when the push-capable managed flow is available.
 - Do not perform final operator installation from a task branch or managed task
   worktree. After successful integration into `main`, rebuild and install
   Q-COLD only from the primary checkout so the installed binary reflects landed
