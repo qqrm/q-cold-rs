@@ -754,15 +754,7 @@ enum QueueItemOutcome {
 fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueItemOutcome> {
     if let Some(status) = queue_task_status(item)? {
         if status == "closed:success" {
-            state::update_web_queue_item(
-                run_id,
-                &item.id,
-                "success",
-                "closed successfully",
-                None,
-                item.attempts,
-                None,
-            )?;
+            update_successful_queue_item(run_id, item, item.agent_id.as_deref(), item.attempts)?;
             return Ok(QueueItemOutcome::Success);
         }
         if status.starts_with("closed") {
@@ -972,15 +964,7 @@ fn wait_for_queue_item_closeout(
         crate::sync_codex_task_records().ok();
         if let Some(status) = queue_task_status(item)? {
             if status == "closed:success" {
-                state::update_web_queue_item(
-                    run_id,
-                    &item.id,
-                    "success",
-                    "closed successfully",
-                    Some(agent_id),
-                    attempts,
-                    None,
-                )?;
+                update_successful_queue_item(run_id, item, Some(agent_id), attempts)?;
                 return Ok(QueueItemOutcome::Success);
             }
             if status.starts_with("closed") {
@@ -1021,6 +1005,35 @@ fn wait_for_queue_item_closeout(
             )?;
             return Ok(QueueItemOutcome::Failed(message));
         }
+    }
+}
+
+fn update_successful_queue_item(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    agent_id: Option<&str>,
+    attempts: i64,
+) -> Result<()> {
+    let message = agent_id.map_or_else(
+        || "closed successfully".to_string(),
+        |agent_id| format!("closed successfully; {}", cleanup_queue_agent(agent_id)),
+    );
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "success",
+        &message,
+        agent_id,
+        attempts,
+        None,
+    )
+}
+
+fn cleanup_queue_agent(agent_id: &str) -> String {
+    match agents::terminate_agent(agent_id) {
+        Ok(true) => "agent terminal closed".to_string(),
+        Ok(false) => "agent already stopped".to_string(),
+        Err(err) => format!("agent cleanup failed: {err:#}"),
     }
 }
 

@@ -160,7 +160,9 @@ The browser submits the ordered rows to `/api/queue/run` and then only renders
 the backend queue snapshot. The backend stores the active run in Q-COLD state,
 starts one fresh Q-COLD terminal agent per queued prompt, waits for the matching
 managed `task/<slug>` record to reach `closed:success`, and then advances to
-the next row. If the selected agent account is temporarily unavailable, the
+the next row. After a row reaches `closed:success`, Q-COLD terminates the
+row's executor agent terminal while keeping the completed queue row as run
+history. If the selected agent account is temporarily unavailable, the
 backend waits and retries the next launch three times after roughly 1, 5, and
 10 minutes before failing the row; unauthenticated accounts fail immediately.
 Queue rows can be reordered, removed, copied, or opened to an interactive task
