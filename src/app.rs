@@ -434,6 +434,9 @@ fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<state::Tas
 }
 
 pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
+    if is_queue_agent_track(&record.track) {
+        return Ok(());
+    }
     let command = agent_command_payload(&record.command);
     let Some(prompt) = prompt_from_agent_command(&command) else {
         return Ok(());
@@ -481,6 +484,9 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
     let mut synced = 0;
 
     for agent in agent_rows {
+        if is_queue_agent_track(&agent.track) {
+            continue;
+        }
         let command = agent_command_payload(&agent.command);
         let Some(account) = codex_account_from_agent_command(&command) else {
             continue;
@@ -1666,6 +1672,15 @@ fn agent_command_payload(command: &[String]) -> String {
     }
 }
 
+fn is_queue_agent_track(track: &str) -> bool {
+    track.strip_prefix("queue-").is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix
+                .chars()
+                .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    })
+}
+
 fn prompt_from_agent_command(command: &str) -> Option<String> {
     let lower = command.to_lowercase();
     if !(lower.contains("c1")
@@ -1875,9 +1890,9 @@ mod tests {
     use super::{
         cargo_subcommand_args, codex_account_from_agent_command,
         codex_task_telemetry_for_worktree_in_roots,
-        find_codex_session_summary_in_root, parse_codex_session_summary, parse_rfc3339_unix,
-        polish_task_text, prompt_from_agent_command, render_token_efficiency, render_token_usage,
-        slug_from_title, task_flow_metadata_equivalent, unix_now,
+        find_codex_session_summary_in_root, is_queue_agent_track, parse_codex_session_summary,
+        parse_rfc3339_unix, polish_task_text, prompt_from_agent_command, render_token_efficiency,
+        render_token_usage, slug_from_title, task_flow_metadata_equivalent, unix_now,
     };
     use std::collections::HashSet;
     use std::ffi::OsString;
@@ -1924,6 +1939,15 @@ mod tests {
                 .as_deref(),
             Some("Проверь сабмодули")
         );
+    }
+
+    #[test]
+    fn queue_agent_tracks_are_internal_launchers() {
+        assert!(is_queue_agent_track("queue-moz964nn"));
+        assert!(is_queue_agent_track("queue-run-123"));
+        assert!(!is_queue_agent_track("queue"));
+        assert!(!is_queue_agent_track("queue:manual"));
+        assert!(!is_queue_agent_track("c1"));
     }
 
     #[test]

@@ -342,16 +342,14 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (selectedQueueAgent) localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
     }
 
-    function queueAgentCommand(prompt) {
+    function queueAgentCommand() {
       const agent = selectedQueueAgentRecord();
       if (!agent) return '';
-      const quotedPrompt = shellQuote(prompt);
-      if (agent.invocation === 'direct') return `${agent.command} ${quotedPrompt}`;
-      return `${agent.command} exec ${quotedPrompt}`;
+      return agent.command;
     }
 
     function queueCommand(item, index) {
-      const command = queueAgentCommand(taskInstruction(item, index));
+      const command = queueAgentCommand();
       const repo = queueItemRepository(item);
       const cwd = repo.root ? ` --cwd ${shellQuote(repo.root)}` : '';
       return `/agent_start${cwd} ${queueTrack()} :: ${command}`;
@@ -1403,18 +1401,53 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!trimmed.trim() || !target) return;
       input.value = '';
       terminalDrafts.delete(target);
+      const payload = await postTerminalText(target, trimmed);
+      if (!payload.ok) appendLocalMessage('error', payload.output || 'failed to send terminal input');
+      window.setTimeout(loadSnapshot, 250);
+    }
+
+    async function postTerminalText(target, text) {
       try {
-        await fetch('/api/terminal/send', {
+        const response = await fetch('/api/terminal/send', {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
           },
-          body: JSON.stringify({ target, text: trimmed }),
+          body: JSON.stringify({ target, text }),
         });
-        window.setTimeout(loadSnapshot, 250);
+        const payload = await response.json();
+        if (!response.ok && payload.ok !== false) payload.ok = false;
+        return payload;
       } catch (err) {
-        appendLocalMessage('error', String(err));
+        return { ok: false, output: String(err) };
       }
+    }
+
+    function terminalForAgentId(agentId) {
+      if (!agentId || !model) return null;
+      return (model.terminals.records || []).find((terminal) => terminal.agent_id === agentId) || null;
+    }
+
+    async function waitForAgentTerminal(agentId) {
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        await loadSnapshot();
+        const terminal = terminalForAgentId(agentId);
+        if (terminal?.target) return terminal;
+        await new Promise((resolve) => window.setTimeout(resolve, 500));
+      }
+      return null;
+    }
+
+    async function startFreshQueueSession(item, index) {
+      const terminal = await waitForAgentTerminal(item.agentId);
+      if (!terminal) {
+        return { ok: false, output: 'agent terminal did not appear' };
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      const reset = await postTerminalText(terminal.target, '/new');
+      if (!reset.ok) return reset;
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
+      return postTerminalText(terminal.target, taskInstruction(item, index));
     }
 
     async function saveTerminalMetadata(target, name, scope) {
@@ -1604,6 +1637,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
         if (!item.agentId) {
           item.status = 'failed';
           item.message = 'agent start response did not include an agent id';
+          item.updatedAt = Math.floor(Date.now() / 1000);
+          saveQueueStorage();
+          renderQueue();
+          break;
+        }
+        const started = await startFreshQueueSession(item, index);
+        if (!started.ok) {
+          item.status = 'failed';
+          item.message = started.output || 'failed to start fresh Codex session';
           item.updatedAt = Math.floor(Date.now() / 1000);
           saveQueueStorage();
           renderQueue();

@@ -149,6 +149,12 @@ dropdown of registered repositories plus one preferred Codex-like command per
 available account (`c1`, `c2`, or `codexN`) with auth/limit status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
+Each queued row starts the selected Codex-like command without an argv prompt,
+waits for the attachable terminal pane, sends `/new`, and then sends the
+generated managed-task instruction so the row does not inherit the previous
+Codex chat context. Queue launcher agents are internal transport and do not
+create separate ad-hoc task records; the visible task state belongs to the
+managed `task/<slug>` record.
 The Queue probes agent account status before running and stops before launch
 when the selected account is known to be logged out, limited, or failing.
 Queue rows can be reordered, removed, copied, or
