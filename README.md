@@ -156,8 +156,9 @@ Codex chat context. Queue launcher agents are internal transport and do not
 create separate ad-hoc task records; the visible task state belongs to the
 managed `task/<slug>` record.
 The Queue is run by the Mini App backend, not by a long-lived browser loop.
-The browser submits the ordered rows to `/api/queue/run` and then only renders
-the backend queue snapshot. The backend stores the active run in Q-COLD state,
+The browser submits the ordered rows to `/api/queue/run`, can append more rows
+to that active run through `/api/queue/append`, and otherwise only renders the
+backend queue snapshot. The backend stores the active run in Q-COLD state,
 starts one fresh Q-COLD terminal agent per queued prompt, waits for the matching
 managed `task/<slug>` record to reach `closed:success`, and then advances to
 the next row. After a row reaches `closed:success`, Q-COLD terminates the
@@ -165,9 +166,10 @@ row's executor agent terminal while keeping the completed queue row as run
 history; for Zellij-backed agents, cleanup deletes the session record instead
 of leaving a resurrectable exited session in the terminal list. If the backend
 is restarted while a queue run is active, the next
-snapshot reconciles already closed task records and cleans up stale queue-agent
-terminals before reporting the run state. If the selected agent account is
-temporarily unavailable, the
+snapshot reconciles already closed task records, cleans up stale queue-agent
+terminals, and resumes the queue worker from persisted run state before
+reporting the run state. If the selected agent account is temporarily
+unavailable, the
 backend waits and retries the next launch three times after roughly 1, 5, and
 10 minutes before failing the row; unauthenticated accounts fail immediately.
 Launch and terminal setup failures before a managed task record exists are

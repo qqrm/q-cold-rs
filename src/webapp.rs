@@ -319,6 +319,7 @@ fn router() -> Router {
         .route("/api/task-chat/target", post(api_task_chat_target))
         .route("/api/task-chat/send", post(api_task_chat_send))
         .route("/api/queue/run", post(api_queue_run))
+        .route("/api/queue/append", post(api_queue_append))
         .route("/api/queue/remove", post(api_queue_remove))
         .route("/api/queue/clear", post(api_queue_clear))
         .route("/api/queue/stop", post(api_queue_stop))
@@ -366,6 +367,19 @@ async fn api_task_transcript(Query(query): Query<TaskTranscriptQuery>) -> impl I
 
 async fn api_queue_run(headers: HeaderMap, Json(payload): Json<QueueRunRequest>) -> impl IntoResponse {
     let response = handle_queue_run(&headers, payload);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_append(
+    headers: HeaderMap,
+    Json(payload): Json<QueueAppendRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_append(&headers, payload);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -631,6 +645,104 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     Ok(run_id)
 }
 
+fn handle_queue_append(headers: &HeaderMap, payload: QueueAppendRequest) -> TerminalSendResponse {
+    match handle_queue_append_result(headers, payload) {
+        Ok(count) => TerminalSendResponse {
+            ok: true,
+            output: format!("appended {count} queue item(s)"),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) -> Result<usize> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let run_id = clean_queue_run_id(&payload.run_id);
+    let (run, existing_items) = state::load_web_queue_run(&run_id)?;
+    let Some(run) = run else {
+        bail!("unknown queue run: {run_id}");
+    };
+    if !matches!(run.status.as_str(), "running" | "waiting" | "starting") {
+        bail!("queue is not running");
+    }
+    let prompts = payload
+        .items
+        .into_iter()
+        .filter(|item| !item.prompt.trim().is_empty())
+        .collect::<Vec<_>>();
+    if prompts.is_empty() {
+        bail!("queue append has no runnable items");
+    }
+    let now = unix_now();
+    let mut used_slugs = existing_items
+        .iter()
+        .map(|item| item.slug.clone())
+        .collect::<HashSet<_>>();
+    let start_position = existing_items
+        .iter()
+        .map(|item| item.position)
+        .max()
+        .unwrap_or(-1)
+        .saturating_add(1);
+    let items = prompts
+        .into_iter()
+        .enumerate()
+        .map(|(offset, item)| {
+            let index = usize::try_from(start_position)
+                .unwrap_or(0)
+                .saturating_add(offset);
+            let fallback_slug = queue_slug(&run_id, index);
+            let slug = clean_queue_slug(
+                item.slug
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(&fallback_slug),
+                &run_id,
+                index,
+                &mut used_slugs,
+            );
+            state::QueueItemRow {
+                id: item
+                    .id
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| format!("queue-{run_id}-{}", index + 1)),
+                run_id: run_id.clone(),
+                position: start_position.saturating_add(i64::try_from(offset).unwrap_or(0)),
+                prompt: item.prompt.trim().to_string(),
+                slug,
+                repo_root: item
+                    .repo_root
+                    .or_else(|| run.selected_repo_root.clone())
+                    .filter(|value| !value.trim().is_empty()),
+                repo_name: item
+                    .repo_name
+                    .or_else(|| run.selected_repo_name.clone())
+                    .filter(|value| !value.trim().is_empty()),
+                agent_command: item
+                    .agent_command
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| run.selected_agent_command.clone()),
+                agent_id: None,
+                status: "pending".to_string(),
+                message: String::new(),
+                attempts: 0,
+                next_attempt_at: None,
+                started_at: now,
+                updated_at: now,
+            }
+        })
+        .collect::<Vec<_>>();
+    let count = items.len();
+    state::append_web_queue_items(&run_id, &items)?;
+    spawn_web_queue_worker(run_id);
+    Ok(count)
+}
+
 fn handle_queue_stop(headers: &HeaderMap) -> TerminalSendResponse {
     match handle_queue_stop_result(headers) {
         Ok(()) => TerminalSendResponse {
@@ -818,13 +930,20 @@ fn web_queue_worker_active(run_id: &str) -> bool {
 }
 
 fn run_web_queue(run_id: &str) -> Result<()> {
-    let (_, items) = state::load_web_queue_run(run_id)?;
-    if items.is_empty() {
-        state::update_web_queue_run(run_id, "failed", -1, "queue has no items")?;
-        return Ok(());
-    }
     state::update_web_queue_run(run_id, "running", -1, "running")?;
-    for item in items {
+    loop {
+        let (run, items) = state::load_web_queue_run(run_id)?;
+        if run.is_none() {
+            return Ok(());
+        }
+        if items.is_empty() {
+            state::update_web_queue_run(run_id, "failed", -1, "queue has no items")?;
+            return Ok(());
+        }
+        let Some(item) = items.into_iter().find(|item| !queue_item_terminal(&item.status)) else {
+            state::update_web_queue_run(run_id, "success", -1, "closed successfully")?;
+            return Ok(());
+        };
         let index = item.position;
         if state::web_queue_stop_requested(run_id)? {
             state::update_web_queue_item(
@@ -852,8 +971,10 @@ fn run_web_queue(run_id: &str) -> Result<()> {
             }
         }
     }
-    state::update_web_queue_run(run_id, "success", -1, "closed successfully")?;
-    Ok(())
+}
+
+fn queue_item_terminal(status: &str) -> bool {
+    matches!(status, "success" | "failed" | "stopped" | "blocked")
 }
 
 enum QueueItemOutcome {
@@ -895,6 +1016,24 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                 None,
             )?;
             return Ok(QueueItemOutcome::failed(status));
+        }
+    }
+    if matches!(item.status.as_str(), "running" | "starting") {
+        if let Some(agent_id) = item.agent_id.as_deref() {
+            if agent_running(agent_id) {
+                return wait_for_queue_item_closeout(run_id, item, agent_id, item.attempts);
+            }
+            let message = "agent exited before task closeout";
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "failed",
+                message,
+                Some(agent_id),
+                item.attempts,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::failed(message));
         }
     }
 
@@ -1263,6 +1402,7 @@ fn reconcile_stale_web_queue_run() -> Result<()> {
             item.position,
             &format!("running {}", item.slug),
         )?;
+        spawn_web_queue_worker(run.id.clone());
         return Ok(());
     }
 
@@ -3698,6 +3838,12 @@ struct QueueRunItemRequest {
     repo_root: Option<String>,
     repo_name: Option<String>,
     agent_command: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct QueueAppendRequest {
+    run_id: String,
+    items: Vec<QueueRunItemRequest>,
 }
 
 #[derive(Deserialize)]

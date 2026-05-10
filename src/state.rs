@@ -317,6 +317,69 @@ pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()
     Ok(())
 }
 
+pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction()
+        .context("failed to start web queue append transaction")?;
+    let exists = tx
+        .query_row(
+            "select 1 from web_queue_runs where id = ?1",
+            [run_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .context("failed to query web queue run")?
+        .is_some();
+    if !exists {
+        bail!("unknown queue run: {run_id}");
+    }
+    for item in items {
+        tx.execute(
+            "insert into web_queue_items
+                 (id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                  agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                  updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                item.id,
+                item.run_id,
+                item.position,
+                item.prompt,
+                item.slug,
+                item.repo_root,
+                item.repo_name,
+                item.agent_command,
+                item.agent_id,
+                item.status,
+                item.message,
+                item.attempts,
+                item.next_attempt_at,
+                item.started_at,
+                item.updated_at,
+            ],
+        )
+        .context("failed to append web queue item")?;
+    }
+    tx.execute(
+        "update web_queue_runs
+         set message = ?2, updated_at_unix = ?3
+         where id = ?1",
+        params![
+            run_id,
+            format!("appended {} queue item(s)", items.len()),
+            unix_now(),
+        ],
+    )
+    .context("failed to update web queue run after append")?;
+    tx.commit()
+        .context("failed to commit web queue append transaction")?;
+    Ok(())
+}
+
 pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     let connection = open_db()?;
     let run = connection

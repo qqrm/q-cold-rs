@@ -496,10 +496,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('nav-queue').textContent = String(queueItems.length);
       queueState.textContent = queueRun.running ? `running ${queueRun.activeIndex + 1}/${queueItems.length}` : 'idle';
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
-      queueInput.disabled = queueRun.running;
+      queueInput.disabled = false;
       renderQueueRepoSelector();
       renderQueueAgentSelector();
-      document.getElementById('add-queue-task').disabled = queueRun.running || !queueInput.value.trim();
+      document.getElementById('add-queue-task').disabled = !queueInput.value.trim();
       document.getElementById('clear-queue').disabled = !queueItems.length;
       document.getElementById('run-queue').disabled = queueRun.running || !queueItems.length || !selectedQueueAgentRecord();
       document.getElementById('run-queue').classList.toggle('visible', Boolean(queueItems.length));
@@ -535,14 +535,47 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('stop-queue').classList.toggle('visible', queueRun.running);
     }
 
-    function addQueueTask() {
+    async function addQueueTask() {
       const prompt = queueInput.value.trim();
-      if (!prompt || queueRun.running) return;
+      if (!prompt) return;
+      if (queueRun.running) {
+        await appendQueueTask(prompt);
+        return;
+      }
       queueItems.push({ ...defaultQueueItem(), prompt });
       queueInput.value = '';
       saveQueueStorage();
       renderQueue();
       queueInput.focus();
+    }
+
+    async function appendQueueTask(prompt) {
+      const runId = queueRun.runId || state?.queue?.run?.id || '';
+      if (!runId) {
+        appendLocalMessage('error', 'No active queue run to append to');
+        return;
+      }
+      const item = defaultQueueItem();
+      try {
+        const response = await fetch('/api/queue/append', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            run_id: runId,
+            items: [{ id: item.id, prompt }],
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to append queue item');
+          return;
+        }
+        queueInput.value = '';
+        await loadSnapshot();
+        queueInput.focus();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
     }
 
     function queueItemControls(index) {
