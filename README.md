@@ -162,7 +162,9 @@ starts one fresh Q-COLD terminal agent per queued prompt, waits for the matching
 managed `task/<slug>` record to reach `closed:success`, and then advances to
 the next row. After a row reaches `closed:success`, Q-COLD terminates the
 row's executor agent terminal while keeping the completed queue row as run
-history. If the backend is restarted while a queue run is active, the next
+history; for Zellij-backed agents, cleanup deletes the session record instead
+of leaving a resurrectable exited session in the terminal list. If the backend
+is restarted while a queue run is active, the next
 snapshot reconciles already closed task records and cleans up stale queue-agent
 terminals before reporting the run state. If the selected agent account is
 temporarily unavailable, the
