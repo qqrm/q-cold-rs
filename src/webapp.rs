@@ -895,6 +895,9 @@ fn apply_terminal_details(
     context: Option<&agents::TerminalAgentContext>,
     metadata: Option<&state::TerminalMetadataRow>,
 ) {
+    pane.agent_id = context
+        .map(|context| context.id.clone())
+        .unwrap_or_default();
     let generated = generated_terminal_label(pane, context);
     pane.generated_label.clone_from(&generated);
     pane.name = metadata
@@ -1924,6 +1927,7 @@ struct TerminalPane {
     session: String,
     pane: String,
     pid: u32,
+    agent_id: String,
     command: String,
     cwd: String,
     label: String,
@@ -1947,6 +1951,7 @@ impl TerminalPane {
             session,
             pane,
             pid,
+            agent_id: String::new(),
             command,
             cwd,
             label: String::new(),

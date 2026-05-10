@@ -225,6 +225,11 @@
       align-items: center;
       padding: 11px 12px;
     }
+    .dashboard-focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      box-shadow: 0 0 0 4px rgba(47, 124, 246, .16);
+    }
     .task-card.task-record-card { grid-template-columns: minmax(220px, 1fr) 110px minmax(130px, .7fr) 130px; }
     .task-title { font-weight: 700; overflow-wrap: anywhere; }
     .task-description { margin-top: 3px; color: var(--fg); overflow-wrap: anywhere; }

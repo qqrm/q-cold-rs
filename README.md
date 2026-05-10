@@ -147,8 +147,9 @@ one task prompt at a time, appends it to a visible ordered queue, shows a
 dropdown of detected local Codex-like agent commands (`c1`, `cc1`, `c2`,
 `cc2`, `codex`, and `codexN`), and starts one fresh Q-COLD terminal agent per
 queued prompt through `/agent_start`, with internal agent track and task slug
-names generated automatically. Queue rows can be reordered, removed, or copied
-before execution. The browser-side queue starts the next prompt only after the
+names generated automatically. Queue rows can be reordered, removed, copied, or
+opened to the related running terminal or task record. The browser-side queue
+starts the next prompt only after the
 matching task record reaches `closed:success`; any blocked, failed, unknown,
 prematurely exited, or unavailable-agent task stops the remaining queue. Queue
 runtime metadata is stored in browser local storage, so rows keep showing the

@@ -353,12 +353,14 @@ const tg = window.Telegram && window.Telegram.WebApp;
       up.disabled = queueRun.running || index === 0;
       const down = queueActionButton('↓', () => moveQueueItem(index, 1), 'Move task down');
       down.disabled = queueRun.running || index === queueItems.length - 1;
+      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task context');
+      open.disabled = !queueItems[index]?.slug && !queueItems[index]?.agentId;
       const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
       copy.classList.add('icon-copy');
       const remove = queueActionButton('×', () => removeQueueItem(index), 'Remove');
       remove.classList.add('danger', 'icon-remove');
       remove.disabled = queueRun.running;
-      controls.append(up, down, copy, remove);
+      controls.append(up, down, open, copy, remove);
       return controls;
     }
 
@@ -394,6 +396,45 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!text) return;
       await navigator.clipboard.writeText(text);
       if (tg) tg.showAlert('Prompt copied');
+    }
+
+    function openQueueItemContext(index) {
+      const item = queueItems[index];
+      if (!item) return;
+      const task = taskRecordForQueueItem(item);
+      const terminal = terminalForQueueItem(item, task);
+      if (terminal) {
+        setActiveView('terminals');
+        window.setTimeout(() => {
+          focusDashboardNode(`.terminal-card[data-target="${cssEscape(terminal.target)}"]`);
+        }, 0);
+        return;
+      }
+      if (task?.id) {
+        setActiveView('tasks');
+        window.setTimeout(() => {
+          focusDashboardNode(`.task-record-card[data-task-id="${cssEscape(task.id)}"]`);
+        }, 0);
+        return;
+      }
+      setActiveView('chat');
+    }
+
+    function terminalForQueueItem(item, task = taskRecordForQueueItem(item)) {
+      const agentId = item.agentId || task?.agent_id || '';
+      if (!agentId) return null;
+      return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
+    }
+
+    function focusDashboardNode(selector) {
+      const node = document.querySelector(selector);
+      if (!node) return false;
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      node.classList.remove('dashboard-focus');
+      void node.offsetWidth;
+      node.classList.add('dashboard-focus');
+      window.setTimeout(() => node.classList.remove('dashboard-focus'), 2400);
+      return true;
     }
 
     function formatNumber(value) {
@@ -632,6 +673,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function taskCard(task) {
       const node = document.createElement('article');
       node.className = 'task-card task-record-card';
+      node.dataset.taskId = task.id;
+      if (task.agent_id) node.dataset.agentId = task.agent_id;
       const title = document.createElement('div');
       title.innerHTML = '<div class="task-title"></div><div class="task-description"></div><div class="task-path"></div>';
       title.children[0].textContent = task.title || task.id;
@@ -817,6 +860,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const node = document.createElement('article');
       node.className = 'terminal-card';
       node.dataset.target = terminal.target;
+      node.dataset.agentId = terminal.agent_id || '';
       const head = document.createElement('div');
       head.className = 'terminal-head';
       head.innerHTML = '<div data-role="title"></div><span data-role="kind"></span><span data-role="cwd"></span>';
@@ -828,6 +872,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function updateTerminalCard(node, terminal) {
+      node.dataset.agentId = terminal.agent_id || '';
       const head = node.querySelector('.terminal-head');
       const title = head.querySelector('[data-role="title"]');
       const active = document.activeElement;
