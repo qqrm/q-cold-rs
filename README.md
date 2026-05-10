@@ -214,7 +214,11 @@ short technical ids kept as secondary diagnostics. Queue executor terminals use
 their terminal scope for the managed `task/<slug>` id, so the Terminals view
 keeps both the agent name and the task anchor visible. When Codex telemetry has
 captured a session path, task records expose the saved chat transcript from the
-Tasks view even after the terminal agent has exited. Its
+Tasks view even after the terminal agent has exited. Q-COLD assigns Codex
+sessions to managed tasks only through the session id plus structured
+`session_meta.cwd` or tool-call `workdir`/`cwd` fields under the managed task
+worktree; arbitrary task-id text in prompts or tool output is not enough to
+claim a task transcript. Its
 Tasks view shows Q-COLD task records for the active repository from SQLite as
 separate active and historical sections, including open/closed counts, last-24-hour activity,
 aggregate Codex token telemetry, and average closed-task token cost imported

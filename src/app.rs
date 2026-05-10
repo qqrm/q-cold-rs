@@ -631,6 +631,7 @@ struct CodexToolOutputSample {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct CodexTaskTelemetry {
     usage: CodexTokenUsage,
+    session_ids: Vec<String>,
     session_paths: Vec<String>,
     session_count: u64,
     matched_by_worktree: u64,
@@ -854,11 +855,24 @@ fn sync_task_flow_record_for_worktree(
                 ),
             );
         }
+        metadata.insert(
+            "session_ids".to_string(),
+            Value::Array(
+                telemetry
+                    .session_ids
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
         metadata.insert("token_usage".to_string(), telemetry.usage.as_json());
         metadata.insert(
             "token_efficiency".to_string(),
             telemetry.efficiency_json(unix_now(), start, finish),
         );
+    } else if !metadata_session_path_matches_worktree(&metadata, worktree) {
+        remove_codex_task_metadata(&mut metadata);
     }
 
     record.cwd = Some(worktree.display().to_string());
@@ -902,6 +916,27 @@ fn remove_task_flow_capture_timestamp(value: &mut Value) {
     {
         efficiency.remove("captured_at");
     }
+}
+
+fn remove_codex_task_metadata(metadata: &mut serde_json::Map<String, Value>) {
+    metadata.remove("session_path");
+    metadata.remove("session_paths");
+    metadata.remove("session_ids");
+    metadata.remove("token_usage");
+    metadata.remove("token_efficiency");
+}
+
+fn metadata_session_path_matches_worktree(
+    metadata: &serde_json::Map<String, Value>,
+    worktree: &Path,
+) -> bool {
+    metadata
+        .get("session_path")
+        .and_then(Value::as_str)
+        .and_then(|path| fs::read_to_string(path).ok())
+        .is_some_and(|content| {
+            codex_session_match_for_worktree(&content, &worktree.display().to_string()).is_some()
+        })
 }
 
 fn task_flow_worktree_for_record(record: &state::TaskRecordRow) -> Option<PathBuf> {
@@ -1094,19 +1129,19 @@ fn codex_task_telemetry_for_worktree_in_roots(
             continue;
         }
         let content = fs::read_to_string(&path)?;
-        let worktree_match = content.contains(&worktree_text);
-        let task_match = task_terms.iter().any(|term| content.contains(term));
-        if !worktree_match && !task_match {
+        let Some(session_id) = codex_session_match_for_worktree(&content, &worktree_text) else {
             continue;
-        }
+        };
+        let task_match = task_terms.iter().any(|term| content.contains(term));
         telemetry.session_count += 1;
         let session_path = path.display().to_string();
+        if !telemetry.session_ids.contains(&session_id) {
+            telemetry.session_ids.push(session_id);
+        }
         if !telemetry.session_paths.contains(&session_path) {
             telemetry.session_paths.push(session_path);
         }
-        if worktree_match {
-            telemetry.matched_by_worktree += 1;
-        }
+        telemetry.matched_by_worktree += 1;
         if task_match {
             telemetry.matched_by_task += 1;
         }
@@ -1155,6 +1190,64 @@ fn codex_task_telemetry_for_worktree_in_roots(
     }
     telemetry.usage = usage;
     Ok((telemetry.usage.model_calls > 0 || telemetry.tool_outputs.calls > 0).then_some(telemetry))
+}
+
+fn codex_session_match_for_worktree(content: &str, worktree_text: &str) -> Option<String> {
+    let mut session_id = None;
+    let mut matches_worktree = false;
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            let payload = value.get("payload");
+            if session_id.is_none() {
+                session_id = payload
+                    .and_then(|payload| payload.get("id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+            }
+            matches_worktree |= payload
+                .and_then(|payload| payload.get("cwd"))
+                .and_then(Value::as_str)
+                .is_some_and(|cwd| path_text_is_in_worktree(cwd, worktree_text));
+        }
+        if value.get("type").and_then(Value::as_str) != Some("response_item") {
+            continue;
+        }
+        let Some(payload) = value.get("payload") else {
+            continue;
+        };
+        if payload.get("type").and_then(Value::as_str) != Some("function_call") {
+            continue;
+        }
+        let Some(arguments) = payload.get("arguments").and_then(Value::as_str) else {
+            continue;
+        };
+        let Ok(arguments) = serde_json::from_str::<Value>(arguments) else {
+            continue;
+        };
+        matches_worktree |= function_call_cwd_matches_worktree(&arguments, worktree_text);
+    }
+    matches_worktree
+        .then_some(session_id?)
+        .filter(|id| !id.is_empty())
+}
+
+fn function_call_cwd_matches_worktree(arguments: &Value, worktree_text: &str) -> bool {
+    ["workdir", "cwd"].iter().any(|key| {
+        arguments
+            .get(*key)
+            .and_then(Value::as_str)
+            .is_some_and(|path| path_text_is_in_worktree(path, worktree_text))
+    })
+}
+
+fn path_text_is_in_worktree(path: &str, worktree_text: &str) -> bool {
+    path == worktree_text
+        || path
+            .strip_prefix(worktree_text)
+            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn codex_telemetry_retention_hours() -> u64 {
@@ -2058,11 +2151,12 @@ mod tests {
             session_dir.join(
                 "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
             ),
-            concat!(
-                "{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"/workspace/repo\"}}\n",
-                "{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{\\\"cmd\\\":\\\"rg -n token src\\\",\\\"workdir\\\":\\\"/workspace/repo\\\"}\",\"call_id\":\"call_big\"}}\n",
-                "{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call_output\",\"call_id\":\"call_big\",\"output\":\"Chunk ID: abc\\nOriginal token count: 6001\\nOutput:\\ntask/token-task\\n\"}}\n",
-                "{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"last_token_usage\":{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12},\"model_context_window\":258400}}}\n"
+            format!(
+                "{{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"/workspace/repo\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{{\\\"cmd\\\":\\\"rg -n token src\\\",\\\"workdir\\\":\\\"{}\\\"}}\",\"call_id\":\"call_big\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"call_id\":\"call_big\",\"output\":\"Chunk ID: abc\\nOriginal token count: 6001\\nOutput:\\ntask/token-task\\n\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12}},\"model_context_window\":258400}}}}}}\n",
+                worktree.display()
             ),
         )
         .unwrap();
@@ -2078,8 +2172,12 @@ mod tests {
         .unwrap()
         .unwrap();
         assert_eq!(telemetry.session_count, 1);
+        assert_eq!(
+            telemetry.session_ids,
+            ["019df1ab-7579-7e41-ad71-701b63175455"]
+        );
         assert_eq!(telemetry.session_paths.len(), 1);
-        assert_eq!(telemetry.matched_by_worktree, 0);
+        assert_eq!(telemetry.matched_by_worktree, 1);
         assert_eq!(telemetry.matched_by_task, 1);
         assert_eq!(telemetry.usage.model_calls, 1);
         assert_eq!(telemetry.tool_outputs.calls, 1);
@@ -2090,6 +2188,39 @@ mod tests {
                 .command
                 .contains("rg -n token src")
         );
+    }
+
+    #[test]
+    fn codex_task_telemetry_ignores_task_slug_without_structured_worktree_match() {
+        let temp = tempfile::tempdir().unwrap();
+        let session_dir = temp.path().join("sessions/2026/05/06");
+        let worktree = temp.path().join("WT/vitastor/392-task-mp0by95n-04");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(
+            session_dir.join(
+                "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+            ),
+            format!(
+                "{{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"/home/qqrm/repos/github/qcold\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{{\\\"cmd\\\":\\\"pgrep -af task-mp0by95n\\\",\\\"workdir\\\":\\\"/home/qqrm/repos/github/qcold\\\"}}\",\"call_id\":\"call_noise\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"call_id\":\"call_noise\",\"output\":\"Original token count: 6001\\nOutput:\\n{} task/task-mp0by95n-04\\n\"}}}}\n\
+                 {{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12}},\"model_context_window\":258400}}}}}}\n",
+                worktree.display()
+            ),
+        )
+        .unwrap();
+
+        let telemetry = codex_task_telemetry_for_worktree_in_roots(
+            &worktree,
+            Some("task-mp0by95n-04"),
+            0,
+            u64::MAX,
+            &[temp.path().join("sessions")],
+            Some(0),
+        )
+        .unwrap();
+        assert_eq!(telemetry, None);
     }
 
     #[test]
