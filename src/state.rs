@@ -532,6 +532,21 @@ fn delete_web_queue_run_if_empty(connection: &Connection, run_id: &str) -> Resul
     Ok(())
 }
 
+pub fn delete_empty_web_queue_run(run_id: &str) -> Result<bool> {
+    let connection = open_db()?;
+    let deleted = connection
+        .execute(
+            "delete from web_queue_runs
+             where id = ?1
+               and not exists (
+                   select 1 from web_queue_items where run_id = ?1
+               )",
+            [run_id],
+        )
+        .context("failed to delete empty web queue run")?;
+    Ok(deleted > 0)
+}
+
 pub fn save_terminal_metadata(target: &str, name: Option<&str>, scope: Option<&str>) -> Result<()> {
     let connection = open_db()?;
     if name.is_none() && scope.is_none() {

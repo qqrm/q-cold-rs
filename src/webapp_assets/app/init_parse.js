@@ -556,7 +556,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function renderQueue() {
       document.getElementById('nav-queue').textContent = String(queueItems.length);
       queueGraphModeInput.checked = queueGraphMode;
-      queueGraphModeInput.disabled = queueRun.running || queueRun.stopped;
+      queueGraphModeInput.disabled = queueLayoutLocked();
       queueState.textContent = queueRun.running
         ? queueRunningText()
         : queueRun.stopped
@@ -567,7 +567,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       renderQueueRepoSelector();
       renderQueueAgentSelector();
       document.getElementById('add-queue-task').disabled = !queueInput.value.trim();
-      document.getElementById('clear-queue').disabled = !queueItems.length;
+      document.getElementById('clear-queue').disabled = !queueCanClear();
       const addWaveButton = document.getElementById('add-queue-wave');
       addWaveButton.hidden = !queueGraphMode;
       addWaveButton.disabled = queueLayoutLocked();
@@ -582,7 +582,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const stopButton = document.getElementById('stop-queue');
       stopButton.textContent = queueRun.stopped ? 'Continue' : 'Stop';
       stopButton.classList.toggle('visible', queueRun.running || queueRun.stopped);
-      if (!queueItems.length) {
+      if (!queueItems.length && !queueShouldRenderEmptyGraph()) {
         const empty = document.createElement('div');
         empty.className = 'empty';
         empty.textContent = 'No queued tasks.';

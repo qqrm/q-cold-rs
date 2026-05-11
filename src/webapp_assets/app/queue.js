@@ -192,7 +192,23 @@
     }
 
     function queueLayoutLocked() {
-      return queueRun.running || queueRun.stopped || Boolean(queueRun.runId);
+      return queueRun.running || queueRun.stopped || queueHasBackendRun();
+    }
+
+    function queueHasBackendRun() {
+      return Boolean(queueRun.runId || queueItems.some((item) => item.runId));
+    }
+
+    function queueHasDraftGraph() {
+      return queueGraphMode && queueWaves.length > 1;
+    }
+
+    function queueCanClear() {
+      return Boolean(queueItems.length || queueHasBackendRun() || queueHasDraftGraph());
+    }
+
+    function queueShouldRenderEmptyGraph() {
+      return Boolean(queueGraphMode && (queueHasBackendRun() || queueHasDraftGraph()));
     }
 
     function queueGraphCard(item) {
@@ -527,8 +543,8 @@
     }
 
     async function clearQueue() {
-      if (!queueItems.length) return;
       const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
+      if (!queueCanClear() && !runId) return;
       if (runId) {
         try {
           const response = await fetch('/api/queue/clear', {
@@ -550,7 +566,7 @@
       queueWaves = [{ id: newQueueWaveId() }];
       queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
       saveQueueStorage();
-      await loadSnapshot();
+      if (runId) await loadSnapshot();
       renderQueue();
     }
 

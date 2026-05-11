@@ -447,6 +447,7 @@ fn handle_queue_clear_result(headers: &HeaderMap, payload: &QueueClearRequest) -
         cleanup_queue_item_artifacts(&item, None, None)?;
         removed += 1;
     }
+    state::delete_empty_web_queue_run(&run.id)?;
     Ok(removed)
 }
 

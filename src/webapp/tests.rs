@@ -541,6 +541,26 @@ mod tests {
     }
 
     #[test]
+    fn queue_clear_deletes_empty_backend_run() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("empty-run", "stopped", -1);
+        state::replace_web_queue(&run, &[]).unwrap();
+
+        let response = handle_queue_clear(
+            &HeaderMap::new(),
+            &QueueClearRequest {
+                run_id: Some(run.id.clone()),
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        assert_eq!(response.output, "cleared 0 queue item(s)");
+        assert!(state::load_web_queue_run(&run.id).unwrap().0.is_none());
+    }
+
+    #[test]
     fn graph_queue_scheduler_stops_on_non_success_closeout_without_advancing_dependents() {
         for terminal_status in ["failed", "blocked"] {
             let _guard = test_support::env_guard();
