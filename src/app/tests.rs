@@ -5,9 +5,11 @@ mod tests {
         cargo_subcommand_args, codex_account_from_agent_command,
         codex_task_telemetry_for_worktree_in_roots,
         find_codex_session_summary_in_root, is_queue_agent_track, parse_codex_session_summary,
-        parse_rfc3339_unix, polish_task_text, prompt_from_agent_command, render_token_efficiency,
-        render_token_usage, slug_from_title, task_flow_metadata_equivalent, unix_now,
+        parse_rfc3339_unix, polish_task_text, prompt_from_agent_command,
+        repo_root_for_agent_cwd_from_repositories, render_token_efficiency, render_token_usage,
+        slug_from_title, task_flow_metadata_equivalent, unix_now,
     };
+    use crate::repository::RepositoryConfig;
     use std::collections::HashSet;
     use std::ffi::OsString;
     use std::fs;
@@ -545,6 +547,27 @@ mod tests {
         .unwrap();
         assert_eq!(summary.path, selected);
         assert_eq!(summary.prompt, "selected");
+    }
+
+    #[test]
+    fn codex_session_repo_root_follows_agent_managed_worktree() {
+        let temp = tempfile::tempdir().unwrap();
+        let primary = temp.path().join("vitastor");
+        let agent_cwd = temp.path().join("WT/vitastor/agents/agent-c1-123");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(&agent_cwd).unwrap();
+        let repo = RepositoryConfig {
+            id: "vitastor".to_string(),
+            root: primary.canonicalize().unwrap(),
+            adapter: "xtask-process".to_string(),
+            xtask_manifest: None,
+            default_branch: None,
+            active: false,
+        };
+
+        let root = repo_root_for_agent_cwd_from_repositories(Some(&agent_cwd), &[repo]).unwrap();
+
+        assert_eq!(root, primary.canonicalize().unwrap().display().to_string());
     }
 
     #[test]

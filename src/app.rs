@@ -489,6 +489,11 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
     let title = title_from_description(&description);
     let cwd = record.cwd.clone().or_else(|| std::env::current_dir().ok());
     let managed_task_record_id = cwd.as_deref().and_then(task_record_id_from_worktree);
+    let repo_root = repo_root_for_agent_cwd(cwd.as_deref()).or_else(|| {
+        repository::active_root()
+            .ok()
+            .map(|path| path.display().to_string())
+    });
     let metadata = serde_json::json!({
         "kind": if managed_task_record_id.is_some() { "managed-agent-task-flow" } else { "agent-ad-hoc" },
         "track": record.track,
@@ -506,9 +511,7 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
         title,
         description,
         "open".to_string(),
-        repository::active_root()
-            .ok()
-            .map(|path| path.display().to_string()),
+        repo_root,
         cwd.map(|path| path.display().to_string()),
         Some(record.id.clone()),
         Some(metadata.to_string()),

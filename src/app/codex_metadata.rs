@@ -64,6 +64,13 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             .map(|record| record.description.clone())
             .unwrap_or(description);
         let cwd = agent.cwd.clone().or_else(|| std::env::current_dir().ok());
+        let repo_root = repo_root_for_agent_cwd(cwd.as_deref())
+            .or_else(|| existing_record.and_then(|record| record.repo_root.clone()))
+            .or_else(|| {
+                repository::active_root()
+                    .ok()
+                    .map(|path| path.display().to_string())
+            });
         let metadata = serde_json::json!({
             "kind": "codex-session-import",
             "agent_id": agent.id.clone(),
@@ -95,9 +102,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             title,
             record_description,
             status,
-            repository::active_root()
-                .ok()
-                .map(|path| path.display().to_string()),
+            repo_root,
             cwd.map(|path| path.display().to_string()),
             Some(agent.id),
             Some(metadata_json),
@@ -110,6 +115,28 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
     }
 
     Ok(synced)
+}
+
+fn repo_root_for_agent_cwd(cwd: Option<&Path>) -> Option<String> {
+    let repos = repository::list().unwrap_or_default();
+    repo_root_for_agent_cwd_from_repositories(cwd, &repos)
+}
+
+fn repo_root_for_agent_cwd_from_repositories(
+    cwd: Option<&Path>,
+    repos: &[RepositoryConfig],
+) -> Option<String> {
+    let cwd = cwd?;
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    repos.iter().find_map(|repo| {
+        let root = repo
+            .root
+            .canonicalize()
+            .unwrap_or_else(|_| repo.root.clone());
+        let managed_root = managed_root_for(&root);
+        (cwd.starts_with(&root) || cwd.starts_with(&managed_root))
+            .then(|| root.display().to_string())
+    })
 }
 
 #[derive(Debug)]
