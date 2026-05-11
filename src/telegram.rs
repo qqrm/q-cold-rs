@@ -324,8 +324,12 @@ fn whoami_text(message: &TelegramMessage, unrestricted: bool) -> String {
 fn app_message(message: &TelegramMessage, config: &TelegramConfig) -> SendMessage {
     let Some(url) = config.webapp_url.as_deref() else {
         return message.reply(
-            "Q-COLD Mini App URL is not configured. Start `cargo qcold telegram serve --listen 127.0.0.1:8787 --daemon`, expose it through HTTPS, then set QCOLD_TELEGRAM_WEBAPP_URL."
-                .to_string(),
+            concat!(
+                "Q-COLD Mini App URL is not configured. Start `cargo qcold telegram serve ",
+                "--listen 127.0.0.1:8787 --daemon`, expose it through HTTPS, then set ",
+                "QCOLD_TELEGRAM_WEBAPP_URL."
+            )
+            .to_string(),
         );
     };
     SendMessage {

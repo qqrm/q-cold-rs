@@ -1249,6 +1249,7 @@ impl QueueItemOutcome {
     }
 }
 
+#[allow(clippy::too_many_lines, reason = "existing queue runner split debt")]
 fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueItemOutcome> {
     if let Some(status) = queue_task_status(item)? {
         if status == "closed:success" {
@@ -1774,7 +1775,13 @@ fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
 fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let root = item.repo_root.as_deref().unwrap_or("<repo>");
     format!(
-        "Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task {slug} with cargo qcold task open {slug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: {prompt} Drive the task to terminal closeout unless a business or external blocker requires task pause or blocked closeout. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.",
+        "Use the launched host-side agent workspace as your home base for {root}; do not enter a \
+         devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task {slug} with cargo qcold task \
+         open {slug}, enter that managed task worktree and its devcontainer if the task flow \
+         provides one, reread AGENTS.md and task logs, then do: {prompt} Drive the task to \
+         terminal closeout unless a business or external blocker requires task pause or blocked \
+         closeout. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or \
+         task.",
         slug = item.slug,
         prompt = item.prompt.trim(),
     )
@@ -2645,7 +2652,13 @@ fn dashboard_state() -> DashboardState {
 
 fn agent_start_template(root: &str) -> String {
     format!(
-        "/agent_start --cwd {cwd} <track> :: codex exec \"Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless a business or external blocker requires task pause or blocked closeout. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\"",
+        "/agent_start --cwd {cwd} <track> :: codex exec \"Use the launched host-side agent \
+         workspace as your home base for {root}; do not enter a devcontainer from \
+         $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter \
+         that managed task worktree and its devcontainer if the task flow provides one, reread \
+         AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless a \
+         business or external blocker requires task pause or blocked closeout. After closeout, cd \
+         back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\"",
         cwd = shell_quote(root),
     )
 }
@@ -4702,7 +4715,9 @@ mod tests {
             &session,
             concat!(
                 "{\"timestamp\":\"2026-05-10T00:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"fix queue\",\"images\":[]}}\n",
-                "{\"timestamp\":\"2026-05-10T00:00:01Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"queue fixed\"}]}}\n",
+                "{\"timestamp\":\"2026-05-10T00:00:01Z\",\"type\":\"response_item\",",
+                "\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[",
+                "{\"type\":\"output_text\",\"text\":\"queue fixed\"}]}}\n",
                 "{\"timestamp\":\"2026-05-10T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":null}}\n"
             ),
         )

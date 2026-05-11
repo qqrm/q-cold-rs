@@ -1,5 +1,7 @@
 //! Q-COLD repository-local task-flow adapter.
 
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,6 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
+
+mod quality;
 
 const DEFAULT_PAUSED_TASK_TTL_HOURS: u64 = 2;
 const DEFAULT_BUNDLE_RETENTION_HOURS: u64 = 24;
@@ -618,7 +622,7 @@ fn verify_command(args: &[OsString]) -> Result<u8> {
     Ok(0)
 }
 
-#[derive(Default)]
+#[derive(Clone, Copy, Default)]
 struct PreflightProfile {
     full: bool,
     task_flow: bool,
@@ -643,6 +647,7 @@ impl PreflightProfile {
 }
 
 fn run_preflight(profile: PreflightProfile) -> Result<()> {
+    quality::run(&repo_root()?)?;
     run_required("cargo", ["fmt", "--check"].map(OsString::from).to_vec())?;
     run_required(
         "node",
@@ -683,6 +688,24 @@ fn run_preflight(profile: PreflightProfile) -> Result<()> {
         ["test", "--locked", "--test", "task_flow_record_sync"]
             .map(OsString::from)
             .to_vec(),
+    )?;
+    run_required(
+        "cargo",
+        [
+            "clippy",
+            "--locked",
+            "--workspace",
+            "--bins",
+            "--",
+            "-D",
+            "clippy::correctness",
+            "-D",
+            "clippy::suspicious",
+            "-D",
+            "clippy::perf",
+        ]
+        .map(OsString::from)
+        .to_vec(),
     )?;
 
     if profile.full {
@@ -907,10 +930,9 @@ fn task_inventory_repo_root() -> Result<PathBuf> {
     if task.primary_repo_path.as_os_str().is_empty() {
         return Ok(root);
     }
-    Ok(task
-        .primary_repo_path
+    task.primary_repo_path
         .canonicalize()
-        .with_context(|| format!("failed to resolve {}", task.primary_repo_path.display()))?)
+        .with_context(|| format!("failed to resolve {}", task.primary_repo_path.display()))
 }
 
 fn managed_root(repo: &Path) -> Result<PathBuf> {
@@ -1025,6 +1047,22 @@ fn shell_quote(value: &str) -> String {
     } else {
         format!("'{}'", value.replace('\'', "'\\''"))
     }
+}
+
+fn unquote(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
+        value[1..value.len() - 1].replace("'\\''", "'")
+    } else {
+        value.to_string()
+    }
+}
+
+fn json_escape(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
 }
 
 #[cfg(test)]
@@ -1227,20 +1265,4 @@ mod tests {
             delivery_mode: "self-hosted-qcold".into(),
         }
     }
-}
-
-fn unquote(value: &str) -> String {
-    let value = value.trim();
-    if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
-        value[1..value.len() - 1].replace("'\\''", "'")
-    } else {
-        value.to_string()
-    }
-}
-
-fn json_escape(value: &str) -> String {
-    value
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
 }

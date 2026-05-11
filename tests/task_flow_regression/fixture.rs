@@ -58,7 +58,9 @@ fn test_binary_path(bin: &str) -> PathBuf {
     }
 
     panic!(
-        "missing test binary {bin}; checked {env_key}, QCOLD_TASKFLOW_CONTAINER_ROOT/cargo-target/default/debug, CARGO_TARGET_DIR/debug, qcold sibling, and current_exe debug sibling"
+        "missing test binary {bin}; checked {env_key}, \
+         QCOLD_TASKFLOW_CONTAINER_ROOT/cargo-target/default/debug, CARGO_TARGET_DIR/debug, \
+         qcold sibling, and current_exe debug sibling"
     );
 }
 

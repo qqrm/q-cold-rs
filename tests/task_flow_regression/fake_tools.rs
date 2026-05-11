@@ -58,7 +58,11 @@ case "$cmd" in
       for arg in "$@"; do
         [[ "$id" == "$arg" ]] && keep=0
       done
-      [[ "$keep" -eq 1 ]] && printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$id" "$name" "$item_workspace" "$item_primary" "$item_task" "$item_dev_id" "$image" "$item_taskflow" "$item_legacy" >>"$tmp"
+      if [[ "$keep" -eq 1 ]]; then
+        printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+          "$id" "$name" "$item_workspace" "$item_primary" "$item_task" \
+          "$item_dev_id" "$image" "$item_taskflow" "$item_legacy" >>"$tmp"
+      fi
     done <"$state"
     mv "$tmp" "$state"
     ;;
@@ -170,21 +174,33 @@ pub fn write_fake_container_tools(dir: &Path, validation_log: &Path) {
 set -euo pipefail
 case "${{1:-}}:${{2:-}}:${{3:-}}" in
   xtask:task:validate-success)
-    printf 'verify-autofix|%s|%s|%s|%s|%s\n' "$PWD" "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
-    printf 'verify-preflight|%s|%s|%s|%s|%s|%s\n' "$PWD" "$(command -v etcdctl)" "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
-    printf 'verify-fast|%s|%s|%s|%s|%s\n' "$PWD" "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
+    printf 'verify-autofix|%s|%s|%s|%s|%s\n' "$PWD" \
+      "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" \
+      "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
+    printf 'verify-preflight|%s|%s|%s|%s|%s|%s\n' "$PWD" "$(command -v etcdctl)" \
+      "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" \
+      "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
+    printf 'verify-fast|%s|%s|%s|%s|%s\n' "$PWD" \
+      "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" \
+      "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
     exit 0
     ;;
   xtask:verify:autofix)
-    printf 'verify-autofix|%s|%s|%s|%s|%s\n' "$PWD" "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
+    printf 'verify-autofix|%s|%s|%s|%s|%s\n' "$PWD" \
+      "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" \
+      "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
     exit 0
     ;;
   xtask:verify:preflight)
-    printf 'verify-preflight|%s|%s|%s|%s|%s|%s\n' "$PWD" "$(command -v etcdctl)" "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
+    printf 'verify-preflight|%s|%s|%s|%s|%s|%s\n' "$PWD" "$(command -v etcdctl)" \
+      "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" \
+      "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
     exit 0
     ;;
   xtask:verify:fast)
-    printf 'verify-fast|%s|%s|%s|%s|%s\n' "$PWD" "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
+    printf 'verify-fast|%s|%s|%s|%s|%s\n' "$PWD" \
+      "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" \
+      "${{QCOLD_TASKFLOW_CONTAINER_ROOT:-}}" "${{CARGO_TARGET_DIR:-}}" >>"{log}"
     exit 0
     ;;
 esac
@@ -259,13 +275,17 @@ case "$cmd" in
         "$item_id" "$item_name" "$item_workspace" "$item_primary" "$item_task" "$item_dev_id" "$image" "$item_taskflow" "$item_legacy" \
         >>"$tmp_state"
     done <"$state"
-    printf '%s|%s|%s|%s|%s|%s|%s|1|0\n' "$id" "$name" "$workspace" "$primary" "$task" "$dev_id" "$image_ref" >>"$tmp_state"
+    printf '%s|%s|%s|%s|%s|%s|%s|1|0\n' \
+      "$id" "$name" "$workspace" "$primary" "$task" "$dev_id" "$image_ref" >>"$tmp_state"
     mv "$tmp_state" "$state"
     printf '%s|%s|%s|%s|%s\n' "$cmd" "$workspace" "$config" "$task" "$dev_id" >>"$log"
     if [[ "$cmd" == exec ]]; then
       printf 'cmd|%s|%s\n' "$workspace" "$*" >>"$log"
       cd "$workspace"
-      unset QCOLD_TASKFLOW_CONTAINER_ROOT QCOLD_TASKFLOW_CONTEXT         QCOLD_TASKFLOW_PRIMARY_REPO_PATH QCOLD_TASKFLOW_TASK_ID         QCOLD_TASKFLOW_TASK_WORKTREE QCOLD_TASKFLOW_TASK_BRANCH         QCOLD_TASKFLOW_DEVCONTAINER_ID CARGO_TARGET_DIR
+      unset QCOLD_TASKFLOW_CONTAINER_ROOT QCOLD_TASKFLOW_CONTEXT \
+        QCOLD_TASKFLOW_PRIMARY_REPO_PATH QCOLD_TASKFLOW_TASK_ID \
+        QCOLD_TASKFLOW_TASK_WORKTREE QCOLD_TASKFLOW_TASK_BRANCH \
+        QCOLD_TASKFLOW_DEVCONTAINER_ID CARGO_TARGET_DIR
       for entry in "${remote_env[@]}"; do
         export "$entry"
       done

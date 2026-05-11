@@ -6,16 +6,17 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/index");
 
-    let build_number = git_commit_count()
-        .map(|count| {
+    let build_number = git_commit_count().map_or_else(
+        || "0".to_string(),
+        |count| {
             if git_worktree_dirty() {
                 count.saturating_add(1)
             } else {
                 count
             }
-        })
-        .map(|count| count.to_string())
-        .unwrap_or_else(|| "0".to_string());
+            .to_string()
+        },
+    );
     let git_hash = Command::new("git")
         .args(["rev-parse", "--short=12", "HEAD"])
         .output()

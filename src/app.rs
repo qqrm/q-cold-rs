@@ -34,6 +34,28 @@ const QCOLD_VERSION: &str = concat!(
     " ",
     env!("QCOLD_BUILD_GIT_HASH")
 );
+const QCOLD_AFTER_HELP: &str = concat!(
+    "Examples:\n",
+    "  qcold repo list\n",
+    "  qcold repo add target-repo /path/to/target-repo ",
+    "--xtask-manifest /path/to/target-repo/xtask/Cargo.toml --set-active\n",
+    "  qcold status\n",
+    "  qcold task-record create --description \"Add task CRUD and automatic capture\"\n",
+    "  qcold task-record list\n",
+    "  qcold agent list\n",
+    "  qcold agent start --track audit -- codex exec \"inspect repo\"\n",
+    "  qcold telegram poll\n",
+    "  qcold bundle\n",
+    "  qcold task inspect runtime-audit\n",
+    "  qcold task open my-task\n",
+    "  qcold task enter\n",
+    "  qcold task iteration-notify --message \"waiting for direction\"\n",
+    "  qcold task pause --reason \"waiting for operator decision\"\n",
+    "  qcold task closeout --outcome success --message \"docs: update truth\"\n",
+    "  qcold verify fast\n",
+    "  qcold ci matrix rust-all-on --jobs 4\n\n",
+    "Cargo subcommand compatibility is also supported: cargo qcold <command>."
+);
 const DEFAULT_CODEX_TELEMETRY_RETENTION_HOURS: u64 = 48;
 const LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD: u64 = 5_000;
 const MAX_TOOL_OUTPUT_SAMPLES: usize = 5;
@@ -90,7 +112,7 @@ where
     name = "qcold",
     version = QCOLD_VERSION,
     about = "Q-COLD orchestration facade over adapter-backed task flow",
-    after_help = "Examples:\n  qcold repo list\n  qcold repo add target-repo /path/to/target-repo --xtask-manifest /path/to/target-repo/xtask/Cargo.toml --set-active\n  qcold status\n  qcold task-record create --description \"Add task CRUD and automatic capture\"\n  qcold task-record list\n  qcold agent list\n  qcold agent start --track audit -- codex exec \"inspect repo\"\n  qcold telegram poll\n  qcold bundle\n  qcold task inspect runtime-audit\n  qcold task open my-task\n  qcold task enter\n  qcold task iteration-notify --message \"waiting for direction\"\n  qcold task pause --reason \"waiting for operator decision\"\n  qcold task closeout --outcome success --message \"docs: update truth\"\n  qcold verify fast\n  qcold ci matrix rust-all-on --jobs 4\n\nCargo subcommand compatibility is also supported: cargo qcold <command>."
+    after_help = QCOLD_AFTER_HELP
 )]
 struct Cli {
     #[command(subcommand)]
@@ -494,6 +516,7 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
     state::upsert_task_record(&record).map(|_| ())
 }
 
+#[allow(clippy::too_many_lines, reason = "existing telemetry sync debt")]
 pub(crate) fn sync_codex_task_records() -> Result<usize> {
     let agent_rows = state::load_agents(&agents::registry_path()?)?;
     let preferred_cwd = repository::active_root()
@@ -799,6 +822,7 @@ fn sync_task_flow_records(records: &[state::TaskRecordRow]) -> Result<usize> {
     Ok(synced)
 }
 
+#[allow(clippy::too_many_lines, reason = "existing task-flow sync debt")]
 fn sync_task_flow_record_for_worktree(
     worktree: &Path,
     status_override: Option<&str>,
@@ -1810,7 +1834,9 @@ fn render_token_efficiency(efficiency: &Value) -> Option<String> {
             .unwrap_or_default()
     };
     Some(format!(
-        "token-efficiency\tsessions={}\tmatched_worktree={}\tmatched_task={}\ttool_output_tokens={}\tlarge_tool_outputs={}\tlarge_tool_output_tokens={}\tretention_hours={}\tsource={}",
+        "token-efficiency\tsessions={}\tmatched_worktree={}\tmatched_task={}\
+         \ttool_output_tokens={}\tlarge_tool_outputs={}\tlarge_tool_output_tokens={}\
+         \tretention_hours={}\tsource={}",
         field("session_count"),
         field("matched_by_worktree"),
         field("matched_by_task"),
@@ -2055,6 +2081,7 @@ fn repository_adapter_for(repo: &RepositoryConfig) -> Result<adapter::XtaskProce
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::{
         cargo_subcommand_args, codex_account_from_agent_command,
@@ -2070,6 +2097,49 @@ mod tests {
 
     fn os_args(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
+    }
+
+    fn jsonl(value: serde_json::Value) -> String {
+        format!("{value}\n")
+    }
+
+    fn session_meta_event(cwd: &str) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": "1970-01-01T00:00:01.000Z",
+            "type": "session_meta",
+            "payload": {
+                "id": "019df1ab-7579-7e41-ad71-701b63175455",
+                "timestamp": "1970-01-01T00:00:01Z",
+                "cwd": cwd,
+            },
+        })
+    }
+
+    fn token_count_event(
+        second: u8,
+        input: u64,
+        cached: u64,
+        output: u64,
+        reasoning: u64,
+        total: u64,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "timestamp": format!("1970-01-01T00:00:{second:02}.000Z"),
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "last_token_usage": {
+                        "input_tokens": input,
+                        "cached_input_tokens": cached,
+                        "output_tokens": output,
+                        "reasoning_output_tokens": reasoning,
+                        "total_tokens": total,
+                    },
+                    "model_context_window": 258400,
+                },
+            },
+        })
     }
 
     #[test]
@@ -2143,12 +2213,53 @@ mod tests {
         );
         fs::write(
             &path,
-            concat!(
-                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"2026-05-04T09:27:19Z\",\"cwd\":\"/workspace/repo\"}}\n",
-                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":\"Сделай CRUD для задач\",\"images\":[]}}\n",
-                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"cached_input_tokens\":40,\"output_tokens\":9,\"reasoning_output_tokens\":3,\"total_tokens\":109},\"last_token_usage\":{\"input_tokens\":100},\"model_context_window\":258400},\"rate_limits\":{\"plan_type\":\"pro\"}}}\n",
-                "{\"type\":\"event_msg\",\"payload\":{\"type\":\"task_complete\"}}\n"
-            ),
+            [
+                jsonl(serde_json::json!({
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "019df1ab-7579-7e41-ad71-701b63175455",
+                        "timestamp": "2026-05-04T09:27:19Z",
+                        "cwd": "/workspace/repo",
+                    },
+                })),
+                jsonl(serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "user_message",
+                        "message": "Сделай CRUD для задач",
+                        "images": [],
+                    },
+                })),
+                jsonl(serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "total_token_usage": {
+                                "input_tokens": 100,
+                                "cached_input_tokens": 40,
+                                "output_tokens": 9,
+                                "reasoning_output_tokens": 3,
+                                "total_tokens": 109,
+                            },
+                            "last_token_usage": {
+                                "input_tokens": 100,
+                            },
+                            "model_context_window": 258400,
+                        },
+                        "rate_limits": {
+                            "plan_type": "pro",
+                        },
+                    },
+                })),
+                jsonl(serde_json::json!({
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "task_complete",
+                    },
+                })),
+            ]
+            .concat(),
         )
         .unwrap();
 
@@ -2180,14 +2291,31 @@ mod tests {
             session_dir.join(
                 "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
             ),
-            format!(
-                "{{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"{}\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"arguments\":\"{{\\\"workdir\\\":\\\"{}\\\"}}\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12}},\"model_context_window\":258400}}}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":7,\"cached_input_tokens\":5,\"output_tokens\":3,\"reasoning_output_tokens\":2,\"total_tokens\":10}},\"model_context_window\":258400}}}}}}\n",
-                worktree.display(),
-                worktree.display()
-            ),
+            [
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:01.000Z",
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "019df1ab-7579-7e41-ad71-701b63175455",
+                        "timestamp": "1970-01-01T00:00:01Z",
+                        "cwd": worktree.display().to_string(),
+                    },
+                })),
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:02.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "arguments": serde_json::json!({
+                            "workdir": worktree.display().to_string(),
+                        })
+                        .to_string(),
+                    },
+                })),
+                jsonl(token_count_event(3, 10, 4, 2, 1, 12)),
+                jsonl(token_count_event(4, 7, 5, 3, 2, 10)),
+            ]
+            .concat(),
         )
         .unwrap();
 
@@ -2225,13 +2353,34 @@ mod tests {
             session_dir.join(
                 "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
             ),
-            format!(
-                "{{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"/workspace/repo\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{{\\\"cmd\\\":\\\"rg -n token src\\\",\\\"workdir\\\":\\\"{}\\\"}}\",\"call_id\":\"call_big\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"call_id\":\"call_big\",\"output\":\"Chunk ID: abc\\nOriginal token count: 6001\\nOutput:\\ntask/token-task\\n\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12}},\"model_context_window\":258400}}}}}}\n",
-                worktree.display()
-            ),
+            [
+                jsonl(session_meta_event("/workspace/repo")),
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:02.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": serde_json::json!({
+                            "cmd": "rg -n token src",
+                            "workdir": worktree.display().to_string(),
+                        })
+                        .to_string(),
+                        "call_id": "call_big",
+                    },
+                })),
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:03.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call_big",
+                        "output": "Chunk ID: abc\nOriginal token count: 6001\nOutput:\ntask/token-task\n",
+                    },
+                })),
+                jsonl(token_count_event(4, 10, 4, 2, 1, 12)),
+            ]
+            .concat(),
         )
         .unwrap();
 
@@ -2275,13 +2424,37 @@ mod tests {
             session_dir.join(
                 "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
             ),
-            format!(
-                "{{\"timestamp\":\"1970-01-01T00:00:01.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:01Z\",\"cwd\":\"/home/qqrm/repos/github/qcold\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"exec_command\",\"arguments\":\"{{\\\"cmd\\\":\\\"pgrep -af task-mp0by95n\\\",\\\"workdir\\\":\\\"/home/qqrm/repos/github/qcold\\\"}}\",\"call_id\":\"call_noise\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"call_id\":\"call_noise\",\"output\":\"Original token count: 6001\\nOutput:\\n{} task/task-mp0by95n-04\\n\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:04.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"cached_input_tokens\":4,\"output_tokens\":2,\"reasoning_output_tokens\":1,\"total_tokens\":12}},\"model_context_window\":258400}}}}}}\n",
-                worktree.display()
-            ),
+            [
+                jsonl(session_meta_event("/home/qqrm/repos/github/qcold")),
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:02.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call",
+                        "name": "exec_command",
+                        "arguments": serde_json::json!({
+                            "cmd": "pgrep -af task-mp0by95n",
+                            "workdir": "/home/qqrm/repos/github/qcold",
+                        })
+                        .to_string(),
+                        "call_id": "call_noise",
+                    },
+                })),
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:03.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "call_id": "call_noise",
+                        "output": format!(
+                            "Original token count: 6001\nOutput:\n{} task/task-mp0by95n-04\n",
+                            worktree.display()
+                        ),
+                    },
+                })),
+                jsonl(token_count_event(4, 10, 4, 2, 1, 12)),
+            ]
+            .concat(),
         )
         .unwrap();
 
@@ -2309,11 +2482,31 @@ mod tests {
         );
         fs::write(
             &session_path,
-            format!(
-                "{{\"timestamp\":\"1970-01-01T00:00:02.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"019df1ab-7579-7e41-ad71-701b63175455\",\"timestamp\":\"1970-01-01T00:00:02Z\",\"cwd\":\"{}\"}}}}\n\
-                 {{\"timestamp\":\"1970-01-01T00:00:03.000Z\",\"type\":\"event_msg\",\"payload\":{{\"type\":\"token_count\",\"info\":{{\"last_token_usage\":{{\"input_tokens\":10,\"total_tokens\":10}}}}}}}}\n",
-                worktree.display()
-            ),
+            [
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:02.000Z",
+                    "type": "session_meta",
+                    "payload": {
+                        "id": "019df1ab-7579-7e41-ad71-701b63175455",
+                        "timestamp": "1970-01-01T00:00:02Z",
+                        "cwd": worktree.display().to_string(),
+                    },
+                })),
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:03.000Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": {
+                                "input_tokens": 10,
+                                "total_tokens": 10,
+                            },
+                        },
+                    },
+                })),
+            ]
+            .concat(),
         )
         .unwrap();
 
@@ -2345,7 +2538,11 @@ mod tests {
         });
         assert_eq!(
             render_token_usage(&usage).as_deref(),
-            Some("token-usage\tinput=17\tcached_input=9\tnon_cached_input=8\toutput=5\treasoning=3\ttotal=22\tdisplayed=13\tmodel_calls=2\tcontext=258400\tsource=codex-session-window")
+            Some(concat!(
+                "token-usage\tinput=17\tcached_input=9\tnon_cached_input=8\toutput=5",
+                "\treasoning=3\ttotal=22\tdisplayed=13\tmodel_calls=2",
+                "\tcontext=258400\tsource=codex-session-window",
+            ))
         );
     }
 
@@ -2363,7 +2560,12 @@ mod tests {
         });
         assert_eq!(
             render_token_efficiency(&efficiency).as_deref(),
-            Some("token-efficiency\tsessions=2\tmatched_worktree=1\tmatched_task=1\ttool_output_tokens=7000\tlarge_tool_outputs=1\tlarge_tool_output_tokens=6001\tretention_hours=48\tsource=codex-session-window")
+            Some(concat!(
+                "token-efficiency\tsessions=2\tmatched_worktree=1\tmatched_task=1",
+                "\ttool_output_tokens=7000\tlarge_tool_outputs=1",
+                "\tlarge_tool_output_tokens=6001\tretention_hours=48",
+                "\tsource=codex-session-window",
+            ))
         );
     }
 

@@ -1451,7 +1451,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       usage.className = 'task-usage';
       const tokenUsage = task.token_usage;
       usage.innerHTML = tokenUsage
-        ? `<strong>${formatNumber(tokenUsage.displayed_total_tokens)}</strong><span>tokens</span><small>${formatNumber(tokenUsage.output_tokens)} out / ${formatNumber(tokenUsage.reasoning_output_tokens)} reasoning</small>`
+        ? `<strong>${formatNumber(tokenUsage.displayed_total_tokens)}</strong><span>tokens</span>` +
+          `<small>${formatNumber(tokenUsage.output_tokens)} out / ` +
+          `${formatNumber(tokenUsage.reasoning_output_tokens)} reasoning</small>`
         : '<strong>-</strong><span>tokens</span><small>no telemetry</small>';
       const efficiency = task.token_efficiency;
       if (efficiency) {
@@ -1613,7 +1615,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('terminal-count').textContent = `${terminals.count} attachable`;
       document.getElementById('nav-terminals').textContent = String(terminals.count);
       if (!terminals.records.length) {
-        terminalList.innerHTML = `<div class="empty">${model.hostAgents.count} host agents detected, but no attachable terminal sessions. Start new agents through Q-COLD so they run in managed terminal sessions.</div>`;
+        terminalList.innerHTML =
+          `<div class="empty">${model.hostAgents.count} host agents detected, ` +
+          'but no attachable terminal sessions. Start new agents through Q-COLD so they run in ' +
+          'managed terminal sessions.</div>';
         terminalOutputCache.clear();
         return;
       }

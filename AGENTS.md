@@ -159,6 +159,10 @@ fixture or debugging task explicitly needs them.
   GitHub Actions/`act` preflight entry point, and Q-COLD self-hosted
   `cargo qcold verify` plus successful task closeout invoke it through the same
   adapter boundary.
+- The self-hosted fast gate enforces tracked text hygiene before heavier
+  validation: new tracked text files must stay at or below 1,000 lines, all
+  tracked text lines must stay at or below 180 characters, and any large-file
+  exception must be explicit in `xtask/src/quality.rs` with a reason.
 - For Rust code changes, run `cargo fmt --check` and `cargo test --locked`
   unless the task is too narrow or the environment blocks them.
 - For command-surface changes, include targeted help or invocation checks such

@@ -268,11 +268,14 @@ fn task_record_token_snapshot() -> Result<Option<String>> {
         return Ok(None);
     }
     let mut lines = vec![format!(
-        "task-record-tokens\trecords={count}\tdisplayed={displayed}\ttotal={total}\toutput={output}\treasoning={reasoning}\tmodel_calls={model_calls}"
+        "task-record-tokens\trecords={count}\tdisplayed={displayed}\ttotal={total}\
+         \toutput={output}\treasoning={reasoning}\tmodel_calls={model_calls}"
     )];
     if efficiency_count > 0 {
         lines.push(format!(
-            "task-record-efficiency\trecords={efficiency_count}\tsessions={sessions}\ttool_output_tokens={tool_output_tokens}\tlarge_tool_outputs={large_tool_outputs}\tlarge_tool_output_tokens={large_tool_output_tokens}"
+            "task-record-efficiency\trecords={efficiency_count}\tsessions={sessions}\
+             \ttool_output_tokens={tool_output_tokens}\tlarge_tool_outputs={large_tool_outputs}\
+             \tlarge_tool_output_tokens={large_tool_output_tokens}"
         ));
     }
     Ok(Some(format!("{}\n", lines.join("\n"))))

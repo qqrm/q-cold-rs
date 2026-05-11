@@ -813,7 +813,9 @@ fn start_zellij_terminal_agent(
         launch.qcold_agent_worktree.as_deref(),
     );
     let wrapped = format!(
-        "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; sleep 0.1; zellij delete-session --force {} >/dev/null 2>&1 || true; exit \"$status\"",
+        "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \
+         \"$status\"; sleep 0.1; zellij delete-session --force {} >/dev/null 2>&1 || true; \
+         exit \"$status\"",
         launch.command,
         shell_quote(&session)
     );
