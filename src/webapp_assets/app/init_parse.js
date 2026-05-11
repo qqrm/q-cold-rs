@@ -391,6 +391,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
           detail: queueItemDetail(item, task, agentId),
         };
       }
+      if (queueRun.running && item.status === 'starting' && task?.status === 'paused') {
+        return {
+          status: 'starting',
+          message: item.message || 'continuing queue',
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
       if (task?.status === 'paused') {
         return {
           status: 'paused',
@@ -563,7 +570,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('clear-queue').disabled = !queueItems.length;
       const addWaveButton = document.getElementById('add-queue-wave');
       addWaveButton.hidden = !queueGraphMode;
-      addWaveButton.disabled = queueRun.running || queueRun.stopped;
+      addWaveButton.disabled = queueLayoutLocked();
       document.getElementById('run-queue').disabled = queueRun.running
         || queueRun.stopped
         || !queueItems.length

@@ -19,14 +19,17 @@
 
     function renderQueueGraph() {
       queueWaves = normalizeQueueWaves(queueWaves, queueItems);
-      syncQueueWaveDependencies();
+      if (!queueLayoutLocked()) syncQueueWaveDependencies();
       const board = document.createElement('div');
       board.className = 'queue-graph-board';
       const levels = queueGraphLevels();
       const toolbar = document.createElement('div');
       toolbar.className = 'queue-graph-toolbar';
       const hint = document.createElement('span');
-      hint.textContent = 'Waves run top to bottom. Drag a wave header to reorder waves.';
+      const lockedHint = 'Queue layout is locked for this run. Clear the queue to draft a new graph.';
+      hint.textContent = queueLayoutLocked()
+        ? lockedHint
+        : 'Waves run top to bottom. Drag a wave header to reorder waves.';
       toolbar.append(hint);
       board.appendChild(toolbar);
 
@@ -42,6 +45,7 @@
       column.dataset.waveId = level.wave.id;
       column.addEventListener('dragover', allowQueueGraphDrop);
       column.addEventListener('drop', (event) => {
+        if (queueLayoutLocked()) return;
         event.preventDefault();
         const sourceWaveId = event.dataTransfer.getData('text/qcold-queue-wave');
         if (sourceWaveId) {
@@ -53,8 +57,9 @@
       });
       const head = document.createElement('div');
       head.className = 'queue-graph-wave-head';
-      head.draggable = !queueRun.running;
+      head.draggable = !queueLayoutLocked();
       head.addEventListener('dragstart', (event) => {
+        if (queueLayoutLocked()) return;
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/qcold-queue-wave', level.wave.id);
       });
@@ -67,7 +72,8 @@
       headTitle.append(heading, meta);
       const remove = queueActionButton('×', () => removeQueueWave(level.wave.id), 'Remove wave');
       remove.classList.add('danger', 'icon-remove', 'queue-remove-corner');
-      remove.disabled = queueRun.running || queueWaves.length <= 1 || level.items.length > 0;
+      remove.hidden = queueLayoutLocked();
+      remove.disabled = queueLayoutLocked() || queueWaves.length <= 1 || level.items.length > 0;
       head.append(headTitle);
       const lane = document.createElement('div');
       lane.className = 'queue-graph-wave-lane';
@@ -138,14 +144,14 @@
     }
 
     function createQueueWave() {
-      if (queueRun.running || queueRun.stopped) return;
+      if (queueLayoutLocked()) return;
       queueWaves.push({ id: newQueueWaveId() });
       saveQueueStorage();
       renderQueue();
     }
 
     function removeQueueWave(waveId) {
-      if (queueRun.running || queueWaves.length <= 1) return;
+      if (queueLayoutLocked() || queueWaves.length <= 1) return;
       if (queueItems.some((item) => item.waveId === waveId)) return;
       queueWaves = queueWaves.filter((wave) => wave.id !== waveId);
       saveQueueStorage();
@@ -153,7 +159,9 @@
     }
 
     function moveQueueWaveTo(sourceWaveId, targetWaveId) {
-      if (!sourceWaveId || !targetWaveId || sourceWaveId === targetWaveId || queueRun.running) return;
+      if (!sourceWaveId || !targetWaveId || sourceWaveId === targetWaveId || queueLayoutLocked()) {
+        return;
+      }
       const sourceIndex = queueWaves.findIndex((candidate) => candidate.id === sourceWaveId);
       const targetIndex = queueWaves.findIndex((candidate) => candidate.id === targetWaveId);
       if (sourceIndex < 0 || targetIndex < 0) return;
@@ -165,7 +173,7 @@
     }
 
     function moveQueueItemToWave(itemId, waveId) {
-      if (!itemId || !waveId || queueRun.running) return;
+      if (!itemId || !waveId || queueLayoutLocked()) return;
       const item = queueItems.find((candidate) => candidate.id === itemId);
       if (!item || item.waveId === waveId) return;
       item.waveId = waveId;
@@ -183,12 +191,16 @@
       }
     }
 
+    function queueLayoutLocked() {
+      return queueRun.running || queueRun.stopped || Boolean(queueRun.runId);
+    }
+
     function queueGraphCard(item) {
       const index = queueItems.findIndex((candidate) => candidate.id === item.id);
       const view = queueItemView(item);
       const card = document.createElement('article');
       card.className = `queue-graph-card ${view.status}`;
-      card.draggable = !queueRun.running;
+      card.draggable = !queueLayoutLocked();
       card.dataset.itemId = item.id;
       card.addEventListener('dragstart', (event) => {
         event.stopPropagation();
@@ -217,7 +229,7 @@
       prompt.title = 'Use Full prompt to inspect the complete text';
       const direction = document.createElement('p');
       direction.className = 'queue-graph-card-hint';
-      direction.textContent = queueRun.running
+      direction.textContent = queueLayoutLocked()
         ? 'Wave order is locked for this run.'
         : 'Drag into a wave to move this task.';
       const gate = queueGateToggle(item);
@@ -240,7 +252,7 @@
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.checked = item.gatesNext !== false;
-      input.disabled = queueRun.running;
+      input.disabled = queueLayoutLocked();
       input.setAttribute('aria-label', 'Blocks next wave');
       input.addEventListener('change', () => {
         item.gatesNext = input.checked;
@@ -302,7 +314,7 @@
     }
 
     function allowQueueGraphDrop(event) {
-      if (queueRun.running) return;
+      if (queueLayoutLocked()) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'link';
     }
@@ -313,13 +325,15 @@
         const active = queueItems.filter((item) => {
           return ['starting', 'running', 'waiting'].includes(queueItemView(item).status);
         }).length;
-        return `running ${active}/${queueItems.length}`;
+        const verb = queueRun.status === 'starting' ? 'starting' : 'running';
+        return `${verb} ${active}/${queueItems.length}`;
       }
       const visibleIndex = queueItems.findIndex((item) => Number(item.position) === activePosition);
       const ordinal = visibleIndex >= 0
         ? visibleIndex + 1
         : Math.min(Math.max(activePosition + 1, 0), queueItems.length);
-      return `running ${ordinal}/${queueItems.length}`;
+      const verb = queueRun.status === 'starting' ? 'starting' : 'running';
+      return `${verb} ${ordinal}/${queueItems.length}`;
     }
 
     async function addQueueTask() {
@@ -371,9 +385,9 @@
       const controls = document.createElement('div');
       controls.className = 'queue-step-actions';
       const up = queueActionButton('↑', () => moveQueueItem(index, -1), 'Move task up');
-      up.disabled = queueRun.running || index === 0;
+      up.disabled = queueLayoutLocked() || index === 0;
       const down = queueActionButton('↓', () => moveQueueItem(index, 1), 'Move task down');
-      down.disabled = queueRun.running || index === queueItems.length - 1;
+      down.disabled = queueLayoutLocked() || index === queueItems.length - 1;
       const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat or transcript');
       open.disabled = !queueItemContextTarget(queueItems[index]);
       const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
@@ -417,7 +431,7 @@
 
     function moveQueueItem(index, delta) {
       const next = index + delta;
-      if (next < 0 || next >= queueItems.length || queueRun.running) return;
+      if (next < 0 || next >= queueItems.length || queueLayoutLocked()) return;
       const [item] = queueItems.splice(index, 1);
       queueItems.splice(next, 0, item);
       saveQueueStorage();

@@ -182,7 +182,9 @@ to bottom: Wave 1 runs first, Wave 2 waits for Wave 1, and so on. Cards inside
 one wave run in parallel. `Add wave` appends a new wave below the existing
 waves, and new prompts are added to the last wave by default. Task cards can be
 moved by dragging them into a wave. Waves can be reordered by dragging the wave
-header and removed while empty. Each card has a short prompt preview, a dedicated full-prompt
+header and removed while empty. Once a queue has been started, the wave layout
+is locked and reconstructed from backend queue dependencies; clear the queue to
+draft a new graph. Each card has a short prompt preview, a dedicated full-prompt
 action, and a `Blocks next wave` toggle that controls whether the card blocks
 later waves. In Graph execution, all queued tasks whose prerequisites have
 reached `closed:success` are started in parallel through separate Q-COLD
@@ -225,9 +227,10 @@ current row as stopped without deleting it or treating it as complete. The same
 control becomes Continue for a stopped run; continuing clears the stop flag and
 resumes from that row, reusing its still-running executor agent when one exists
 or launching a fresh executor when needed.
-Queue rows can be reordered, removed, copied, cleared in bulk, or opened to an
-interactive task chat. While a queue is running, the active executor row is
-protected, but completed rows and not-yet-started pending rows remain removable.
+Draft queue rows can be reordered, removed, copied, cleared in bulk, or opened
+to an interactive task chat. Once a queue has been started, row order is owned
+by the backend run; completed rows and not-yet-started pending rows remain
+removable while the queue is running.
 Bulk clearing removes persisted queue rows, removes the
 matching task records, and terminates any associated executor agents. When the
 related terminal agent is still running, that chat can send

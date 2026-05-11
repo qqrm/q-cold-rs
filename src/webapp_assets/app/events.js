@@ -359,6 +359,7 @@
       if (queueRun.running || !queueItems.length) return;
       const selectedAgent = selectedQueueAgentRecord();
       if (!selectedAgent) return;
+      if (queueGraphMode) syncQueueWaveDependencies();
       const now = Math.floor(Date.now() / 1000);
       const selectedRepo = selectedQueueRepository();
       queueRun = {
@@ -367,7 +368,7 @@
         stop: false,
         activeIndex: -1,
         runId: existingQueueRunId() || Date.now().toString(36),
-        status: 'running',
+        status: 'starting',
       };
       const usedSlugs = usedQueueSlugs(queueRun.runId);
       queueItems = queueItems.map((item, index) => {
@@ -377,14 +378,16 @@
         const closedStatus = task?.status?.startsWith('closed') ? task.status : '';
         const success = closedStatus === 'closed:success' || item.status === 'success';
         const prompt = item.prompt.trim();
+        const startsNow = prompt && !success && !closedStatus && queueItemStartsImmediately(item, index);
+        const waiting = prompt && !success && !closedStatus && !startsNow;
         return {
           ...item,
           slug,
           agentId: item.agentId || task?.agent_id || '',
           repoRoot: repo.root || '',
           repoName: repo.name || '',
-          status: success ? 'success' : closedStatus ? 'failed' : prompt ? 'pending' : 'failed',
-          message: success ? 'closed successfully' : closedStatus || (prompt ? '' : 'empty prompt'),
+          status: queueStartingStatus(success, closedStatus, startsNow, waiting),
+          message: queueStartingMessage(success, closedStatus, startsNow, waiting, prompt),
           agentCommand: item.agentCommand || selectedAgent?.command || '',
           startedAt: item.startedAt || now,
           updatedAt: now,
@@ -414,7 +417,7 @@
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || payload.ok === false) {
-        queueRun.running = false;
+        queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
         queueItems[0].status = 'failed';
         queueItems[0].message = payload.output || 'failed to start backend queue';
         saveQueueStorage();
@@ -422,6 +425,26 @@
         return;
       }
       await loadSnapshot();
+    }
+
+    function queueItemStartsImmediately(item, index) {
+      if (!queueGraphMode) return index === 0;
+      return !(item.dependsOn || []).length;
+    }
+
+    function queueStartingMessage(success, closedStatus, startsNow, waiting, prompt) {
+      if (success) return 'closed successfully';
+      if (closedStatus) return closedStatus;
+      if (startsNow) return 'starting backend queue';
+      if (waiting) return 'waiting for prior wave';
+      return prompt ? '' : 'empty prompt';
+    }
+
+    function queueStartingStatus(success, closedStatus, startsNow, waiting) {
+      if (success) return 'success';
+      if (closedStatus) return 'failed';
+      if (startsNow) return 'starting';
+      return waiting ? 'waiting' : 'failed';
     }
 
     async function stopQueue() {
@@ -442,6 +465,22 @@
     async function continueQueue() {
       const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
       if (!runId) return;
+      const previousQueueRun = { ...queueRun };
+      const previousQueueItems = queueItems;
+      queueRun = {
+        ...queueRun,
+        running: true,
+        stopped: false,
+        stop: false,
+        runId,
+        status: 'starting',
+      };
+      queueItems = queueItems.map((item) => {
+        if (!['stopped', 'paused'].includes(item.status)) return item;
+        return { ...item, status: 'starting', message: 'continuing queue' };
+      });
+      saveQueueStorage();
+      renderQueue();
       try {
         const response = await fetch('/api/queue/continue', {
           method: 'POST',
@@ -451,11 +490,18 @@
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload.ok === false) {
           appendLocalMessage('error', payload.output || 'failed to continue queue');
+          queueRun = previousQueueRun;
+          queueItems = previousQueueItems;
+          saveQueueStorage();
+          renderQueue();
           return;
         }
         await loadSnapshot();
       } catch (err) {
         appendLocalMessage('error', String(err));
+        queueRun = previousQueueRun;
+        queueItems = previousQueueItems;
+        saveQueueStorage();
       }
       renderQueue();
     }
