@@ -516,9 +516,13 @@ fn start_web_queue_item(
     item: &state::QueueItemRow,
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
+    let task = match ensure_queue_managed_task(item) {
+        Ok(task) => task,
+        Err(err) => return Ok(QueueItemOutcome::failed(format!("{err:#}"))),
+    };
     let request = AgentStartRequest {
         id: Some(queue_agent_id(item)),
-        cwd: item.repo_root.as_ref().map(PathBuf::from),
+        cwd: Some(task.worktree),
         track: queue_track(run_id),
         command: item.agent_command.clone(),
     };
@@ -842,14 +846,14 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let _ = writeln!(packet, "repo_root: {root}");
     let _ = writeln!(packet, "task_slug: {}", item.slug);
     let _ = writeln!(packet, "selected_command: {}", item.agent_command);
-    let _ = writeln!(packet, "launch_context: host-side $QCOLD_AGENT_WORKTREE");
+    let _ = writeln!(packet, "launch_context: backend-opened managed task worktree");
     let _ = writeln!(packet, "required_flow:");
-    let _ = writeln!(packet, "  - cargo qcold task open {}", item.slug);
-    let _ = writeln!(packet, "  - cargo qcold task enter");
+    let _ = writeln!(packet, "  - do not run cargo qcold task open; Q-COLD already opened it");
+    let _ = writeln!(packet, "  - confirm pwd contains .task/task.env");
     let _ = writeln!(packet, "  - reread AGENTS.md and available task logs");
     let _ = writeln!(packet, "state_pointers:");
-    let _ = writeln!(packet, "  task_env: .task/task.env (after open, if present)");
-    let _ = writeln!(packet, "  task_logs: .task/logs/ (after open, if present)");
+    let _ = writeln!(packet, "  task_env: .task/task.env");
+    let _ = writeln!(packet, "  task_logs: .task/logs/");
     let _ = writeln!(packet, "validation_closeout:");
     let _ = writeln!(packet, "  expect: run relevant validation, then terminal closeout");
     let _ = writeln!(
@@ -862,7 +866,7 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     for line in item.prompt.trim().lines() {
         let _ = writeln!(packet, "  {line}");
     }
-    let _ = writeln!(packet, "after_closeout: cd back to $QCOLD_AGENT_WORKTREE");
+    let _ = writeln!(packet, "after_closeout: stop; the queue backend owns the executor lifecycle");
     let _ = writeln!(packet, "END_Q-COLD_TASK_PACKET");
     packet
 }

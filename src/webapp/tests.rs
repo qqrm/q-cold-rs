@@ -141,9 +141,9 @@ mod tests {
         assert!(instruction.contains("repo_root: /workspace/repo"));
         assert!(instruction.contains("task_slug: task-run-01"));
         assert!(instruction.contains("selected_command: c1"));
-        assert!(instruction.contains("cargo qcold task open task-run-01"));
-        assert!(instruction.contains("task_env: .task/task.env (after open, if present)"));
-        assert!(instruction.contains("task_logs: .task/logs/ (after open, if present)"));
+        assert!(instruction.contains("do not run cargo qcold task open"));
+        assert!(instruction.contains("task_env: .task/task.env"));
+        assert!(instruction.contains("task_logs: .task/logs/"));
         assert!(instruction.contains("pause_or_blocked_only_for: business decision"));
         assert!(instruction.contains("operator_request: |\n  do focused work"));
         assert!(!instruction.contains("home base for /workspace/repo"));
