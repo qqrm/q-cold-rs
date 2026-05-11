@@ -365,6 +365,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const view = queueItemView(item);
       if (view.status === 'starting') return 'starting';
       if (view.status === 'running') return 'running';
+      if (view.status === 'idle') return 'idle';
       if (view.status === 'success') return 'done';
       if (view.status === 'blocked') return 'blocked';
       if (view.status === 'stopped') return 'stopped';
@@ -427,6 +428,21 @@ const tg = window.Telegram && window.Telegram.WebApp;
             detail: queueItemDetail(item, task, agentId),
           };
         }
+        const terminal = terminalForAgentId(activeAgentId);
+        if (terminalCloseoutFailure(terminal)) {
+          return {
+            status: 'failed',
+            message: 'agent stopped after failed Q-COLD closeout',
+            detail: queueItemDetail(item, task, agentId),
+          };
+        }
+        if (terminalIdlePrompt(terminal)) {
+          return {
+            status: 'idle',
+            message: 'agent idle; task is still open',
+            detail: queueItemDetail(item, task, agentId),
+          };
+        }
         return {
           status: 'running',
           message: agentBadgeText(activeAgentId, task),
@@ -434,6 +450,21 @@ const tg = window.Telegram && window.Telegram.WebApp;
         };
       }
       if (activeAgentId) {
+        const terminal = terminalForAgentId(activeAgentId);
+        if (terminalCloseoutFailure(terminal)) {
+          return {
+            status: 'failed',
+            message: 'agent stopped after failed Q-COLD closeout',
+            detail: queueItemDetail(item, task, agentId),
+          };
+        }
+        if (terminalIdlePrompt(terminal)) {
+          return {
+            status: 'idle',
+            message: 'agent idle; no task closeout detected',
+            detail: queueItemDetail(item, task, agentId),
+          };
+        }
         return {
           status: item.status === 'starting' ? 'starting' : 'running',
           message: agentBadgeText(activeAgentId, task) || 'agent running',

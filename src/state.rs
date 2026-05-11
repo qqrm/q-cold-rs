@@ -663,6 +663,7 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
         }
         _ => None,
     };
+    advance_task_sequence_counter_for_record(&tx, repo_root.as_deref(), sequence)?;
     let created_at = existing
         .as_ref()
         .map_or(record.created_at, |row| row.created_at);
@@ -723,6 +724,20 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
         .context("failed to reload task record")?;
     tx.commit().context("failed to commit task record")?;
     Ok(stored)
+}
+
+fn advance_task_sequence_counter_for_record(
+    connection: &Connection,
+    repo_root: Option<&str>,
+    sequence: Option<u64>,
+) -> Result<()> {
+    let (Some(repo_root), Some(sequence)) = (repo_root, sequence) else {
+        return Ok(());
+    };
+    if !repo_root.trim().is_empty() {
+        advance_task_sequence_counter(connection, repo_root, sequence)?;
+    }
+    Ok(())
 }
 
 pub fn load_task_records(status: Option<&str>, limit: usize) -> Result<Vec<TaskRecordRow>> {

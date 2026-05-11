@@ -532,6 +532,7 @@ fn event_snapshot() -> EventSnapshot {
 include!("webapp/queue_api.rs");
 include!("webapp/queue_worker.rs");
 include!("webapp/terminal_chat.rs");
+include!("webapp/queue_worker_terminal.rs");
 include!("webapp/snapshot.rs");
 include!("webapp/models_assets.rs");
 

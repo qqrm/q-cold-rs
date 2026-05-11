@@ -32,6 +32,17 @@ fn task_record_create(state_dir: &std::path::Path, id: &str, repo_root: &str) ->
     String::from_utf8(output).unwrap()
 }
 
+fn task_record_delete(state_dir: &std::path::Path, id: &str) {
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args(["task-record", "delete", id])
+        .env("QCOLD_STATE_DIR", state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+}
+
 #[test]
 fn task_record_create_assigns_stable_repo_scoped_sequence() {
     let temp = tempdir().unwrap();
@@ -64,4 +75,18 @@ fn task_record_repo_move_reallocates_sequence_in_target_repo() {
     assert!(occupied.contains("\tsequence=1\t"));
     assert!(original.contains("\tsequence=1\t"));
     assert!(moved.contains("\tsequence=2\t"));
+}
+
+#[test]
+fn task_record_sequence_is_not_reused_after_delete() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let repo = temp.path().join("repo");
+
+    let first = task_record_create(&state_dir, "task/first", &repo.display().to_string());
+    task_record_delete(&state_dir, "task/first");
+    let second = task_record_create(&state_dir, "task/second", &repo.display().to_string());
+
+    assert!(first.contains("\tsequence=1\t"));
+    assert!(second.contains("\tsequence=2\t"));
 }

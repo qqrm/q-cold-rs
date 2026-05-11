@@ -52,6 +52,10 @@ fn open_db() -> Result<Connection> {
                  metadata_json text,
                  sequence integer
              );
+             create table if not exists task_sequence_counters (
+                 repo_root text primary key,
+                 next_sequence integer not null
+             );
              create table if not exists task_topics (
                  task_id text primary key references tasks(id),
                  chat_id text not null,
@@ -187,6 +191,16 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
             [],
         )
         .context("failed to create task sequence index")?;
+    connection
+        .execute(
+            "create table if not exists task_sequence_counters (
+                 repo_root text primary key,
+                 next_sequence integer not null
+             )",
+            [],
+        )
+        .context("failed to create task sequence counters table")?;
+    seed_task_sequence_counters(connection)?;
     backfill_task_sequences(connection)?;
     Ok(())
 }
@@ -250,14 +264,90 @@ fn ensure_column(
 }
 
 fn allocate_task_sequence(connection: &Connection, repo_root: &str) -> Result<u64> {
+    let initial_next = max_task_sequence(connection, repo_root)?.saturating_add(1);
+    connection
+        .execute(
+            "insert into task_sequence_counters (repo_root, next_sequence)
+             values (?1, ?2)
+             on conflict(repo_root) do nothing",
+            params![repo_root, i64::try_from(initial_next).unwrap_or(i64::MAX)],
+        )
+        .context("failed to initialize task sequence counter")?;
     let next: i64 = connection
         .query_row(
-            "select coalesce(max(sequence), 0) + 1 from tasks where repo_root = ?1",
+            "select next_sequence from task_sequence_counters where repo_root = ?1",
             [repo_root],
             |row| row.get(0),
         )
         .context("failed to allocate task sequence")?;
+    connection
+        .execute(
+            "update task_sequence_counters
+             set next_sequence = ?2
+             where repo_root = ?1",
+            params![repo_root, next.saturating_add(1)],
+        )
+        .context("failed to advance task sequence counter")?;
     u64::try_from(next).context("task sequence overflow")
+}
+
+fn advance_task_sequence_counter(
+    connection: &Connection,
+    repo_root: &str,
+    sequence: u64,
+) -> Result<()> {
+    let next = i64::try_from(sequence.saturating_add(1)).unwrap_or(i64::MAX);
+    connection
+        .execute(
+            "insert into task_sequence_counters (repo_root, next_sequence)
+             values (?1, ?2)
+             on conflict(repo_root) do update set
+                 next_sequence = max(task_sequence_counters.next_sequence, excluded.next_sequence)",
+            params![repo_root, next],
+        )
+        .context("failed to advance task sequence counter")?;
+    Ok(())
+}
+
+fn seed_task_sequence_counters(connection: &Connection) -> Result<()> {
+    let mut statement = connection
+        .prepare(
+            "select repo_root, coalesce(max(sequence), 0) + 1
+             from tasks
+             where repo_root is not null and trim(repo_root) != ''
+             group by repo_root",
+        )
+        .context("failed to prepare task sequence counter seed")?;
+    let rows = statement
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .context("failed to query task sequence counter seed")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode task sequence counter seed")?;
+    drop(statement);
+
+    for (repo_root, next_sequence) in rows {
+        connection
+            .execute(
+                "insert into task_sequence_counters (repo_root, next_sequence)
+                 values (?1, ?2)
+                 on conflict(repo_root) do update set
+                     next_sequence = max(task_sequence_counters.next_sequence, excluded.next_sequence)",
+                params![repo_root, next_sequence],
+            )
+            .context("failed to seed task sequence counter")?;
+    }
+    Ok(())
+}
+
+fn max_task_sequence(connection: &Connection, repo_root: &str) -> Result<u64> {
+    let value: i64 = connection
+        .query_row(
+            "select coalesce(max(sequence), 0) from tasks where repo_root = ?1",
+            [repo_root],
+            |row| row.get(0),
+        )
+        .context("failed to inspect task sequence max")?;
+    u64::try_from(value).context("task sequence overflow")
 }
 
 fn backfill_task_sequences(connection: &Connection) -> Result<()> {

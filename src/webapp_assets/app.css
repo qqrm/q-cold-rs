@@ -500,6 +500,7 @@
     .queue-step.success { border-left: 4px solid var(--ok); }
     .queue-step.failed { border-left: 4px solid var(--bad); }
     .queue-step.running, .queue-step.starting { border-left: 4px solid var(--info); }
+    .queue-step.idle { border-left: 4px solid var(--warn); }
     .queue-step.blocked, .queue-step.stopped, .queue-step.paused { border-left: 4px solid var(--warn); }
     .queue-graph-board {
       display: grid;
@@ -584,6 +585,7 @@
     .queue-graph-card.failed { border-left: 4px solid var(--bad); }
     .queue-graph-card.running,
     .queue-graph-card.starting { border-left: 4px solid var(--info); }
+    .queue-graph-card.idle { border-left: 4px solid var(--warn); }
     .queue-graph-card.blocked,
     .queue-graph-card.stopped,
     .queue-graph-card.paused { border-left: 4px solid var(--warn); }

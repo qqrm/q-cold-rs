@@ -329,6 +329,19 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
     if matches!(item.status.as_str(), "running" | "starting") {
         if let Some(agent_id) = item.agent_id.as_deref() {
             if agent_running(agent_id) {
+                if agent_terminal_closeout_failed(agent_id) {
+                    let message = "agent reached idle prompt after failed Q-COLD closeout";
+                    state::update_web_queue_item(
+                        run_id,
+                        &item.id,
+                        "failed",
+                        message,
+                        Some(agent_id),
+                        item.attempts,
+                        None,
+                    )?;
+                    return Ok(QueueItemOutcome::failed(message));
+                }
                 return wait_for_queue_item_closeout(run_id, item, agent_id, item.attempts);
             }
             let message = "agent exited before task closeout";
@@ -606,6 +619,19 @@ fn wait_for_queue_item_closeout(
                 )?;
                 return Ok(QueueItemOutcome::failed(message));
             }
+            if status == "open" && agent_terminal_closeout_failed(agent_id) {
+                let message = "agent reached idle prompt after failed Q-COLD closeout".to_string();
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "failed",
+                    &message,
+                    Some(agent_id),
+                    attempts,
+                    None,
+                )?;
+                return Ok(QueueItemOutcome::failed(message));
+            }
         } else if !agent_running(agent_id) {
             let message = "agent exited before opening task record".to_string();
             state::update_web_queue_item(
@@ -745,18 +771,8 @@ fn reconcile_stale_web_queue_run() -> Result<()> {
             continue;
         }
         if let Some(agent_id) = item.agent_id.as_deref() {
-            if matches!(item.status.as_str(), "running" | "starting") && !agent_running(agent_id) {
-                let message = "agent exited before task closeout";
-                state::update_web_queue_item(
-                    &run.id,
-                    &item.id,
-                    "failed",
-                    message,
-                    Some(agent_id),
-                    item.attempts,
-                    None,
-                )?;
-                state::update_web_queue_run(&run.id, "failed", item.position, message)?;
+            if let Some(message) = queue_agent_failure_message(&item, agent_id) {
+                fail_queue_run_item(&run.id, &item, agent_id, message)?;
                 return Ok(());
             }
         }
@@ -771,6 +787,38 @@ fn reconcile_stale_web_queue_run() -> Result<()> {
     }
 
     state::update_web_queue_run(&run.id, "success", -1, "closed successfully")?;
+    Ok(())
+}
+
+fn queue_agent_failure_message(item: &state::QueueItemRow, agent_id: &str) -> Option<&'static str> {
+    if !matches!(item.status.as_str(), "running" | "starting") {
+        return None;
+    }
+    if !agent_running(agent_id) {
+        return Some("agent exited before task closeout");
+    }
+    if agent_terminal_closeout_failed(agent_id) {
+        return Some("agent reached idle prompt after failed Q-COLD closeout");
+    }
+    None
+}
+
+fn fail_queue_run_item(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    agent_id: &str,
+    message: &str,
+) -> Result<()> {
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "failed",
+        message,
+        Some(agent_id),
+        item.attempts,
+        None,
+    )?;
+    state::update_web_queue_run(run_id, "failed", item.position, message)?;
     Ok(())
 }
 
@@ -806,14 +854,16 @@ fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
     let Some(record) = state::get_task_record(&task_id)? else {
         return Ok(None);
     };
-    if item
-        .repo_root
-        .as_deref()
-        .is_some_and(|repo| record.repo_root.as_deref().is_some_and(|value| value != repo))
-    {
+    if queue_task_record_repo_mismatch(item, &record) && !record.status.starts_with("closed") {
         return Ok(None);
     }
     Ok(Some(record.status))
+}
+
+fn queue_task_record_repo_mismatch(item: &state::QueueItemRow, record: &state::TaskRecordRow) -> bool {
+    item.repo_root
+        .as_deref()
+        .is_some_and(|repo| record.repo_root.as_deref().is_some_and(|value| value != repo))
 }
 
 fn agent_running(agent_id: &str) -> bool {

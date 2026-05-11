@@ -521,6 +521,42 @@ mod tests {
     }
 
     #[test]
+    fn graph_queue_reconciles_closed_success_after_repo_drift() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("graph-drift", "running", -1);
+        run.execution_mode = "graph".to_string();
+        let mut item = queue_item_fixture("graph-drift", "upstream", 0, "running", Some("agent-1"));
+        item.repo_root = Some("/tmp/old-active".to_string());
+        let mut dependent = queue_item_fixture("graph-drift", "dependent", 1, "pending", None);
+        dependent.depends_on = vec!["upstream".to_string()];
+        state::replace_web_queue(&run, &[item, dependent]).unwrap();
+        state::upsert_task_record(&state::new_task_record(
+            "task/task-upstream".to_string(),
+            "task-flow".to_string(),
+            "upstream".to_string(),
+            "prompt upstream".to_string(),
+            "closed:success".to_string(),
+            Some("/workspace/repo".to_string()),
+            None,
+            Some("agent-1".to_string()),
+            None,
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+
+        assert_eq!(stored_items[0].status, "success");
+        assert_eq!(queue_ready_item_ids(&run, &stored_items), ids(&["dependent"]));
+    }
+
+    #[test]
     fn graph_queue_does_not_unblock_dependents_on_failed_or_blocked_prerequisites() {
         for terminal_status in ["failed", "blocked"] {
             let mut run = queue_run_fixture("graph-stop", "running", -1);

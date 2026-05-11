@@ -80,9 +80,11 @@ Q-COLD stores lightweight task records in its local SQLite database. Use
 `qcold task-record create`, `list`, `show`, `update`, `close`, and `delete` for
 direct CRUD. When a record has a repository root, `create` assigns a stable
 repo-scoped `sequence` number and returns the existing number on later
-idempotent creates for the same task id. Descriptions are normalized before
-storage so operator phrasing is kept as a concise task description instead of
-a raw chat transcript.
+idempotent creates for the same task id. Sequence counters are monotonic per
+repo and are not reused after task-record deletion, so retained closeout
+bundles keep a stable anchor history. Descriptions are normalized before
+storage so operator phrasing is kept as a concise task description instead of a
+raw chat transcript.
 
 Adapter-backed `qcold task open <slug>` automatically creates or updates a
 Q-COLD task record with source `task-flow`. When that record has a repo-scoped
@@ -215,10 +217,10 @@ advances any newly unblocked graph nodes. After a row reaches
 keeping the completed queue row as run
 history; for Zellij-backed agents, cleanup deletes the session record instead
 of leaving a resurrectable exited session in the terminal list. If the backend
-is restarted while a queue run is active, the next
-snapshot reconciles already closed task records, cleans up stale queue-agent
-terminals, and resumes the queue worker from persisted run state before
-reporting the run state. If the selected agent account is temporarily
+is restarted while a queue run is active, the next snapshot reconciles already
+closed task records even if a queue row still has an older launch repo path,
+cleans up stale queue-agent terminals, and resumes the queue worker from
+persisted run state before reporting the run state. If the selected agent account is temporarily
 unavailable, the
 backend waits and retries the next launch three times after roughly 1, 5, and
 10 minutes before failing the row; unauthenticated accounts fail immediately.

@@ -327,15 +327,45 @@
 
     function taskRecordForQueueItem(item) {
       const repo = queueItemRepository(item);
-      return queueTaskRecords().find((task) => (
-        task.id === `task/${item.slug}`
-        && (!repo?.root || !task.repo_root || task.repo_root === repo.root)
-      ));
+      const records = queueTaskRecords().filter((task) => task.id === `task/${item.slug}`);
+      const exact = records.find((task) => !repo?.root || !task.repo_root || task.repo_root === repo.root);
+      return exact || records.find((task) => task.status?.startsWith('closed')) || null;
     }
 
     function runningAgent(agentId) {
       if (!agentId || !model) return true;
       return (model.agents.records || []).some((agent) => agent.id === agentId);
+    }
+
+    function terminalForAgentId(agentId) {
+      if (!agentId) return null;
+      return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
+    }
+
+    function terminalPlainText(terminal) {
+      return String(terminal?.output || '')
+        .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+        .replace(/\x1b\][\s\S]*?(\x07|\x1b\\)/g, '');
+    }
+
+    function terminalCloseoutFailure(terminal) {
+      const output = terminalPlainText(terminal);
+      return [
+        'Q-COLD closeout could not complete',
+        'Could not complete canonical Q-COLD closeout',
+        'missing task metadata',
+        'repository target mismatch',
+        'run this from a managed task worktree',
+      ].some((needle) => output.includes(needle));
+    }
+
+    function terminalIdlePrompt(terminal) {
+      const lines = terminalPlainText(terminal)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(-8);
+      return lines.some((line) => line === '›' || line.startsWith('› '));
     }
 
     function activeQueueAgentId(item, task = taskRecordForQueueItem(item)) {
