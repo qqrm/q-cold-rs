@@ -5,10 +5,10 @@ mod tests {
         cargo_subcommand_args, codex_account_from_agent_command,
         codex_task_telemetry_for_worktree_in_roots,
         codex_import_matches_existing, find_codex_session_summary_in_root, is_queue_agent_track,
-        parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
+        guard_command, parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
         prompt_from_agent_command, repo_root_for_agent_cwd_from_repositories,
         render_token_efficiency, render_token_usage, slug_from_title,
-        task_flow_metadata_equivalent, unix_now,
+        task_flow_metadata_equivalent, unix_now, GuardArgs,
     };
     use crate::repository::RepositoryConfig;
     use crate::state;
@@ -78,6 +78,18 @@ mod tests {
             cargo_subcommand_args(os_args(&["qcold", "status"])),
             os_args(&["qcold", "status"])
         );
+    }
+
+    #[test]
+    fn guard_command_blocks_oversized_output() {
+        let args = GuardArgs {
+            max_bytes: 4,
+            max_lines: 100,
+            command: os_args(&["printf", "abcdef"]),
+        };
+        let code = guard_command(&args).unwrap();
+
+        assert_eq!(code, 2);
     }
 
     #[test]

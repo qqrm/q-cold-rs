@@ -19,6 +19,8 @@ fn ensure_queue_managed_task(item: &state::QueueItemRow) -> Result<QueueManagedT
     let output = Command::new(queue_qcold_executable()?)
         .current_dir(&repo_root)
         .env("QCOLD_REPO_ROOT", &repo_root)
+        .env("QCOLD_TASKFLOW_PROMPT", &item.prompt)
+        .env("QCOLD_TASK_PROMPT_SNIPPET", prompt::prompt_snippet(&item.prompt))
         .args(["task", "open", &item.slug])
         .output()
         .with_context(|| format!("failed to open managed task {}", item.slug))?;
@@ -156,14 +158,21 @@ fn remember_queue_task_worktree(
     let title = existing
         .as_ref()
         .map_or_else(|| item.slug.clone(), |record| record.title.clone());
-    let description = existing.as_ref().map_or_else(
-        || format!("Open managed task-flow work for {title}."),
-        |record| record.description.clone(),
-    );
+    let prompt_snippet = prompt::prompt_snippet(&item.prompt);
+    let description = if prompt_snippet.is_empty() {
+        format!("Open managed task-flow work for {title}.")
+    } else {
+        prompt_snippet.clone()
+    };
     let metadata = serde_json::json!({
         "task_slug": item.slug,
+        "queue_item_id": item.id,
+        "queue_run_id": item.run_id,
         "kind": "managed-task-flow",
-        "opened_by": "web-queue"
+        "opened_by": "web-queue",
+        "prompt_source": "web-queue-card",
+        "operator_prompt": item.prompt,
+        "operator_prompt_snippet": prompt_snippet,
     });
     let record = state::new_task_record(
         task_id,

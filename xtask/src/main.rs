@@ -209,7 +209,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         task_name: task_slug.to_string(),
         task_branch: branch.clone(),
         task_execution_anchor: execution_anchor,
-        task_description: format!("Q-COLD self-hosted task {task_slug}"),
+        task_description: task_open_description(task_slug),
         task_worktree: worktree.clone(),
         task_profile: profile.unwrap_or("default").to_string(),
         primary_repo_path: repo,
@@ -227,6 +227,14 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     println!("task-opened\t{task_slug}\t{}", worktree.display());
     println!("TASK_WORKTREE={}", worktree.display());
     Ok(0)
+}
+
+fn task_open_description(task_slug: &str) -> String {
+    std::env::var("QCOLD_TASKFLOW_PROMPT")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| format!("Q-COLD self-hosted task {task_slug}"))
 }
 
 fn enter_command() -> Result<u8> {

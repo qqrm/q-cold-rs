@@ -34,6 +34,7 @@ qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
 qcold telegram poll
 qcold telegram serve --listen 127.0.0.1:8787 --daemon
 qcold bundle
+qcold guard -- rg -n "needle" src
 qcold task inspect runtime-audit
 qcold task open my-task
 qcold task pause --reason "waiting for operator decision"
@@ -88,7 +89,10 @@ Adapter-backed `qcold task open <slug>` automatically creates or updates a
 Q-COLD task record with source `task-flow`. When that record has a repo-scoped
 `sequence`, Q-COLD passes it to the repository adapter as
 `QCOLD_TASK_SEQUENCE` so managed task anchors can use an operator-sortable
-monotonic number instead of a random-looking suffix. Q-COLD-managed agent starts also
+monotonic number instead of a random-looking suffix. Queue-opened task records
+also preserve the original queue-card prompt in metadata and pass it to the
+adapter as `QCOLD_TASKFLOW_PROMPT`; compact operator surfaces use a bounded
+first-lines snippet instead of prompt-derived labels. Q-COLD-managed agent starts also
 create an ad-hoc task record when the wrapped `c1`, `cc1`, `c2`, `cc2`, or
 `codex` command contains an explicit prompt argument. Interactive prompts typed
 later inside an already-open terminal are imported from Codex session JSONL
@@ -207,9 +211,10 @@ generated managed-task instruction so the row does not inherit the previous
 Codex chat context. That instruction is a compact `Q-COLD_TASK_PACKET` with
 the repository root, task slug, selected command, required task-flow commands,
 validation and closeout expectation, blocker boundary, state pointers such as
-`.task/task.env` and task logs, and the operator request. Queue launcher
-agents use slug/repository-derived display labels and short session ids rather
-than prompt-derived labels. They are internal transport and do not create
+`.task/task.env` and task logs, an output guard policy, a bounded
+operator-request snippet, and the full operator request for the executor.
+Queue launcher agents use slug/repository-derived display labels and short
+session ids rather than prompt-derived labels. They are internal transport and do not create
 separate ad-hoc task records; the visible task state belongs to the managed
 `task/<slug>` record.
 The Queue is run by the Mini App backend, not by a long-lived browser loop.
@@ -356,6 +361,14 @@ GUI command execution is enabled for the local server by default. If the GUI is
 intentionally exposed beyond the local host, set
 `QCOLD_WEBAPP_REQUIRE_WRITE_TOKEN=yes` and `QCOLD_WEBAPP_WRITE_TOKEN`; POST
 requests must then send it as `X-QCOLD-Write-Token`.
+
+`qcold guard -- <command>...` runs a local command and suppresses stdout/stderr
+when the combined output is too large. Use it before risky broad searches,
+large log reads, or repository-wide reports. The default limits are 16 KiB and
+400 lines; when either limit is exceeded, Q-COLD prints a compact blocked
+message and exits with code 2 so the operator or agent can rerun a narrower
+query such as `rg -l`, `rg --count`, `sed -n`, `head`, `tail`, or a path-limited
+search.
 
 Q-COLD state is stored in one local SQLite database under `QCOLD_STATE_DIR` or
 `~/.local/state/qcold/qcold.sqlite3`. The database owns repository registry,

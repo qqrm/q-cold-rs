@@ -7,6 +7,8 @@ static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
 const QCOLD_ENV_VARS: &[&str] = &[
     "QCOLD_ACTIVE_REPO",
     "QCOLD_REPO_ROOT",
+    "QCOLD_TASKFLOW_PROMPT",
+    "QCOLD_TASK_PROMPT_SNIPPET",
     "QCOLD_XTASK_MANIFEST",
     "QCOLD_STATE_DIR",
 ];

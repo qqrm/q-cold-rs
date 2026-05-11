@@ -42,8 +42,9 @@ fn agent_start_template(root: &str) -> String {
          workspace as your home base for {root}; do not enter a devcontainer from \
          $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter \
          that managed task worktree and its devcontainer if the task flow provides one, reread \
-         AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless a \
-         business or external blocker requires task pause or blocked closeout. After closeout, cd \
+         AGENTS.md and task logs, then do: <task>. Shape broad searches before reading raw output; \
+         use qcold guard -- <command> for risky commands. Drive the task to terminal closeout unless \
+         a business or external blocker requires task pause or blocked closeout. After closeout, cd \
          back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\"",
         cwd = shell_quote(root),
     )

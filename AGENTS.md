@@ -71,6 +71,7 @@ repo-local code owns it.
 - `qcold agent start --track <track> -- <command>...`
 - `qcold telegram poll`
 - `qcold bundle`
+- `qcold guard -- <command>...`
 - `qcold task pause --reason "<reason>"`
 - `qcold repo list`
 - `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>] [--set-active]`
@@ -88,6 +89,7 @@ repo-local code owns it.
 - `cargo qcold agent attach <agent-id|terminal-target|session|name>`
 - `cargo qcold agent start --track <track> -- <command>...`
 - `cargo qcold telegram poll`
+- `cargo qcold guard -- <command>...`
 - `cargo qcold task inspect [topic]`
 - `cargo qcold task open <task-slug> [profile]`
 - `cargo qcold task enter`
@@ -129,6 +131,9 @@ fixture or debugging task explicitly needs them.
   `cargo-qcold ...` execution must stay equivalent where intended.
 - Prefer small, typed Rust changes over stringly shell glue.
 - Avoid broad refactors unless the task is explicitly architectural.
+- Shape broad searches and log reads before consuming raw output. Use focused
+  paths, `rg -l`, `rg --count`, `sed -n`, `head`, `tail`, or
+  `qcold guard -- <command>...` when a command can dump large output.
 - Update docs in the same task when behavior, command contracts, environment
   variables, or operator expectations change.
 - Do not invent validation, closeout, Telegram delivery, or deployment status.

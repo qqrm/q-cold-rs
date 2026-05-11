@@ -15,8 +15,13 @@ pub trait RepoAdapter {
 
 pub trait TaskAdapter {
     fn inspect(&self, topic: Option<&str>) -> Result<u8>;
-    fn open(&self, task_slug: &str, profile: Option<&str>, task_sequence: Option<u64>)
-        -> Result<u8>;
+    fn open(
+        &self,
+        task_slug: &str,
+        profile: Option<&str>,
+        task_sequence: Option<u64>,
+        task_prompt: Option<&str>,
+    ) -> Result<u8>;
     fn enter(&self) -> Result<u8>;
     fn list(&self) -> Result<u8>;
     fn terminal_check(&self) -> Result<u8>;
@@ -170,11 +175,12 @@ impl TaskAdapter for XtaskProcessAdapter {
         task_slug: &str,
         profile: Option<&str>,
         task_sequence: Option<u64>,
+        task_prompt: Option<&str>,
     ) -> Result<u8> {
         let mut args = os_args(&["task", "open", task_slug]);
         push_optional(&mut args, profile);
         let mut command = self.command(&args)?;
-        apply_task_sequence_env(&mut command, task_sequence);
+        apply_task_open_env(&mut command, task_sequence, task_prompt);
         self.run_command(command, &args)
     }
 
@@ -306,9 +312,17 @@ fn display_args(args: &[OsString]) -> String {
         .join(" ")
 }
 
-fn apply_task_sequence_env(command: &mut Command, task_sequence: Option<u64>) {
+fn apply_task_open_env(
+    command: &mut Command,
+    task_sequence: Option<u64>,
+    task_prompt: Option<&str>,
+) {
     if let Some(sequence) = task_sequence {
         command.env("QCOLD_TASK_SEQUENCE", sequence.to_string());
+    }
+    if let Some(prompt) = task_prompt.map(str::trim).filter(|value| !value.is_empty()) {
+        command.env("QCOLD_TASKFLOW_PROMPT", prompt);
+        command.env("QCOLD_TASK_PROMPT_SNIPPET", crate::prompt::prompt_snippet(prompt));
     }
 }
 
@@ -322,9 +336,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn task_open_passes_qcold_sequence_to_adapter_process() {
+    fn task_open_passes_qcold_sequence_and_prompt_to_adapter_process() {
         let mut command = Command::new("cargo");
-        apply_task_sequence_env(&mut command, Some(42));
+        apply_task_open_env(&mut command, Some(42), Some("first line\nsecond line"));
 
         let sequence = command
             .get_envs()
@@ -337,8 +351,32 @@ mod tests {
                 })
             })
             .unwrap();
+        let prompt = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "QCOLD_TASKFLOW_PROMPT").then(|| {
+                    value
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+            })
+            .unwrap();
+        let snippet = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "QCOLD_TASK_PROMPT_SNIPPET").then(|| {
+                    value
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+            })
+            .unwrap();
 
         assert_eq!(sequence, "42");
+        assert_eq!(prompt, "first line\nsecond line");
+        assert_eq!(snippet, "first line\nsecond line");
     }
 }
 

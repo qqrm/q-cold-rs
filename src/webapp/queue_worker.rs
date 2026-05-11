@@ -893,6 +893,7 @@ fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
 
 fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let root = item.repo_root.as_deref().unwrap_or("<repo>");
+    let prompt_snippet = prompt::prompt_snippet(&item.prompt);
     let mut packet = String::new();
     let _ = writeln!(packet, "Q-COLD_TASK_PACKET");
     let _ = writeln!(packet, "repo_root: {root}");
@@ -914,6 +915,23 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     );
     let _ = writeln!(packet, "blocker_boundary:");
     let _ = writeln!(packet, "  pause_or_blocked_only_for: business decision or external resource");
+    let _ = writeln!(packet, "output_guard:");
+    let _ = writeln!(
+        packet,
+        "  - shape broad searches first with rg -l, rg --count, wc, git diff --stat, or head/tail"
+    );
+    let _ = writeln!(
+        packet,
+        "  - for risky commands, run qcold guard -- <command> before reading raw output"
+    );
+    let _ = writeln!(
+        packet,
+        "  - if output is blocked or too large, rerun a narrower query or inspect a focused slice"
+    );
+    let _ = writeln!(packet, "operator_request_snippet: |");
+    for line in prompt_snippet.lines() {
+        let _ = writeln!(packet, "  {line}");
+    }
     let _ = writeln!(packet, "operator_request: |");
     for line in item.prompt.trim().lines() {
         let _ = writeln!(packet, "  {line}");

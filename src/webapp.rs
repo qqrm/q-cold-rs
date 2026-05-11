@@ -29,7 +29,7 @@ use futures_util::stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{agents, repository, state, status};
+use crate::{agents, prompt, repository, state, status};
 
 const DAEMON_STARTUP_CHECKS: usize = 10;
 const DAEMON_STARTUP_CHECK_INTERVAL: Duration = Duration::from_millis(100);
@@ -540,4 +540,5 @@ include!("webapp/models_assets.rs");
 
 include!("webapp/tests.rs");
 include!("webapp/tests_assets.rs");
+include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_taskflow.rs");

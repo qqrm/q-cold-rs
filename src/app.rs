@@ -1,5 +1,6 @@
 mod adapter;
 mod agents;
+mod prompt;
 mod repo_bundle;
 mod repository;
 mod state;
@@ -12,7 +13,7 @@ mod webapp;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
@@ -46,6 +47,7 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold agent start --track audit -- codex exec \"inspect repo\"\n",
     "  qcold telegram poll\n",
     "  qcold bundle\n",
+    "  qcold guard -- rg -n \"needle\" src\n",
     "  qcold task inspect runtime-audit\n",
     "  qcold task open my-task\n",
     "  qcold task enter\n",
@@ -86,6 +88,7 @@ fn run() -> Result<u8> {
         TopLevel::Verify(args) => adapter_for_cwd_sensitive_repo()?.verify(&args.args),
         TopLevel::Compat(args) => adapter_for_cwd_sensitive_repo()?.compat(&args.args),
         TopLevel::Ffi(args) => adapter_for_cwd_sensitive_repo()?.ffi(&args.args),
+        TopLevel::Guard(args) => guard_command(&args),
     }
 }
 
@@ -143,6 +146,8 @@ enum TopLevel {
     Verify(PassthroughArgs),
     Compat(PassthroughArgs),
     Ffi(PassthroughArgs),
+    #[command(about = "Run a command and suppress oversized output")]
+    Guard(GuardArgs),
 }
 
 #[derive(Args)]
@@ -150,6 +155,16 @@ enum TopLevel {
 struct PassthroughArgs {
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     args: Vec<OsString>,
+}
+
+#[derive(Args)]
+struct GuardArgs {
+    #[arg(long, default_value_t = 16_384)]
+    max_bytes: usize,
+    #[arg(long, default_value_t = 400)]
+    max_lines: usize,
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+    command: Vec<OsString>,
 }
 
 #[derive(Args)]
@@ -301,7 +316,12 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         }
         TaskSubcommand::Open { task_slug, profile } => {
             let record = record_task_open(&task_slug, profile.as_deref())?;
-            adapter_for_active_repo()?.open(&task_slug, profile.as_deref(), record.sequence)
+            adapter_for_active_repo()?.open(
+                &task_slug,
+                profile.as_deref(),
+                record.sequence,
+                task_prompt_from_record(&record).as_deref(),
+            )
         }
         TaskSubcommand::Enter => adapter_for_cwd_sensitive_repo()?.enter(),
         TaskSubcommand::List => adapter_for_active_repo()?.list(),
@@ -452,11 +472,21 @@ fn task_record_from_create_args(args: TaskRecordCreateArgs) -> state::TaskRecord
 fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<state::TaskRecordRow> {
     let repo = repository::for_adapter_context(AdapterContext::ActiveRepository)?;
     let title = title_from_slug(task_slug);
-    let description = format!("Open managed task-flow work for {title}.");
+    let original_prompt = env_prompt("QCOLD_TASKFLOW_PROMPT");
+    let prompt_snippet = original_prompt.as_deref().map(prompt::prompt_snippet);
+    let description = prompt_snippet
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .map_or_else(
+            || format!("Open managed task-flow work for {title}."),
+            str::to_string,
+        );
     let metadata = serde_json::json!({
         "task_slug": task_slug,
         "profile": profile,
-        "kind": "managed-task-flow"
+        "kind": "managed-task-flow",
+        "operator_prompt": original_prompt,
+        "operator_prompt_snippet": prompt_snippet,
     });
     let record = state::new_task_record(
         format!("task/{task_slug}"),
@@ -472,6 +502,22 @@ fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<state::Tas
         Some(metadata.to_string()),
     );
     state::upsert_task_record(&record)
+}
+
+fn env_prompt(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn task_prompt_from_record(record: &state::TaskRecordRow) -> Option<String> {
+    let metadata = serde_json::from_str::<Value>(record.metadata_json.as_deref()?).ok()?;
+    metadata
+        .get("operator_prompt")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty())
 }
 
 pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
@@ -525,3 +571,39 @@ include!("app/task_flow_sync.rs");
 include!("app/codex_sessions.rs");
 include!("app/rendering.rs");
 include!("app/tests.rs");
+
+fn guard_command(args: &GuardArgs) -> Result<u8> {
+    let Some((program, command_args)) = args.command.split_first() else {
+        anyhow::bail!("guard requires a command");
+    };
+    let output = Command::new(program)
+        .args(command_args)
+        .output()
+        .with_context(|| format!("failed to run guarded command {}", program.to_string_lossy()))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let output_text = [stdout.trim_end(), stderr.trim_end()]
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let bytes = output_text.len();
+    let lines = output_text.lines().count();
+    if bytes > args.max_bytes || lines > args.max_lines {
+        eprintln!(
+            "qcold-guard\tstatus=blocked\tbytes={bytes}\tlines={lines}\tmax_bytes={}\
+             \tmax_lines={}\tmessage=output too large; rerun with a narrower command or write raw \
+             output to a task-local file and inspect a focused slice",
+            args.max_bytes,
+            args.max_lines,
+        );
+        return Ok(2);
+    }
+    if !stdout.is_empty() {
+        print!("{stdout}");
+    }
+    if !stderr.is_empty() {
+        eprint!("{stderr}");
+    }
+    Ok(u8::try_from(output.status.code().unwrap_or(1)).unwrap_or(1))
+}
