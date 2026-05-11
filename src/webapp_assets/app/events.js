@@ -1,5 +1,5 @@
         if (shouldFollowTail) {
-          output.scrollTop = output.scrollHeight;
+          scrollTerminalToTail(output);
         } else {
           output.scrollTop = Math.min(previousScrollTop, output.scrollHeight);
         }
@@ -11,6 +11,19 @@
 
     function isTerminalAtTail(output) {
       return output.scrollHeight - output.scrollTop - output.clientHeight <= 24;
+    }
+
+    function terminalShouldFollowTail(target, output) {
+      if (!terminalTailLocks.has(target)) terminalTailLocks.set(target, true);
+      return terminalTailLocks.get(target) || isTerminalAtTail(output);
+    }
+
+    function scrollTerminalToTail(output) {
+      const scroll = () => {
+        output.scrollTop = output.scrollHeight;
+      };
+      scroll();
+      window.requestAnimationFrame(scroll);
     }
 
     function terminalKind(terminal) {

@@ -528,6 +528,7 @@
       Array.from(terminalList.querySelectorAll('.terminal-card')).forEach((node) => {
         if (!targets.has(node.dataset.target)) {
           terminalOutputCache.delete(node.dataset.target);
+          terminalTailLocks.delete(node.dataset.target);
           node.remove();
         }
       });
@@ -574,6 +575,9 @@
       output.className = 'terminal-output';
       output.tabIndex = 0;
       output.addEventListener('keydown', (event) => handleTerminalKeyboard(event, terminal.target));
+      output.addEventListener('scroll', () => {
+        terminalTailLocks.set(terminal.target, isTerminalAtTail(output));
+      });
       const compose = terminalComposer(terminal);
       node.append(head, output, compose);
       return node;
@@ -615,6 +619,6 @@
       const nextOutput = terminal.output || '';
       head.querySelector('[data-role="activity"]').replaceChildren(terminalActivityBadge(node, terminal, nextOutput));
       if (terminalOutputCache.get(terminal.target) !== nextOutput) {
-        const shouldFollowTail = !terminalOutputCache.has(terminal.target) || isTerminalAtTail(output);
+        const shouldFollowTail = terminalShouldFollowTail(terminal.target, output);
         const previousScrollTop = output.scrollTop;
         renderAnsi(output, nextOutput);

@@ -31,6 +31,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let eventSource = null;
     const terminalDrafts = new Map();
     const terminalOutputCache = new Map();
+    const terminalTailLocks = new Map();
     const viewButtons = Array.from(document.querySelectorAll('.nav button'));
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
     const queueStorageKey = 'qcold-task-queue-v4';
