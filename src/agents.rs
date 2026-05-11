@@ -100,8 +100,16 @@ pub struct AgentArgs {
 enum AgentCommand {
     #[command(about = "Start an agent process under Q-COLD tracking")]
     Start(StartArgs),
+    #[command(about = "Attach to a tracked terminal agent")]
+    Attach(AttachArgs),
     #[command(about = "List tracked agent processes")]
     List,
+}
+
+#[derive(Args)]
+struct AttachArgs {
+    #[arg(help = "Agent id, terminal target, session name, or terminal display name")]
+    selector: String,
 }
 
 #[derive(Args)]
@@ -138,6 +146,7 @@ pub fn run(args: AgentArgs) -> Result<u8> {
                 attach_terminal(&record)?;
             }
         }
+        AgentCommand::Attach(args) => attach_tracked_terminal(&args.selector)?,
         AgentCommand::List => print!("{}", snapshot()?),
     }
     Ok(0)

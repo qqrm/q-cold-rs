@@ -81,6 +81,94 @@ fn render_record_with_state(
     line
 }
 
+fn attach_tracked_terminal(selector: &str) -> Result<()> {
+    let state = AgentState::load()?;
+    let metadata = terminal_metadata_by_target().unwrap_or_default();
+    let matches = terminal_attach_matches(&state.records, &metadata, selector);
+    match matches.as_slice() {
+        [record] => attach_terminal(record),
+        [] => bail!(
+            "no attachable terminal agent matches {selector:?}\n{}",
+            terminal_attach_candidates(&state.records, &metadata)
+        ),
+        records => bail!(
+            "terminal selector {selector:?} is ambiguous; matched {}\n{}",
+            records
+                .iter()
+                .map(|record| record.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            terminal_attach_candidates(&state.records, &metadata)
+        ),
+    }
+}
+
+fn terminal_attach_matches<'a>(
+    records: &'a [AgentRecord],
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+    selector: &str,
+) -> Vec<&'a AgentRecord> {
+    let selector = selector.trim();
+    let normalized = normalize_display_name(selector);
+    let mut matches = Vec::new();
+    for record in records {
+        let exact_match = terminal_attach_keys(record, metadata)
+            .iter()
+            .any(|key| key == selector);
+        let name_match = terminal_display_name(record, metadata)
+            .is_some_and(|name| normalize_display_name(name) == normalized);
+        if exact_match || name_match {
+            matches.push(record);
+        }
+    }
+    matches
+}
+
+fn terminal_attach_keys(
+    record: &AgentRecord,
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+) -> Vec<String> {
+    let mut keys = vec![record.id.clone()];
+    match terminal_target(record) {
+        Some(TerminalTarget::Tmux { session }) => {
+            keys.push(session.clone());
+            keys.push(format!("{session}:0.0"));
+        }
+        Some(TerminalTarget::Zellij { session, pane }) => {
+            keys.push(session.clone());
+            keys.push(format!("zellij:{session}:{pane}"));
+        }
+        None => return Vec::new(),
+    }
+    if let Some(name) = terminal_display_name(record, metadata) {
+        keys.push(name.to_string());
+    }
+    keys
+}
+
+fn terminal_attach_candidates(
+    records: &[AgentRecord],
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+) -> String {
+    let mut candidates = records
+        .iter()
+        .filter_map(|record| {
+            let target = terminal_target_key(record)?;
+            let name = terminal_display_name(record, metadata).unwrap_or("-");
+            Some(format!(
+                "  {} name={} target={} attach=qcold agent attach {}",
+                record.id, name, target, record.id
+            ))
+        })
+        .collect::<Vec<_>>();
+    if candidates.is_empty() {
+        "attachable agents: none".to_string()
+    } else {
+        candidates.sort();
+        format!("attachable agents:\n{}", candidates.join("\n"))
+    }
+}
+
 fn assign_terminal_display_name(record: &AgentRecord) -> Result<()> {
     let Some(target) = terminal_target_key(record) else {
         return Ok(());
@@ -532,6 +620,57 @@ mod tests {
         );
 
         assert!(render_record(&record, &metadata).contains("\tname=Socrates\t"));
+    }
+
+    #[test]
+    fn terminal_attach_selector_matches_id_target_session_and_name() {
+        let record = AgentRecord {
+            id: "c1-1234".to_string(),
+            track: "c1".to_string(),
+            pid: std::process::id(),
+            started_at: 456,
+            command: vec![
+                "tmux".to_string(),
+                "new-session".to_string(),
+                "-s".to_string(),
+                "qcold-c1-1234".to_string(),
+                "c1 \"inspect\"".to_string(),
+            ],
+            cwd: None,
+        };
+        let records = vec![record];
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "qcold-c1-1234:0.0".to_string(),
+            state::TerminalMetadataRow {
+                target: "qcold-c1-1234:0.0".to_string(),
+                name: Some("Socrates".to_string()),
+                scope: None,
+                updated_at: 123,
+            },
+        );
+
+        for selector in ["c1-1234", "qcold-c1-1234", "qcold-c1-1234:0.0", "socrates"] {
+            let matches = terminal_attach_matches(&records, &metadata, selector);
+            assert_eq!(matches.len(), 1, "selector={selector}");
+            assert_eq!(matches[0].id, "c1-1234");
+        }
+    }
+
+    #[test]
+    fn terminal_attach_selector_ignores_non_terminal_agents() {
+        let records = vec![AgentRecord {
+            id: "c1-plain".to_string(),
+            track: "c1".to_string(),
+            pid: std::process::id(),
+            started_at: 456,
+            command: vec!["c1".to_string(), "inspect".to_string()],
+            cwd: None,
+        }];
+
+        let matches = terminal_attach_matches(&records, &HashMap::new(), "c1-plain");
+
+        assert!(matches.is_empty());
     }
 
     #[test]

@@ -46,6 +46,7 @@ repo-local code owns it.
 - `qcold task-record close <task-id> [--outcome success|blocked|failed]`
 - `qcold task-record delete <task-id>`
 - `qcold agent list`
+- `qcold agent attach <agent-id|terminal-target|session|name>`
 - `qcold agent start --track <track> -- <command>...`
 - `qcold telegram poll`
 - `qcold bundle`
@@ -63,6 +64,7 @@ repo-local code owns it.
 - `cargo qcold task-record close <task-id> [--outcome success|blocked|failed]`
 - `cargo qcold task-record delete <task-id>`
 - `cargo qcold agent list`
+- `cargo qcold agent attach <agent-id|terminal-target|session|name>`
 - `cargo qcold agent start --track <track> -- <command>...`
 - `cargo qcold telegram poll`
 - `cargo qcold task inspect [topic]`

@@ -311,6 +311,9 @@ processes but are not safely attachable after the fact. Start agents with
 the same session in the local terminal and in the Q-COLD Terminals view. For a
 local `c2` wrapper, use the command shape
 `qcold agent start --terminal --attach --track c2 -- c2 "<prompt>"`.
+For an agent that was started from the web queue, run
+`qcold agent list` to see its generated name and target, then attach from a
+local terminal with `qcold agent attach <agent-id|target|session|name>`.
 Q-COLD starts Codex-like agent commands (`c1`, `cc1`, `c2`, `cc2`, `codex`,
 and `codexN`) from an explicit launch directory instead of inheriting the
 daemon cwd. If the launch directory is not already a managed task worktree,
