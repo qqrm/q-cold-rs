@@ -659,6 +659,60 @@ fn closeout_from_managed_worktree_uses_cwd_before_registered_active_primary() {
 }
 
 #[test]
+fn closeout_from_managed_worktree_rejects_inherited_root_from_other_primary() {
+    let fixture = TaskRepoFixture::new();
+    let other = TaskRepoFixture::new();
+    let worktree = fixture.create_task_worktree("wrong-primary-env");
+
+    let closeout = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .current_dir(&worktree)
+        .args([
+            "task",
+            "closeout",
+            "--outcome",
+            "blocked",
+            "--reason",
+            "should not reach adapter",
+        ])
+        .env("QCOLD_REPO_ROOT", &other.primary)
+        .env_remove("QCOLD_XTASK_MANIFEST")
+        .env_remove("QCOLD_TASKFLOW_CONTAINER_ROOT")
+        .env_remove("QCOLD_TASKFLOW_CONTEXT")
+        .env_remove("QCOLD_TASKFLOW_PRIMARY_REPO_PATH")
+        .env_remove("QCOLD_TASKFLOW_TASK_ID")
+        .env_remove("QCOLD_TASKFLOW_TASK_WORKTREE")
+        .env_remove("QCOLD_TASKFLOW_TASK_BRANCH")
+        .env_remove("QCOLD_TASKFLOW_DEVCONTAINER_ID")
+        .env_remove("QCOLD_DEVCONTAINER_PROFILE")
+        .env_remove("QCOLD_TASKFLOW_AGENT_RUNNER")
+        .env_remove("QCOLD_TASKFLOW_AGENT_ID")
+        .env_remove("QCOLD_TASKFLOW_AGENT_MODEL")
+        .env_remove("QCOLD_TASKFLOW_AGENT_STATUS")
+        .env_remove("QCOLD_TASKFLOW_AGENT_REMAINING_CAPACITY")
+        .env_remove("QCOLD_TASKFLOW_USAGE_INPUT_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_CACHED_INPUT_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_OUTPUT_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_TOTAL_TOKENS")
+        .env_remove("QCOLD_TASKFLOW_USAGE_CREDITS")
+        .assert()
+        .code(1)
+        .stderr(contains("repository target mismatch"))
+        .stderr(contains(format!(
+            "cwd git root is {}",
+            worktree.canonicalize().unwrap().display()
+        )))
+        .stderr(contains(format!(
+            "resolved target root is {}",
+            other.primary.canonicalize().unwrap().display()
+        )))
+        .stderr(contains("source is QCOLD_REPO_ROOT="));
+    let stdout = String::from_utf8_lossy(&closeout.get_output().stdout);
+    assert!(parse_value("BUNDLE_PATH", &stdout).is_none());
+    assert!(worktree.exists());
+}
+
+#[test]
 fn closeout_from_task_devcontainer_fails_before_session_start_and_does_not_bundle() {
     let fixture = TaskRepoFixture::new();
     let worktree = fixture.create_task_worktree("wrong-runtime");

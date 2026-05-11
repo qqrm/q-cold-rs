@@ -164,11 +164,13 @@ fn resolve_unchecked(context: AdapterContext) -> Result<ResolvedRepository> {
             });
         }
         if matches!(context, AdapterContext::CwdManagedWorktree) {
-            if let Some(root) = cwd_managed_worktree_root()? {
-                return Ok(ResolvedRepository {
-                    repo: config_for_managed_worktree(&root)?,
-                    source: format!("cwd managed worktree {}", root.display()),
-                });
+            if let Some(cwd_root) = cwd_managed_worktree_root()? {
+                if primary_repo_path(&cwd_root)?.as_deref() == Some(root.as_path()) {
+                    return Ok(ResolvedRepository {
+                        repo: config_for_managed_worktree(&cwd_root)?,
+                        source: format!("cwd managed worktree {}", cwd_root.display()),
+                    });
+                }
             }
         }
         return Ok(ResolvedRepository {

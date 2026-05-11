@@ -232,6 +232,27 @@ mod tests {
     }
 
     #[test]
+    fn queue_launch_failure_retry_reports_agent_cleanup() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+
+        match retry_after_queue_agent_launch_failure(
+            "missing-agent",
+            "agent terminal did not appear",
+        ) {
+            QueueItemOutcome::Failed { message, retryable } => {
+                assert_eq!(
+                    message,
+                    "agent terminal did not appear; agent already stopped"
+                );
+                assert!(retryable);
+            }
+            _ => panic!("expected failed outcome"),
+        }
+    }
+
+    #[test]
     fn stopped_queue_item_is_resumable_not_terminal() {
         assert!(!queue_item_terminal("stopped"));
         assert!(!queue_item_terminal("paused"));
