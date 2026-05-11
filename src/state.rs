@@ -463,6 +463,19 @@ pub fn update_web_queue_item(
     Ok(())
 }
 
+pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_items
+             set agent_id = ?3, updated_at_unix = ?4
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id, agent_id, unix_now()],
+        )
+        .context("failed to update web queue item agent")?;
+    Ok(())
+}
+
 pub fn delete_web_queue_item(run_id: &str, item_id: &str) -> Result<QueueItemRow> {
     delete_web_queue_item_if_exists(run_id, item_id)?
         .with_context(|| format!("unknown queue item: {item_id}"))
