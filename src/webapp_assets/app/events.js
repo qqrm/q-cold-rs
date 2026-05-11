@@ -126,15 +126,52 @@
     }
 
     const terminalSlashCommands = [
-      ['/new', 'New chat'],
-      ['/compact', 'Compact context'],
-      ['/model', 'Model picker'],
-      ['/status', 'Session status'],
-      ['/diff', 'Current diff'],
-      ['/review', 'Review diff'],
-      ['/init', 'Create guidance'],
-      ['/help', 'Help menu'],
-      ['/q', 'Quit'],
+      ['model', 'choose what model and reasoning effort to use'],
+      ['fast', 'toggle Fast mode to enable fastest inference with increased plan usage'],
+      ['ide', 'include current selection, open files, and other context from your IDE'],
+      ['permissions', 'choose what Codex is allowed to do'],
+      ['keymap', 'remap TUI shortcuts'],
+      ['vim', 'toggle Vim mode for the composer'],
+      ['setup-default-sandbox', 'set up elevated agent sandbox'],
+      ['sandbox-add-read-dir', 'let sandbox read a directory: /sandbox-add-read-dir <absolute_path>'],
+      ['experimental', 'toggle experimental features'],
+      ['approve', 'approve one retry of a recent auto-review denial'],
+      ['memories', 'configure memory use and generation'],
+      ['skills', 'use skills to improve how Codex performs specific tasks'],
+      ['hooks', 'view and manage lifecycle hooks'],
+      ['review', 'review my current changes and find issues'],
+      ['rename', 'rename the current thread'],
+      ['new', 'start a new chat during a conversation'],
+      ['resume', 'resume a saved chat'],
+      ['fork', 'fork the current chat'],
+      ['init', 'create an AGENTS.md file with instructions for Codex'],
+      ['compact', 'summarize conversation to prevent hitting the context limit'],
+      ['plan', 'switch to Plan mode'],
+      ['goal', 'set or view the goal for a long-running task'],
+      ['collab', 'change collaboration mode (experimental)'],
+      ['agent', 'switch the active agent thread'],
+      ['side', 'start a side conversation in an ephemeral fork'],
+      ['copy', 'copy last response as markdown'],
+      ['raw', 'toggle raw scrollback mode for copy-friendly terminal selection'],
+      ['diff', 'show git diff (including untracked files)'],
+      ['mention', 'mention a file'],
+      ['status', 'show current session configuration and token usage'],
+      ['title', 'configure which items appear in the terminal title'],
+      ['statusline', 'configure which items appear in the status line'],
+      ['theme', 'choose a syntax highlighting theme'],
+      ['mcp', 'list configured MCP tools; use /mcp verbose for details'],
+      ['plugins', 'browse plugins'],
+      ['logout', 'log out of Codex'],
+      ['quit', 'exit Codex', true],
+      ['exit', 'exit Codex'],
+      ['feedback', 'send logs to maintainers'],
+      ['ps', 'list background terminals'],
+      ['stop', 'stop all background terminals'],
+      ['clear', 'clear the terminal and start a new chat'],
+      ['personality', 'choose a communication style for Codex'],
+      ['realtime', 'toggle realtime voice mode (experimental)'],
+      ['settings', 'configure realtime microphone/speaker'],
+      ['subagents', 'switch the active agent thread'],
     ];
     const terminalSlashMenus = new WeakMap();
 
@@ -171,12 +208,7 @@
         closeTerminalSlashMenu(input);
         return;
       }
-      state.matches = terminalSlashCommands.filter(([command, label]) => {
-        const needle = query.trim();
-        return !needle
-          || command.slice(1).startsWith(needle)
-          || label.toLowerCase().includes(needle);
-      });
+      state.matches = terminalSlashCommandMatches(query.trim());
       if (!state.matches.length) {
         closeTerminalSlashMenu(input);
         return;
@@ -197,7 +229,7 @@
         item.addEventListener('mousedown', (event) => event.preventDefault());
         item.addEventListener('click', () => selectTerminalSlashCommand(input, index));
         const name = document.createElement('strong');
-        name.textContent = command;
+        name.textContent = `/${command}`;
         const hint = document.createElement('span');
         hint.textContent = label;
         item.append(name, hint);
@@ -219,7 +251,7 @@
       const state = terminalSlashMenus.get(input);
       const match = state?.matches[index];
       if (!state || !match) return;
-      input.value = match[0];
+      input.value = `/${match[0]}`;
       state.onSelect(input.value);
       closeTerminalSlashMenu(input);
       input.focus();
@@ -246,6 +278,19 @@
         return true;
       }
       return false;
+    }
+
+    function terminalSlashCommandMatches(query) {
+      if (!query) return terminalSlashCommands.filter(([, , alias]) => !alias);
+      const exact = [];
+      const prefix = [];
+      const needle = query.toLowerCase();
+      terminalSlashCommands.forEach((command) => {
+        const name = command[0].toLowerCase();
+        if (name === needle) exact.push(command);
+        else if (name.startsWith(needle)) prefix.push(command);
+      });
+      return exact.concat(prefix);
     }
 
     function messageNode(entry) {
