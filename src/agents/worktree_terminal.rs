@@ -140,6 +140,7 @@ fn start_tmux_terminal_agent(
     }
     set_tmux_option(&session, "remain-on-exit", "off")?;
     set_tmux_option(&session, "mouse", "off")?;
+    set_tmux_option(&session, "history-limit", "10000")?;
     let pipe_command = format!("cat >> {}", shell_quote(&stdout_log_path.display().to_string()));
     let status = Command::new("tmux")
         .args(["pipe-pane", "-o", "-t", &target, &pipe_command])

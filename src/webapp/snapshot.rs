@@ -1,3 +1,5 @@
+const TERMINAL_CAPTURE_LINES: usize = 2_000;
+
 fn state_dir() -> Result<PathBuf> {
     if let Ok(path) = env::var("QCOLD_STATE_DIR") {
         if !path.trim().is_empty() {
@@ -427,6 +429,7 @@ fn capture_zellij_pane(session: &str, pane: &str) -> Result<String> {
             "action",
             "dump-screen",
             "--ansi",
+            "--full",
             "--pane-id",
             pane,
         ])
@@ -435,9 +438,7 @@ fn capture_zellij_pane(session: &str, pane: &str) -> Result<String> {
     if !output.status.success() {
         bail!("zellij dump-screen failed with {}", output.status);
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string())
+    Ok(trim_terminal_scrollback(&String::from_utf8_lossy(&output.stdout)))
 }
 
 fn zellij_session_pid(session: &str) -> Result<u32> {
@@ -462,16 +463,41 @@ fn zellij_session_pid(session: &str) -> Result<u32> {
 }
 
 fn capture_terminal_pane(target: &str) -> Result<String> {
+    let capture_start = terminal_capture_start_arg();
     let output = Command::new("tmux")
-        .args(["capture-pane", "-p", "-e", "-J", "-S", "-160", "-t", target])
+        .args([
+            "capture-pane",
+            "-p",
+            "-e",
+            "-J",
+            "-S",
+            &capture_start,
+            "-t",
+            target,
+        ])
         .output()
         .with_context(|| format!("failed to capture tmux pane {target}"))?;
     if !output.status.success() {
         bail!("tmux capture-pane failed with {}", output.status);
     }
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .trim_end()
-        .to_string())
+    Ok(trim_terminal_scrollback(&String::from_utf8_lossy(&output.stdout)))
+}
+
+fn terminal_capture_start_arg() -> String {
+    format!("-{TERMINAL_CAPTURE_LINES}")
+}
+
+fn trim_terminal_scrollback(output: &str) -> String {
+    let trimmed = output.trim_end();
+    let line_count = trimmed.lines().count();
+    if line_count <= TERMINAL_CAPTURE_LINES {
+        return trimmed.to_string();
+    }
+    trimmed
+        .lines()
+        .skip(line_count - TERMINAL_CAPTURE_LINES)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn discover_host_agents() -> HostAgentSnapshot {

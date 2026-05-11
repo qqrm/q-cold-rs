@@ -720,6 +720,28 @@ mod tests {
     }
 
     #[test]
+    fn terminal_capture_uses_deeper_scrollback_window() {
+        assert_eq!(terminal_capture_start_arg(), "-2000");
+    }
+
+    #[test]
+    fn terminal_scrollback_trim_keeps_recent_lines() {
+        let output = (0..=TERMINAL_CAPTURE_LINES + 3)
+            .map(|index| format!("line-{index}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let trimmed = trim_terminal_scrollback(&format!("{output}\n\n"));
+
+        let lines = trimmed.lines().collect::<Vec<_>>();
+        let expected_last = format!("line-{}", TERMINAL_CAPTURE_LINES + 3);
+        assert_eq!(lines.len(), TERMINAL_CAPTURE_LINES);
+        assert_eq!(lines.first(), Some(&"line-4"));
+        assert_eq!(lines.last().copied(), Some(expected_last.as_str()));
+        assert!(!trimmed.ends_with('\n'));
+    }
+
+    #[test]
     fn terminal_command_summary_uses_wrapped_agent_prompt() {
         assert_eq!(
             terminal_command_summary("cc2 \"refactor terminal naming\"").as_deref(),

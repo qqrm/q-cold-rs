@@ -282,12 +282,14 @@ Exited Q-COLD agent records remain available through the CLI registry surface,
 but the dashboard omits them as historical noise. Task-flow helper programs
 such as `xtask` are not counted as agents.
 The Terminals view exposes attachable terminal panes for agent programs,
-captures recent pane output with ANSI color/style attributes, sends prompt
-composer text through backend-native paste plus a submit key, and can forward
-focused terminal-output keystrokes as terminal input. Output refreshes keep
-following the terminal tail only while the pane is already scrolled near the
-bottom; if the operator scrolls up to read history, new output preserves that
-reading position. Single-line slash
+captures the recent pane scrollback with ANSI color/style attributes, sends
+prompt composer text through backend-native paste plus a submit key, and can
+forward focused terminal-output keystrokes as terminal input. Browser snapshots
+keep roughly the last 2,000 terminal lines, while new Q-COLD tmux sessions keep
+a deeper local scrollback for future snapshots. Output refreshes keep following
+the terminal tail only while the pane is already scrolled near the bottom; if
+the operator scrolls up to read history, new output preserves that reading
+position. Single-line slash
 commands are sent as literal key input instead of bracketed paste so Codex TUI
 slash commands can open normally, and empty composer history arrows are
 forwarded to the underlying pane. The view gives Q-COLD-started terminals short
