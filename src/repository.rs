@@ -240,6 +240,9 @@ fn ensure_cwd_matches_resolved_repo(
         AdapterContext::ActiveRepository if cwd_primary.as_deref() == Some(repo.root.as_path()) => {
             return Ok(());
         }
+        AdapterContext::ActiveRepository if is_agent_worktree_for_primary(&cwd_root, &repo.root) => {
+            return Ok(());
+        }
         AdapterContext::CwdManagedWorktree if repo.root == cwd_root => return Ok(()),
         _ => {}
     }
@@ -294,6 +297,20 @@ fn cwd_managed_worktree_root() -> Result<Option<PathBuf>> {
         Ok(root) if root.join(".task/task.env").is_file() => Ok(Some(canonical_root(&root)?)),
         Ok(_) | Err(_) => Ok(None),
     }
+}
+
+fn is_agent_worktree_for_primary(root: &Path, primary: &Path) -> bool {
+    let Some(parent) = primary.parent() else {
+        return false;
+    };
+    let Some(name) = primary.file_name() else {
+        return false;
+    };
+    let agents_root = parent.join("WT").join(name).join("agents");
+    let Ok(relative) = root.strip_prefix(&agents_root) else {
+        return false;
+    };
+    relative.components().count() == 1
 }
 
 fn config_for_managed_worktree(root: &Path) -> Result<RepositoryConfig> {

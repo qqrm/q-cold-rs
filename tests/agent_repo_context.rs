@@ -115,6 +115,72 @@ fn mutating_adapter_command_rejects_inherited_repo_root_from_another_checkout() 
 }
 
 #[test]
+fn active_repo_commands_accept_direct_agent_worktree_cwd() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let primary = temp.path().join("qcold");
+    let agent_worktree = temp.path().join("WT/qcold/agents/agent-c1-123");
+
+    seed_git_repo(&primary);
+    seed_git_repo(&agent_worktree);
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .arg("status")
+        .current_dir(&agent_worktree)
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env("QCOLD_REPO_ROOT", &primary)
+        .env("QCOLD_AGENT_WORKTREE", &agent_worktree)
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .stdout(contains(format!(
+            "primary\t{}",
+            primary.canonicalize().unwrap().display()
+        )));
+}
+
+#[test]
+fn registered_active_repo_commands_accept_direct_agent_worktree_cwd() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let primary = temp.path().join("qcold");
+    let agent_worktree = temp.path().join("WT/qcold/agents/agent-c1-123");
+
+    seed_git_repo(&primary);
+    seed_git_repo(&agent_worktree);
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args([
+            "repo",
+            "add",
+            "qcold",
+            &primary.display().to_string(),
+            "--set-active",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .arg("status")
+        .current_dir(&agent_worktree)
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .stdout(contains(format!(
+            "primary\t{}",
+            primary.canonicalize().unwrap().display()
+        )));
+}
+
+#[test]
 fn mutating_adapter_command_rejects_active_repo_from_another_checkout() {
     let temp = tempdir().unwrap();
     let state_dir = temp.path().join("state");

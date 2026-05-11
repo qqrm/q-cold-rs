@@ -182,6 +182,11 @@ dropdown of registered repositories plus one preferred Codex-like command per
 available account (`c1`, `c2`, or `codexN`) with auth/readiness status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
+Direct terminal agents started from a repository through Q-COLD wrappers are
+also valid task entry points. Those agents run from
+`../WT/<repo>/agents/<agent>` worktrees with `QCOLD_REPO_ROOT` pointing at the
+primary checkout, and active-repository commands such as `qcold status` and
+`cargo qcold task open <slug>` continue to target that primary checkout.
 By default, Queue execution remains ordered and starts only the first unfinished
 row. Enabling Graph execution changes the draft into explicit waves from top
 to bottom: Wave 1 runs first, Wave 2 waits for Wave 1, and so on. Cards inside
