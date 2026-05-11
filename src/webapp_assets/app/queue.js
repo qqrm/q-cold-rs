@@ -23,7 +23,7 @@
       const levels = queueGraphLevels();
       const startColumn = document.createElement('section');
       startColumn.className = 'queue-graph-column queue-graph-root';
-      startColumn.innerHTML = '<h3>Runs first</h3><p>Drop a task here to remove its prerequisites.</p>';
+      startColumn.innerHTML = '<h3>Runs first</h3><p>Drop here to remove prerequisites.</p>';
       startColumn.addEventListener('dragover', allowQueueGraphDrop);
       startColumn.addEventListener('drop', (event) => {
         event.preventDefault();
@@ -41,7 +41,9 @@
         column.className = 'queue-graph-column';
         const heading = document.createElement('h3');
         heading.textContent = `Wave ${index + 1}`;
-        column.appendChild(heading);
+        const hint = document.createElement('p');
+        hint.textContent = index === 0 ? 'Starts when run begins.' : 'Starts after earlier waits pass.';
+        column.append(heading, hint);
         items.forEach((item) => column.appendChild(queueGraphCard(item)));
         board.appendChild(column);
       });
@@ -94,7 +96,14 @@
       title.className = 'queue-graph-card-title';
       title.append(badge(queueStatusText(item)), document.createTextNode(` #${index + 1}`));
       const prompt = document.createElement('p');
-      prompt.textContent = item.prompt || '(empty prompt)';
+      prompt.className = 'queue-graph-prompt-preview';
+      prompt.textContent = queuePromptPreview(item.prompt);
+      prompt.title = 'Use Full prompt to inspect the complete text';
+      const direction = document.createElement('p');
+      direction.className = 'queue-graph-card-hint';
+      direction.textContent = queueRun.running
+        ? 'Waiting follows dependency chips.'
+        : 'Drop a prerequisite here.';
       const deps = document.createElement('div');
       deps.className = 'queue-graph-deps';
       if (item.dependsOn?.length) {
@@ -103,7 +112,7 @@
           const chip = queueActionButton(
             `waits #${depIndex + 1}`,
             () => removeQueueDependency(dependency, item.id),
-            'Remove dependency',
+            `Remove wait for #${depIndex + 1}`,
           );
           chip.classList.add('queue-dependency-chip');
           deps.appendChild(chip);
@@ -111,12 +120,68 @@
       } else {
         const chip = document.createElement('span');
         chip.className = 'badge ready';
-        chip.textContent = 'no prerequisites';
+        chip.textContent = 'runs first';
         deps.appendChild(chip);
       }
       const controls = queueItemControls(index);
-      card.append(title, prompt, deps, controls);
+      const fullPrompt = queueActionButton(
+        'Full prompt',
+        () => openQueuePromptModal(item, index),
+        'Show full prompt',
+      );
+      fullPrompt.classList.add('queue-graph-prompt-action');
+      controls.prepend(fullPrompt);
+      card.append(title, prompt, direction, deps, controls);
       return card;
+    }
+
+    function queuePromptPreview(prompt) {
+      const line = String(prompt || '')
+        .split(/\r?\n/)
+        .map((value) => value.trim())
+        .find(Boolean) || '(empty prompt)';
+      return line.length > 72 ? `${line.slice(0, 69)}...` : line;
+    }
+
+    function openQueuePromptModal(item, index) {
+      const modal = queuePromptModal();
+      const title = modal.querySelector('[data-queue-prompt-title]');
+      const prompt = modal.querySelector('[data-queue-prompt-text]');
+      title.textContent = `Task #${index + 1} full prompt`;
+      prompt.textContent = item.prompt || '(empty prompt)';
+      modal.hidden = false;
+    }
+
+    function queuePromptModal() {
+      let modal = document.getElementById('queue-prompt-modal');
+      if (modal) return modal;
+      modal = document.createElement('div');
+      modal.id = 'queue-prompt-modal';
+      modal.className = 'transcript-modal';
+      modal.hidden = true;
+      modal.innerHTML = `
+        <div class="transcript-dialog" role="dialog" aria-modal="true"
+          aria-labelledby="queue-prompt-modal-title">
+          <div class="panel-head">
+            <div>
+              <h2 id="queue-prompt-modal-title" data-queue-prompt-title>Full prompt</h2>
+              <span class="task-path">Queue graph task prompt</span>
+            </div>
+            <button class="secondary" type="button" data-queue-prompt-close>Close</button>
+          </div>
+          <pre class="queue-prompt-full" data-queue-prompt-text></pre>
+        </div>
+      `;
+      modal.addEventListener('click', (event) => {
+        if (event.target === modal || event.target.closest('[data-queue-prompt-close]')) {
+          modal.hidden = true;
+        }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && !modal.hidden) modal.hidden = true;
+      });
+      document.body.appendChild(modal);
+      return modal;
     }
 
     function allowQueueGraphDrop(event) {

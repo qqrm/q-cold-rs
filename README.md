@@ -180,7 +180,10 @@ By default, Queue execution remains ordered and starts only the first unfinished
 row. Enabling Graph execution changes the draft into a dependency graph:
 task cards are draggable, dropping one task card onto another makes the target
 wait for the dropped task, and dropping a card into the Runs first column
-removes its prerequisites. Q-COLD rejects cyclic graph dependencies. In Graph
+removes its prerequisites. The graph board renders compact task cards in
+left-to-right wave columns so the operator can see the execution shape at once;
+each card shows a short prompt preview and keeps the full prompt behind a
+dedicated prompt action. Q-COLD rejects cyclic graph dependencies. In Graph
 execution, all queued tasks whose prerequisites have reached `closed:success`
 are started in parallel through separate Q-COLD terminal agents; downstream
 tasks wait until their dependency set succeeds.
