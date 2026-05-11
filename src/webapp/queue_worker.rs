@@ -49,6 +49,12 @@ fn run_web_queue(run_id: &str) -> Result<()> {
             state::update_web_queue_run(run_id, "failed", -1, "queue has no items")?;
             return Ok(());
         }
+        crate::sync_codex_task_records().ok();
+        match reconcile_queue_task_statuses(&run, &items)? {
+            QueueReconcile::Unchanged => {}
+            QueueReconcile::Changed => continue,
+            QueueReconcile::Terminal => return Ok(()),
+        }
         if let Some(item) = items
             .iter()
             .find(|item| matches!(item.status.as_str(), "failed" | "blocked"))
@@ -92,6 +98,80 @@ fn run_web_queue(run_id: &str) -> Result<()> {
         state::update_web_queue_run(run_id, "running", -1, &message)?;
         thread::sleep(Duration::from_secs(5));
     }
+}
+
+enum QueueReconcile {
+    Unchanged,
+    Changed,
+    Terminal,
+}
+
+fn reconcile_queue_task_statuses(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+) -> Result<QueueReconcile> {
+    let mut changed = false;
+    for item in items {
+        if let Some(status) = queue_task_status(item)? {
+            if status == "closed:success" {
+                if item.status != "success"
+                    || item
+                        .agent_id
+                        .as_deref()
+                        .is_some_and(agent_running)
+                {
+                    update_successful_queue_item(
+                        &run.id,
+                        item,
+                        item.agent_id.as_deref(),
+                        item.attempts,
+                    )?;
+                    changed = true;
+                }
+                continue;
+            }
+            if status == "paused" && item.status != "paused" {
+                state::update_web_queue_item(
+                    &run.id,
+                    &item.id,
+                    "paused",
+                    &status,
+                    item.agent_id.as_deref(),
+                    item.attempts,
+                    None,
+                )?;
+                state::update_web_queue_run(&run.id, "stopped", item.position, &status)?;
+                return Ok(QueueReconcile::Terminal);
+            }
+            if status.starts_with("closed") && item.status != "success" {
+                state::update_web_queue_item(
+                    &run.id,
+                    &item.id,
+                    "failed",
+                    &status,
+                    item.agent_id.as_deref(),
+                    item.attempts,
+                    None,
+                )?;
+                state::update_web_queue_run(&run.id, "failed", item.position, &status)?;
+                return Ok(QueueReconcile::Terminal);
+            }
+        }
+        if item.status == "success"
+            && item
+                .agent_id
+                .as_deref()
+                .is_some_and(agent_running)
+        {
+            update_successful_queue_item(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
+            changed = true;
+        }
+    }
+    Ok(if changed {
+        QueueReconcile::Changed
+    } else {
+        QueueReconcile::Unchanged
+    })
 }
 
 fn queue_ready_items(

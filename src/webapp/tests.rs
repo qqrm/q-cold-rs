@@ -470,6 +470,57 @@ mod tests {
     }
 
     #[test]
+    fn graph_queue_reconciles_success_record_and_unblocks_downstream_wave() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("graph-closeout", "running", -1);
+        run.execution_mode = "graph".to_string();
+        let upstream =
+            queue_item_fixture("graph-closeout", "upstream", 0, "running", Some("agent-1"));
+        let mut downstream_a =
+            queue_item_fixture("graph-closeout", "downstream-a", 1, "pending", None);
+        let mut downstream_b =
+            queue_item_fixture("graph-closeout", "downstream-b", 2, "pending", None);
+        downstream_a.depends_on = vec!["upstream".to_string()];
+        downstream_b.depends_on = vec!["upstream".to_string()];
+        let items = vec![upstream, downstream_a, downstream_b];
+        state::replace_web_queue(&run, &items).unwrap();
+        state::upsert_task_record(&state::new_task_record(
+            "task/task-upstream".to_string(),
+            "task-flow".to_string(),
+            "upstream".to_string(),
+            "prompt upstream".to_string(),
+            "closed:success".to_string(),
+            None,
+            None,
+            Some("agent-1".to_string()),
+            None,
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let upstream = stored_items
+            .iter()
+            .find(|item| item.id == "upstream")
+            .unwrap();
+
+        assert_eq!(stored_run.unwrap().status, "running");
+        assert_eq!(upstream.status, "success");
+        assert!(upstream.message.contains("closed successfully"));
+        assert!(upstream.message.contains("agent already stopped"));
+        assert_eq!(
+            queue_ready_item_ids(&run, &stored_items),
+            ids(&["downstream-a", "downstream-b"])
+        );
+    }
+
+    #[test]
     fn graph_queue_does_not_unblock_dependents_on_failed_or_blocked_prerequisites() {
         for terminal_status in ["failed", "blocked"] {
             let mut run = queue_run_fixture("graph-stop", "running", -1);
