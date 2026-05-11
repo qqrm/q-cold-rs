@@ -297,7 +297,8 @@ the terminal tail only while the pane is already scrolled near the bottom; if
 the operator scrolls up to read history, new output preserves that reading
 position. Single-line slash
 commands are sent as literal key input instead of bracketed paste so Codex TUI
-slash commands can open normally, and empty composer history arrows are
+slash commands can open normally, and terminal composers show a filtered slash
+command menu when the draft starts with `/`. Empty composer history arrows are
 forwarded to the underlying pane. The view gives Q-COLD-started terminals short
 generated Greek philosopher names
 such as `Socrates` or `Diogenes` and keeps them unique among running agents.

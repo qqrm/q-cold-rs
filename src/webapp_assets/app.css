@@ -808,17 +808,25 @@
       border-top: 1px solid var(--line);
       background: rgba(11, 16, 32, .22);
       align-items: stretch;
+      position: relative;
     }
-    .terminal-input {
-      min-height: 38px;
-      max-height: 120px;
-      resize: vertical;
-      line-height: 1.35;
-    }
+    .terminal-input { min-height: 38px; max-height: 120px; resize: vertical; line-height: 1.35; }
+    .terminal-slash-menu { position: absolute; left: 10px; right: 76px; bottom: calc(100% - 4px); z-index: 30; }
+    .terminal-slash-menu { display: grid; gap: 2px; max-height: min(280px, 45vh); overflow: auto; padding: 5px; }
+    .terminal-slash-menu { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+    .terminal-slash-menu { box-shadow: 0 12px 32px rgba(0, 0, 0, .22); }
+    .terminal-slash-menu[hidden] { display: none; }
+    .terminal-slash-menu button { display: grid; grid-template-columns: minmax(72px, auto) minmax(0, 1fr); }
+    .terminal-slash-menu button { gap: 10px; align-items: center; padding: 7px 8px; border-radius: 6px; }
+    .terminal-slash-menu button { background: transparent; color: var(--fg); text-align: left; font-weight: 500; }
+    .terminal-slash-menu button.active,
+    .terminal-slash-menu button:hover { background: rgba(47, 124, 246, .12); color: var(--accent); }
+    .terminal-slash-menu strong { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+    .terminal-slash-menu span { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+    .terminal-slash-menu span { white-space: nowrap; }
     .transcript-modal[hidden] { display: none; }
     .transcript-modal {
-      position: fixed;
-      inset: 0;
+      position: fixed; inset: 0;
       z-index: 20;
       display: grid;
       place-items: center;
@@ -895,7 +903,7 @@
       padding: 12px;
       border-top: 1px solid var(--line);
       background: rgba(11, 16, 32, .18);
-      align-items: end;
+      align-items: end; position: relative;
     }
     .transcript-compose[hidden] { display: none; }
     .transcript-compose textarea {
@@ -907,6 +915,7 @@
       resize: vertical;
       line-height: 1.35;
     }
+    .transcript-compose .terminal-slash-menu { left: 12px; right: 118px; bottom: calc(100% - 6px); }
     #send-transcript {
       display: inline-flex;
       align-items: center;

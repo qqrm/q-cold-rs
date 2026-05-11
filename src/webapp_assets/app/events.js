@@ -87,8 +87,10 @@
       input.value = terminalDrafts.get(terminal.target) || '';
       input.addEventListener('input', () => {
         terminalDrafts.set(terminal.target, input.value);
+        updateTerminalSlashMenu(input);
       });
       input.addEventListener('keydown', (event) => {
+        if (handleTerminalSlashMenuKey(input, event)) return;
         if (!input.value && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
           event.preventDefault();
           sendTerminalKey(terminal.target, terminalKeyName(event.key));
@@ -104,7 +106,133 @@
       button.textContent = 'Send';
       button.addEventListener('click', () => sendTerminal(terminal.target, input));
       compose.append(input, button);
+      setupTerminalSlashMenu(input, compose, {
+        onSelect: () => terminalDrafts.set(terminal.target, input.value),
+      });
       return compose;
+    }
+
+    const terminalSlashCommands = [
+      ['/new', 'New chat'],
+      ['/compact', 'Compact context'],
+      ['/model', 'Model picker'],
+      ['/status', 'Session status'],
+      ['/diff', 'Current diff'],
+      ['/review', 'Review diff'],
+      ['/init', 'Create guidance'],
+      ['/help', 'Help menu'],
+      ['/q', 'Quit'],
+    ];
+    const terminalSlashMenus = new WeakMap();
+
+    function setupTerminalSlashMenu(input, host, options = {}) {
+      if (terminalSlashMenus.has(input)) return terminalSlashMenus.get(input);
+      const menu = document.createElement('div');
+      menu.className = 'terminal-slash-menu';
+      menu.hidden = true;
+      menu.setAttribute('role', 'listbox');
+      host.classList.add('terminal-compose-shell');
+      host.append(menu);
+      const state = { menu, index: 0, matches: [], onSelect: options.onSelect || (() => {}) };
+      terminalSlashMenus.set(input, state);
+      input.addEventListener('input', () => updateTerminalSlashMenu(input));
+      input.addEventListener('focus', () => updateTerminalSlashMenu(input));
+      input.addEventListener('blur', () => {
+        window.setTimeout(() => closeTerminalSlashMenu(input), 120);
+      });
+      return state;
+    }
+
+    function terminalSlashQuery(input) {
+      const value = input.value || '';
+      if (!value.startsWith('/') || value.includes('\n')) return null;
+      if (/\s/.test(value)) return null;
+      return value.slice(1).toLowerCase();
+    }
+
+    function updateTerminalSlashMenu(input) {
+      const state = terminalSlashMenus.get(input);
+      if (!state) return;
+      const query = terminalSlashQuery(input);
+      if (query === null) {
+        closeTerminalSlashMenu(input);
+        return;
+      }
+      state.matches = terminalSlashCommands.filter(([command, label]) => {
+        const needle = query.trim();
+        return !needle
+          || command.slice(1).startsWith(needle)
+          || label.toLowerCase().includes(needle);
+      });
+      if (!state.matches.length) {
+        closeTerminalSlashMenu(input);
+        return;
+      }
+      state.index = Math.min(state.index, state.matches.length - 1);
+      renderTerminalSlashMenu(input);
+    }
+
+    function renderTerminalSlashMenu(input) {
+      const state = terminalSlashMenus.get(input);
+      if (!state) return;
+      state.menu.replaceChildren(...state.matches.map(([command, label], index) => {
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = index === state.index ? 'active' : '';
+        item.setAttribute('role', 'option');
+        item.setAttribute('aria-selected', index === state.index ? 'true' : 'false');
+        item.addEventListener('mousedown', (event) => event.preventDefault());
+        item.addEventListener('click', () => selectTerminalSlashCommand(input, index));
+        const name = document.createElement('strong');
+        name.textContent = command;
+        const hint = document.createElement('span');
+        hint.textContent = label;
+        item.append(name, hint);
+        return item;
+      }));
+      state.menu.hidden = false;
+    }
+
+    function closeTerminalSlashMenu(input) {
+      const state = terminalSlashMenus.get(input);
+      if (!state) return;
+      state.menu.hidden = true;
+      state.menu.replaceChildren();
+      state.matches = [];
+      state.index = 0;
+    }
+
+    function selectTerminalSlashCommand(input, index) {
+      const state = terminalSlashMenus.get(input);
+      const match = state?.matches[index];
+      if (!state || !match) return;
+      input.value = match[0];
+      state.onSelect(input.value);
+      closeTerminalSlashMenu(input);
+      input.focus();
+    }
+
+    function handleTerminalSlashMenuKey(input, event) {
+      const state = terminalSlashMenus.get(input);
+      if (!state || state.menu.hidden) return false;
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const delta = event.key === 'ArrowDown' ? 1 : -1;
+        state.index = (state.index + delta + state.matches.length) % state.matches.length;
+        renderTerminalSlashMenu(input);
+        return true;
+      }
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault();
+        selectTerminalSlashCommand(input, state.index);
+        return true;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeTerminalSlashMenu(input);
+        return true;
+      }
+      return false;
     }
 
     function messageNode(entry) {
@@ -585,8 +713,10 @@
     document.getElementById('close-transcript').addEventListener('click', closeTaskTranscript);
     transcriptSend.addEventListener('click', sendTranscriptMessage);
     transcriptInput.addEventListener('keydown', (event) => {
+      if (handleTerminalSlashMenuKey(transcriptInput, event)) return;
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendTranscriptMessage();
     });
+    setupTerminalSlashMenu(transcriptInput, transcriptCompose);
     transcriptModal.addEventListener('click', (event) => {
       if (event.target === transcriptModal) closeTaskTranscript();
     });
