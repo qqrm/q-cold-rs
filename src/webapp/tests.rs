@@ -557,6 +557,45 @@ mod tests {
     }
 
     #[test]
+    fn failed_graph_queue_reconciles_parallel_started_rows() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("graph-failed-reconcile", "failed", 1);
+        run.execution_mode = "graph".to_string();
+        let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
+        let mut second = queue_item_fixture(&run.id, "second", 1, "failed", Some("agent-2"));
+        second.message = "agent reached idle prompt after failed Q-COLD closeout".to_string();
+        let third = queue_item_fixture(&run.id, "third", 2, "running", Some("agent-3"));
+        state::replace_web_queue(&run, &[first, second, third]).unwrap();
+        state::upsert_task_record(&state::new_task_record(
+            "task/task-third".to_string(),
+            "task-flow".to_string(),
+            "third".to_string(),
+            "prompt third".to_string(),
+            "closed:failed".to_string(),
+            None,
+            None,
+            Some("agent-3".to_string()),
+            None,
+        ))
+        .unwrap();
+
+        reconcile_stale_web_queue_run().unwrap();
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+
+        assert_eq!(stored_run.status, "failed");
+        assert_eq!(
+            stored_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [("first", "success"), ("second", "failed"), ("third", "failed")]
+        );
+    }
+
+    #[test]
     fn graph_queue_does_not_unblock_dependents_on_failed_or_blocked_prerequisites() {
         for terminal_status in ["failed", "blocked"] {
             let mut run = queue_run_fixture("graph-stop", "running", -1);
