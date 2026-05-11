@@ -12,4 +12,11 @@ mod queue_taskflow_tests {
             PathBuf::from("/work/WT/repo/123-task-run-01")
         );
     }
+
+    #[test]
+    fn queue_task_env_value_accepts_shell_quotes() {
+        assert_eq!(shell_env_value("'task-run-01'"), "task-run-01");
+        assert_eq!(shell_env_value("'task-'\\''run'"), "task-'run");
+        assert_eq!(shell_env_value("task-run-01"), "task-run-01");
+    }
 }

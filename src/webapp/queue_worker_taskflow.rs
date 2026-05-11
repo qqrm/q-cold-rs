@@ -81,11 +81,23 @@ fn validate_queue_task_worktree(path: &Path, task_slug: &str) -> Result<()> {
     let env_path = path.join(".task/task.env");
     let content = fs::read_to_string(&env_path)
         .with_context(|| format!("missing task metadata at {}", env_path.display()))?;
-    let expected = format!("TASK_NAME={task_slug}");
-    if !content.lines().any(|line| line == expected) {
+    let matches_task = content.lines().any(|line| {
+        let Some(raw) = line.strip_prefix("TASK_NAME=") else {
+            return false;
+        };
+        shell_env_value(raw) == task_slug
+    });
+    if !matches_task {
         bail!("{} does not describe task {task_slug}", env_path.display());
     }
     Ok(())
+}
+
+fn shell_env_value(raw: &str) -> String {
+    if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
+        return raw[1..raw.len() - 1].replace("'\\''", "'");
+    }
+    raw.to_string()
 }
 
 fn remember_queue_task_worktree(

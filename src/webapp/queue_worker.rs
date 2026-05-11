@@ -558,7 +558,19 @@ fn start_web_queue_item(
 ) -> Result<QueueItemOutcome> {
     let task = match ensure_queue_managed_task(item) {
         Ok(task) => task,
-        Err(err) => return Ok(QueueItemOutcome::failed(format!("{err:#}"))),
+        Err(err) => {
+            let message = format!("{err:#}");
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "failed",
+                &message,
+                None,
+                attempts,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::failed(message));
+        }
     };
     let request = AgentStartRequest {
         id: Some(queue_agent_id(item)),
