@@ -33,6 +33,17 @@ repo-local code owns it.
   and the nearest local `AGENTS.md` as hard constraints. Resolve conflicts by
   instruction precedence.
 
+## Language Policy
+
+- Keep all visible agent-authored interim output in English, including status
+  updates, plans, reasoning summaries, review notes, handoff notes, task-flow
+  control messages, delegated asks, commit messages, and repository artifacts.
+- The only routine exception is the final operator-facing summary at the end of
+  the task: write that final chat response in Russian.
+- If an explicit task deliverable requires another language, limit that
+  language to the requested deliverable while keeping surrounding agent
+  workflow communication in English until the final Russian summary.
+
 ## Public Command Surface
 
 - `cargo install --path . --locked`
