@@ -49,3 +49,19 @@ fn task_record_create_assigns_stable_repo_scoped_sequence() {
     assert!(repeated.contains("\tsequence=1\t"));
     assert!(other_repo.contains("\tsequence=1\t"));
 }
+
+#[test]
+fn task_record_repo_move_reallocates_sequence_in_target_repo() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let repo_a = temp.path().join("repo-a");
+    let repo_b = temp.path().join("repo-b");
+
+    let occupied = task_record_create(&state_dir, "task/occupied", &repo_b.display().to_string());
+    let original = task_record_create(&state_dir, "task/moved", &repo_a.display().to_string());
+    let moved = task_record_create(&state_dir, "task/moved", &repo_b.display().to_string());
+
+    assert!(occupied.contains("\tsequence=1\t"));
+    assert!(original.contains("\tsequence=1\t"));
+    assert!(moved.contains("\tsequence=2\t"));
+}

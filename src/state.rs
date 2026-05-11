@@ -626,13 +626,20 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
         )
         .optional()
         .context("failed to load existing task record")?;
+    let existing_repo_root = existing.as_ref().and_then(|row| row.repo_root.clone());
     let repo_root = record
         .repo_root
         .clone()
-        .or_else(|| existing.as_ref().and_then(|row| row.repo_root.clone()));
+        .or_else(|| existing_repo_root.clone());
+    let repo_root_changed = matches!(
+        (record.repo_root.as_deref(), existing_repo_root.as_deref()),
+        (Some(new), Some(old)) if new != old
+    );
     let sequence = match (
         record.sequence,
-        existing.as_ref().and_then(|row| row.sequence),
+        existing
+            .as_ref()
+            .and_then(|row| (!repo_root_changed).then_some(row.sequence).flatten()),
         repo_root.as_deref(),
     ) {
         (Some(sequence), _, _) | (_, Some(sequence), _) => Some(sequence),
@@ -672,7 +679,7 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
                  cwd = coalesce(excluded.cwd, tasks.cwd),
                  agent_id = coalesce(excluded.agent_id, tasks.agent_id),
                  metadata_json = coalesce(excluded.metadata_json, tasks.metadata_json),
-                 sequence = coalesce(tasks.sequence, excluded.sequence)",
+                 sequence = excluded.sequence",
             params![
                 record.id,
                 record.source,
