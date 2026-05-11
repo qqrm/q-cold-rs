@@ -26,9 +26,9 @@ use std::process::Command;
 use tempfile::{tempdir, TempDir};
 
 use task_flow_helpers::{
-    bundle_extract_env, git, git_output, managed_root, parse_value, save_task_env,
+    bundle_extract_env, bundle_listing, git, git_output, managed_root, parse_value, save_task_env,
     seed_required_control_plane_files, terminal_receipt_relative_path, write_exe, write_file,
-    xtask_process_manifest, TaskEnv,
+    TaskEnv,
 };
 
 const BASE_BRANCH: &str = "developer";
@@ -56,7 +56,7 @@ fn run_qcold(repo: &Path, fakebin: &Path, args: &[&str]) -> AssertCommand {
         .args(args)
         .env("PATH", format!("{}:{original_path}", fakebin.display()))
         .env("QCOLD_REPO_ROOT", repo)
-        .env("QCOLD_XTASK_MANIFEST", xtask_process_manifest())
+        .env("QCOLD_XTASK_MANIFEST", self_xtask_process_manifest())
         // Scrub any live managed-task markers so fixture repos cannot inherit
         // the caller's active task context or notification mounts.
         .env_remove("QCOLD_TASKFLOW_CONTAINER_ROOT")
@@ -93,6 +93,10 @@ fn run_qcold(repo: &Path, fakebin: &Path, args: &[&str]) -> AssertCommand {
         .env_remove("JIRA_SYNC")
         .env_remove("JIRA_DEBUG_TO_TELEGRAM");
     cmd
+}
+
+fn self_xtask_process_manifest() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("xtask/Cargo.toml")
 }
 
 fn run_qcold_with_registry(
@@ -530,6 +534,7 @@ fn blocked_and_failed_closeout_cli_paths_preserve_terminal_exit_contracts() {
     let blocked_bundle = PathBuf::from(parse_value("BUNDLE_PATH", &blocked_stdout).unwrap());
     assert!(blocked_bundle.exists());
     assert!(parse_value("RECEIPT_PATH", &blocked_stdout).is_none());
+    assert!(bundle_listing(&blocked_bundle).contains("note.txt"));
     let blocked_env = bundle_extract_env(&blocked_bundle, terminal_receipt_relative_path());
     assert_eq!(blocked_env.get("OUTCOME").unwrap(), "blocked");
     assert_eq!(blocked_env.get("REASON").unwrap(), "need operator");
@@ -562,6 +567,7 @@ fn blocked_and_failed_closeout_cli_paths_preserve_terminal_exit_contracts() {
     let failed_bundle = PathBuf::from(parse_value("BUNDLE_PATH", &failed_stdout).unwrap());
     assert!(failed_bundle.exists());
     assert!(parse_value("RECEIPT_PATH", &failed_stdout).is_none());
+    assert!(bundle_listing(&failed_bundle).contains("failed.txt"));
     let failed_env = bundle_extract_env(&failed_bundle, terminal_receipt_relative_path());
     assert_eq!(failed_env.get("OUTCOME").unwrap(), "failed");
     assert_eq!(failed_env.get("REASON").unwrap(), "simulated failure");
@@ -626,7 +632,7 @@ fn closeout_from_managed_worktree_uses_cwd_before_registered_active_primary() {
             "fixture",
             fixture.primary.to_str().unwrap(),
             "--xtask-manifest",
-            xtask_process_manifest().to_str().unwrap(),
+            self_xtask_process_manifest().to_str().unwrap(),
             "--set-active",
         ],
     )

@@ -2,6 +2,7 @@
 
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -277,6 +278,10 @@ fn terminal_check_command() -> Result<u8> {
         println!("terminal-ok\t{}\t{}", repo.display(), branch);
         return Ok(0);
     }
+    let primary_dirty = dirty_paths(&repo)?;
+    for path in &primary_dirty {
+        println!("primary-dirty-file\t{}", path.display());
+    }
     let mut incomplete_closeout = false;
     for task in &tasks {
         println!(
@@ -284,6 +289,14 @@ fn terminal_check_command() -> Result<u8> {
             task.task_name,
             task.task_worktree.display()
         );
+        for path in dirty_paths(&task.task_worktree)?.intersection(&primary_dirty) {
+            println!(
+                "open-task-dirty-overlap\t{}\t{}\t{}",
+                task.task_name,
+                path.display(),
+                task.task_worktree.display()
+            );
+        }
         if task.status == "failed-closeout" {
             incomplete_closeout = true;
             println!(
@@ -309,6 +322,26 @@ fn terminal_check_command() -> Result<u8> {
         eprintln!("terminal-check blocked: managed task worktrees remain open");
     }
     Ok(1)
+}
+
+fn dirty_paths(repo: &Path) -> Result<BTreeSet<PathBuf>> {
+    let output = Command::new("git")
+        .current_dir(repo)
+        .args(["status", "--porcelain", "--untracked-files=all"])
+        .output()
+        .context("failed to inspect git status")?;
+    if !output.status.success() {
+        bail!("git status failed with status {}", output.status);
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(status_path)
+        .collect())
+}
+
+fn status_path(line: &str) -> Option<PathBuf> {
+    let path = line.get(3..)?.split(" -> ").last().unwrap_or_default();
+    (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
 fn append_event_command(kind: &str, message: &str) -> Result<u8> {
@@ -430,11 +463,116 @@ fn closeout_non_success(
         "task-closeout",
         reason.unwrap_or(outcome),
     )?;
+    let bundle = create_task_archive_bundle(task)?;
+    let primary_clean = git_output(&task.primary_repo_path, ["status", "--porcelain"])?.is_empty();
+    std::env::set_current_dir(&task.primary_repo_path).with_context(|| {
+        format!(
+            "failed to leave task worktree for cleanup: {}",
+            task.primary_repo_path.display()
+        )
+    })?;
+    let worktree_removed = git_status(
+        &task.primary_repo_path,
+        [
+            "worktree",
+            "remove",
+            "--force",
+            path_arg(&task.task_worktree),
+        ],
+    )?;
+    let branch_removed = git_status(&task.primary_repo_path, ["branch", "-D", &task.task_branch])?;
+    let receipt = TerminalReceipt {
+        outcome,
+        reason,
+        primary_clean,
+        worktree_removed,
+        branch_removed,
+    };
+    add_terminal_receipt_to_bundle(&bundle, &receipt)?;
     println!("task-closeout\t{outcome}\t{}", task.task_name);
     if let Some(reason) = reason {
         println!("REASON={reason}");
     }
+    println!("BUNDLE_PATH={}", bundle.display());
     Ok(code)
+}
+
+struct TerminalReceipt<'a> {
+    outcome: &'a str,
+    reason: Option<&'a str>,
+    primary_clean: bool,
+    worktree_removed: bool,
+    branch_removed: bool,
+}
+
+fn create_task_archive_bundle(task: &TaskEnv) -> Result<PathBuf> {
+    let bundles = task.primary_repo_path.join("bundles");
+    fs::create_dir_all(&bundles)?;
+    let bundle = bundles.join(format!("{}-{}.zip", task.task_name, unix_now()));
+    let status = Command::new("7z")
+        .current_dir(&task.task_worktree)
+        .args(["a", path_arg(&bundle), ".", "-xr!.git"])
+        .status()
+        .context("failed to create terminal evidence bundle")?;
+    if !status.success() {
+        bail!("7z failed to create terminal evidence bundle with status {status}");
+    }
+    Ok(bundle)
+}
+
+fn add_terminal_receipt_to_bundle(bundle: &Path, receipt: &TerminalReceipt<'_>) -> Result<()> {
+    let staging = std::env::temp_dir().join(format!(
+        "qcold-terminal-receipt-{}-{}",
+        std::process::id(),
+        unix_now()
+    ));
+    let metadata = staging.join("metadata");
+    fs::create_dir_all(&metadata)?;
+    fs::write(
+        metadata.join("terminal-receipt.env"),
+        render_terminal_receipt(receipt),
+    )?;
+    let status = Command::new("7z")
+        .current_dir(&staging)
+        .args(["a", path_arg(bundle), "metadata/terminal-receipt.env"])
+        .status()
+        .context("failed to append terminal receipt to bundle")?;
+    fs::remove_dir_all(&staging).ok();
+    if !status.success() {
+        bail!("7z failed to append terminal receipt with status {status}");
+    }
+    Ok(())
+}
+
+fn render_terminal_receipt(receipt: &TerminalReceipt<'_>) -> String {
+    let mut output = String::new();
+    for (key, value) in [
+        ("OUTCOME", receipt.outcome),
+        ("REASON", receipt.reason.unwrap_or("")),
+        (
+            "PRIMARY_CHECKOUT_CLEAN",
+            if receipt.primary_clean { "yes" } else { "no" },
+        ),
+        (
+            "TASK_WORKTREE_REMOVED",
+            if receipt.worktree_removed {
+                "yes"
+            } else {
+                "no"
+            },
+        ),
+        (
+            "LOCAL_TASK_BRANCH_REMOVED",
+            if receipt.branch_removed { "yes" } else { "no" },
+        ),
+        ("CANONICAL_VALIDATION", "not-applicable"),
+    ] {
+        output.push_str(key);
+        output.push('=');
+        output.push_str(&shell_quote(value));
+        output.push('\n');
+    }
+    output
 }
 
 fn bundle_command(task_id: Option<&str>) -> Result<u8> {

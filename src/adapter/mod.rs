@@ -356,10 +356,6 @@ fn manifest_binary(manifest: &Path) -> Result<PathBuf> {
         .join("target")
         .join("debug")
         .join(format!("xtask{}", env::consts::EXE_SUFFIX));
-    if binary.is_file() {
-        return Ok(binary);
-    }
-
     let status = Command::new("cargo")
         .current_dir(workspace_root)
         .args(["build", "--quiet", "--manifest-path"])

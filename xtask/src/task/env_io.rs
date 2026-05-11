@@ -224,6 +224,15 @@ fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<()> {
     Ok(())
 }
 
+fn git_status<const N: usize>(repo: &Path, args: [&str; N]) -> Result<bool> {
+    Ok(Command::new("git")
+        .current_dir(repo)
+        .args(args)
+        .status()
+        .context("failed to run git")?
+        .success())
+}
+
 fn git_output<const N: usize>(repo: &Path, args: [&str; N]) -> Result<String> {
     let output = Command::new("git")
         .current_dir(repo)
