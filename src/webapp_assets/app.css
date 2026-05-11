@@ -734,30 +734,6 @@
       max-height: none;
       border-radius: 6px;
     }
-    .transcript-compose {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) max-content;
-      gap: 8px;
-      width: 100%;
-      min-width: 0;
-      padding: 10px;
-      border-top: 1px solid var(--line);
-      background: rgba(11, 16, 32, .18);
-      align-items: stretch;
-    }
-    .transcript-compose[hidden] { display: none; }
-    .transcript-compose textarea {
-      min-width: 0;
-      min-height: 108px;
-      max-height: 240px;
-      resize: vertical;
-      line-height: 1.35;
-    }
-    #send-transcript {
-      width: 64px;
-      min-width: 64px;
-      padding-inline: 10px;
-    }
     select {
       width: 100%;
       border: 1px solid var(--line);
@@ -813,8 +789,6 @@
       .agent-command-card { grid-template-columns: 1fr; }
       .agent-limit-status span:last-child { white-space: normal; }
       .terminal-head, .terminal-compose, .terminal-meta-form { grid-template-columns: 1fr; }
-      .transcript-compose { grid-template-columns: 1fr; }
-      #send-transcript { width: 100%; }
       .header-actions { width: 100%; justify-content: space-between; }
       .system-strip {
         left: 10px;

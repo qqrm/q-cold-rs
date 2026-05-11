@@ -207,32 +207,26 @@ current row as stopped without deleting it or treating it as complete. The same
 control becomes Continue for a stopped run; continuing clears the stop flag and
 resumes from that row, reusing its still-running executor agent when one exists
 or launching a fresh executor when needed.
-Queue rows can be reordered, removed, copied, cleared in bulk, or opened to an
-interactive task chat. While a queue is running, the active executor row is
-protected, but completed rows and not-yet-started pending rows remain removable.
-Bulk clearing removes persisted queue rows, removes the
-matching task records, and terminates any associated executor agents. When the
-related terminal agent is still running, that chat can send
-operator messages back into the pane even before Codex telemetry has captured a
-session transcript; if no transcript is available yet, the modal falls back to
-the live terminal output. Blocked task chats remain operator-actionable: if the
-original pane has exited but the saved Codex session id is known, Q-COLD starts a
-fresh attachable `resume` terminal target before sending the next operator
-message. Removing a persisted queue row is the cleanup boundary for that work:
+Queue rows can be reordered, removed, copied, cleared in bulk, or opened to the
+saved task transcript or live terminal output. While a queue is running, the
+active executor row is protected, but completed rows and not-yet-started
+pending rows remain removable. Bulk clearing removes persisted queue rows,
+removes the matching task records, and terminates any associated executor
+agents. Removing a persisted queue row is the cleanup boundary for that work:
 the backend removes the row, removes the matching `task/<slug>` record, and
 terminates the associated executor agent when one is still known. Rows without a
 task record still switch to the Tasks view while recording a row-level
-availability note. Any blocked, failed, unknown, or prematurely exited task stops
-the remaining queue. Queue draft rows may still use browser local storage before
-launch, but live queue state, retry counters, agent ids, and generated
+availability note. Any blocked, failed, unknown, or prematurely exited task
+stops the remaining queue. Queue draft rows may still use browser local storage
+before launch, but live queue state, retry counters, agent ids, and generated
 `task/<slug>` values come from the backend snapshot after launch, so refreshing
 the tab does not stop the active run. Queue rows, task cards, agent cards, and
-terminal cards share the same terminal agent display name when one is known, with
-short technical ids kept as secondary diagnostics. Queue executor terminals use
-their terminal scope for the managed `task/<slug>` id, so the Terminals view
-keeps both the agent name and the task anchor visible. When Codex telemetry has
-captured a session path, task records expose the saved chat transcript from the
-Tasks view even after the terminal agent has exited. Q-COLD assigns Codex
+terminal cards share the same terminal agent display name when one is known,
+with short technical ids kept as secondary diagnostics. Queue executor
+terminals use their terminal scope for the managed `task/<slug>` id, so the
+Terminals view keeps both the agent name and the task anchor visible. When Codex
+telemetry has captured a session path, task records expose the saved transcript
+from the Tasks view even after the terminal agent has exited. Q-COLD assigns Codex
 sessions to managed tasks only through the session id plus structured
 `session_meta.cwd` or tool-call `workdir`/`cwd` fields under the managed task
 worktree; arbitrary task-id text in prompts or tool output is not enough to
