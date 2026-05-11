@@ -177,18 +177,17 @@ available account (`c1`, `c2`, or `codexN`) with auth/limit status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
 By default, Queue execution remains ordered and starts only the first unfinished
-row. Enabling Graph execution changes the draft into explicit stages from top
-to bottom: cards inside one wave run in parallel, waves can sit side by side in
-the same stage, `Add wave` creates a new stage, and new prompts are added to
-the last wave by default. Task cards can be moved by dragging them into a wave
-or by using the card's wave selector. Waves can also be moved between stages,
-removed while empty, or created beside another wave with the parallel-wave
-button. Each card has a short prompt preview, a dedicated full-prompt action,
-and a `Gate next` toggle that controls whether the card blocks the next stage.
-Q-COLD rejects cyclic graph dependencies. In Graph execution, all queued tasks
-whose prerequisites have reached `closed:success` are started in parallel
-through separate Q-COLD terminal agents; downstream tasks wait until their
-dependency set succeeds.
+row. Enabling Graph execution changes the draft into explicit waves from top
+to bottom: Wave 1 runs first, Wave 2 waits for Wave 1, and so on. Cards inside
+one wave run in parallel. `Add wave` appends a new wave below the existing
+waves, and new prompts are added to the last wave by default. Task cards can be
+moved by dragging them into a wave or by using the card's wave selector. Waves
+can be moved up or down and removed while empty. Each card has a short prompt
+preview, a dedicated full-prompt action, and a `Gate next` toggle that controls
+whether the card blocks the next wave. Q-COLD rejects cyclic graph
+dependencies. In Graph execution, all queued tasks whose prerequisites have
+reached `closed:success` are started in parallel through separate Q-COLD
+terminal agents; downstream tasks wait until their dependency set succeeds.
 Each queued row starts the selected Codex-like command without an argv prompt,
 waits for the attachable terminal pane, sends `/new`, and then sends the
 generated managed-task instruction so the row does not inherit the previous

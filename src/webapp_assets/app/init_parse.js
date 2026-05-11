@@ -154,7 +154,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         return;
       }
       localStorage.setItem(queueStorageKey, JSON.stringify({
-        waves: draftWaves.map((wave) => ({ id: wave.id, row: Number(wave.row || 0) })),
+        waves: draftWaves.map((wave) => ({ id: wave.id })),
         items: draftItems.map((item) => ({
           id: item.id,
           runId: '',

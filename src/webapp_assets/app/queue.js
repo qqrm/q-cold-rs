@@ -22,32 +22,24 @@
       syncQueueWaveDependencies();
       const board = document.createElement('div');
       board.className = 'queue-graph-board';
-      const rows = queueGraphRows();
+      const levels = queueGraphLevels();
       const toolbar = document.createElement('div');
       toolbar.className = 'queue-graph-toolbar';
       const hint = document.createElement('span');
-      hint.textContent = 'Stages run top to bottom. Waves in one stage run side by side.';
+      hint.textContent = 'Waves run top to bottom. Tasks inside one wave run in parallel.';
       const addWave = queueActionButton('Add wave', createQueueWave, 'Add wave');
       addWave.classList.add('queue-graph-add-wave');
       addWave.disabled = queueRun.running;
       toolbar.append(hint, addWave);
       board.appendChild(toolbar);
 
-      rows.forEach((row, rowIndex) => {
-        const rowNode = document.createElement('section');
-        rowNode.className = 'queue-graph-row';
-        const rowTitle = document.createElement('h3');
-        rowTitle.textContent = `Stage ${rowIndex + 1}`;
-        const rowLanes = document.createElement('div');
-        rowLanes.className = 'queue-graph-row-lanes';
-        row.waves.forEach((level) => rowLanes.appendChild(queueGraphWave(level)));
-        rowNode.append(rowTitle, rowLanes);
-        board.appendChild(rowNode);
+      levels.forEach((level, index) => {
+        board.appendChild(queueGraphWave(level, index));
       });
       queueStatus.replaceChildren(board);
     }
 
-    function queueGraphWave(level) {
+    function queueGraphWave(level, index) {
       const column = document.createElement('section');
       column.className = 'queue-graph-wave';
       column.dataset.waveId = level.wave.id;
@@ -60,19 +52,17 @@
       const head = document.createElement('div');
       head.className = 'queue-graph-wave-head';
       const heading = document.createElement('h3');
-      heading.textContent = queueWaveLabel(level.wave);
+      heading.textContent = `Wave ${index + 1}`;
       const meta = document.createElement('span');
       meta.textContent = `${level.items.length} task${level.items.length === 1 ? '' : 's'}`;
-      const parallel = queueActionButton('+', () => createQueueWave(level.wave.row), 'Add parallel wave');
-      parallel.disabled = queueRun.running;
       const up = queueActionButton('↑', () => moveQueueWave(level.wave.id, -1), 'Move wave up');
-      up.disabled = queueRun.running || level.wave.row <= 0;
+      up.disabled = queueRun.running || index === 0;
       const down = queueActionButton('↓', () => moveQueueWave(level.wave.id, 1), 'Move wave down');
-      down.disabled = queueRun.running;
+      down.disabled = queueRun.running || index === queueWaves.length - 1;
       const remove = queueActionButton('×', () => removeQueueWave(level.wave.id), 'Remove wave');
       remove.classList.add('danger', 'icon-remove');
       remove.disabled = queueRun.running || queueWaves.length <= 1 || level.items.length > 0;
-      head.append(heading, meta, parallel, up, down, remove);
+      head.append(heading, meta, up, down, remove);
       const lane = document.createElement('div');
       lane.className = 'queue-graph-wave-lane';
       if (!level.items.length) {
@@ -93,26 +83,12 @@
       }));
     }
 
-    function queueGraphRows() {
-      const rows = [];
-      queueGraphLevels().forEach((level) => {
-        const row = Number(level.wave.row || 0);
-        if (!rows[row]) rows[row] = { row, waves: [] };
-        rows[row].waves.push(level);
-      });
-      return rows.filter(Boolean);
-    }
-
-    function queueWaveLabel(wave) {
-      return `Wave ${queueWaves.findIndex((candidate) => candidate.id === wave.id) + 1}`;
-    }
-
     function normalizeQueueWaves(waves, items) {
       const normalized = (Array.isArray(waves) ? waves : [])
         .map((wave) => (typeof wave === 'string' ? { id: wave } : wave))
         .filter((wave) => wave?.id)
-        .map((wave, index) => ({ id: wave.id, row: Number(wave.row ?? index) }));
-      if (!normalized.length) normalized.push({ id: newQueueWaveId(), row: 0 });
+        .map((wave) => ({ id: wave.id }));
+      if (!normalized.length) normalized.push({ id: newQueueWaveId() });
       let known = new Set(normalized.map((wave) => wave.id));
       const missing = items.filter((item) => !item.waveId || !known.has(item.waveId));
       if (missing.some((item) => item.dependsOn?.length)) {
@@ -127,9 +103,7 @@
     }
 
     function lastQueueWave(waves = queueWaves) {
-      return waves.reduce((last, wave) => {
-        return Number(wave.row || 0) >= Number(last.row || 0) ? wave : last;
-      }, waves[0]);
+      return waves[waves.length - 1];
     }
 
     function assignQueueWavesFromDependencies(waves, items) {
@@ -148,7 +122,7 @@
       };
       items.forEach((item) => {
         const level = depth(item);
-        while (!waves[level]) waves.push({ id: newQueueWaveId(), row: level });
+        while (!waves[level]) waves.push({ id: newQueueWaveId() });
         item.waveId = waves[level].id;
       });
     }
@@ -157,10 +131,9 @@
       return `wave-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     }
 
-    function createQueueWave(row = null) {
+    function createQueueWave() {
       if (queueRun.running) return;
-      const nextRow = Math.max(0, ...queueWaves.map((wave) => Number(wave.row || 0))) + 1;
-      queueWaves.push({ id: newQueueWaveId(), row: row === null ? nextRow : Number(row || 0) });
+      queueWaves.push({ id: newQueueWaveId() });
       saveQueueStorage();
       renderQueue();
     }
@@ -175,9 +148,11 @@
 
     function moveQueueWave(waveId, delta) {
       if (queueRun.running) return;
-      const wave = queueWaves.find((candidate) => candidate.id === waveId);
-      if (!wave) return;
-      wave.row = Math.max(0, Number(wave.row || 0) + delta);
+      const index = queueWaves.findIndex((candidate) => candidate.id === waveId);
+      const next = index + delta;
+      if (index < 0 || next < 0 || next >= queueWaves.length) return;
+      const [wave] = queueWaves.splice(index, 1);
+      queueWaves.splice(next, 0, wave);
       syncQueueWaveDependencies();
       saveQueueStorage();
       renderQueue();
@@ -194,7 +169,7 @@
     }
 
     function syncQueueWaveDependencies() {
-      const waveItems = queueGraphRows().map((row) => row.waves.flatMap((level) => level.items));
+      const waveItems = queueGraphLevels().map((level) => level.items);
       let previousGates = [];
       for (const items of waveItems) {
         for (const item of items) item.dependsOn = previousGates.map((dependency) => dependency.id);
@@ -602,7 +577,7 @@
         }
       }
       queueItems = [];
-      queueWaves = [{ id: newQueueWaveId(), row: 0 }];
+      queueWaves = [{ id: newQueueWaveId() }];
       queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
       saveQueueStorage();
       await loadSnapshot();

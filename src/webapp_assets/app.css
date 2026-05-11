@@ -525,27 +525,9 @@
       padding: 0 8px;
       font-size: 12px;
     }
-    .queue-graph-row {
-      display: grid;
-      gap: 6px;
-    }
-    .queue-graph-row > h3 {
-      margin: 0;
-      font-size: 12px;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0;
-    }
-    .queue-graph-row-lanes {
-      display: flex;
-      gap: 10px;
-      overflow-x: auto;
-      padding-bottom: 2px;
-    }
     .queue-graph-wave {
       display: grid;
       gap: 7px;
-      flex: 0 0 min(520px, 86vw);
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 9px;
@@ -553,7 +535,7 @@
     }
     .queue-graph-wave-head {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) repeat(4, 28px);
+      grid-template-columns: auto minmax(0, 1fr) repeat(3, 28px);
       align-items: center;
       gap: 6px;
     }
