@@ -305,19 +305,26 @@ fn find_codex_session_summary_in_root(
 
     let mut files = Vec::new();
     collect_session_files(root, &mut files)?;
-    files.sort_by_key(|path| std::cmp::Reverse(modified_unix(path).unwrap_or(0)));
-    files.retain(|path| {
-        let path_display = path.display().to_string();
-        if claimed_session_paths.contains(&path_display) {
-            return false;
-        }
-        modified_unix(path)
-            .is_some_and(|modified| modified >= agent_started_at.saturating_sub(300))
-    });
+    let cutoff = agent_started_at.saturating_sub(300);
+    let mut files = files
+        .into_iter()
+        .filter_map(|path| {
+            let modified = modified_unix(&path)?;
+            Some((path, modified))
+        })
+        .filter(|(path, modified)| {
+            let path_display = path.display().to_string();
+            if claimed_session_paths.contains(&path_display) {
+                return false;
+            }
+            *modified >= cutoff
+        })
+        .collect::<Vec<_>>();
+    files.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
     files.truncate(100);
 
     let mut candidates = Vec::new();
-    for path in files {
+    for (path, modified) in files {
         if let Some(summary) = parse_codex_session_summary(&path)? {
             if !codex_session_start_matches_agent(summary.started_at, agent_started_at) {
                 continue;
@@ -326,7 +333,6 @@ fn find_codex_session_summary_in_root(
             let start_distance = summary
                 .started_at
                 .map_or(u64::MAX, |started_at| started_at.abs_diff(agent_started_at));
-            let modified = modified_unix(&summary.path).unwrap_or(0);
             candidates.push((cwd_mismatch, start_distance, Reverse(modified), summary));
         }
     }

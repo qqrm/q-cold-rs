@@ -726,6 +726,12 @@ mod tests {
             ["first"]
         );
     }
+    #[test]
+    fn starting_queue_item_without_agent_is_ready_to_retry() {
+        let run = queue_run_fixture("sequence", "running", -1);
+        let items = vec![queue_item_fixture("sequence", "first", 0, "starting", None)];
+        assert_eq!(queue_ready_item_ids(&run, &items), ids(&["first"]));
+    }
 
     #[test]
     fn graph_dependency_normalization_rejects_cycles() {

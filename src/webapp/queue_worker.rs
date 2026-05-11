@@ -20,8 +20,18 @@ fn spawn_web_queue_worker(run_id: String) {
         }
     }
     thread::spawn(move || {
-        if let Err(err) = run_web_queue(&run_id) {
-            let _ = state::update_web_queue_run(&run_id, "failed", -1, &format!("{err:#}"));
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run_web_queue(&run_id))) {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                let _ = state::update_web_queue_run(&run_id, "failed", -1, &format!("{err:#}"));
+            }
+            Err(payload) => {
+                let message = format!(
+                    "queue worker panicked: {}",
+                    panic_payload_message(payload.as_ref())
+                );
+                let _ = state::update_web_queue_run(&run_id, "failed", -1, &message);
+            }
         }
         if let Some(workers) = WEB_QUEUE_WORKERS.get() {
             if let Ok(mut active) = workers.lock() {
@@ -238,7 +248,7 @@ fn queue_item_is_ready_to_spawn(
             || item
                 .agent_id
                 .as_deref()
-                .is_some_and(|agent_id| !agent_running(agent_id)))
+                .is_none_or(|agent_id| !agent_running(agent_id)))
         && item.next_attempt_at.is_none_or(|time| time <= unix_now())
         && queue_dependencies_satisfied(item, items)
 }
@@ -287,16 +297,36 @@ fn spawn_web_queue_item_worker(run_id: String, item: state::QueueItemRow) -> boo
     }
     thread::spawn(move || {
         let item_id = item.id.clone();
-        if let Err(err) = run_web_queue_item(&run_id, &item) {
-            let _ = state::update_web_queue_item(
-                &run_id,
-                &item_id,
-                "failed",
-                &format!("{err:#}"),
-                item.agent_id.as_deref(),
-                item.attempts,
-                None,
-            );
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_web_queue_item(&run_id, &item)
+        })) {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => {
+                let _ = state::update_web_queue_item(
+                    &run_id,
+                    &item_id,
+                    "failed",
+                    &format!("{err:#}"),
+                    item.agent_id.as_deref(),
+                    item.attempts,
+                    None,
+                );
+            }
+            Err(payload) => {
+                let message = format!(
+                    "queue item worker panicked: {}",
+                    panic_payload_message(payload.as_ref())
+                );
+                let _ = state::update_web_queue_item(
+                    &run_id,
+                    &item_id,
+                    "failed",
+                    &message,
+                    item.agent_id.as_deref(),
+                    item.attempts,
+                    None,
+                );
+            }
         }
         if let Some(workers) = WEB_QUEUE_ITEM_WORKERS.get() {
             if let Ok(mut active) = workers.lock() {
@@ -305,6 +335,16 @@ fn spawn_web_queue_item_worker(run_id: String, item: state::QueueItemRow) -> boo
         }
     });
     true
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_string();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "unknown panic payload".to_string()
 }
 
 fn queue_item_terminal(status: &str) -> bool {
