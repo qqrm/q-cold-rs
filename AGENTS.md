@@ -44,6 +44,16 @@ repo-local code owns it.
   language to the requested deliverable while keeping surrounding agent
   workflow communication in English until the final Russian summary.
 
+## Response Style
+
+- Keep operator-facing agent responses short, dry, and task-focused.
+- Prefer compact status, decisions, validation, blockers, and next steps over
+  broad explanation.
+- Avoid cheerleading, filler, rhetorical framing, and decorative phrasing unless
+  needed for correctness or blocker context.
+- Expand only when the operator asks for detail or when concise detail is
+  required to prevent ambiguity or misuse.
+
 ## Public Command Surface
 
 - `cargo install --path . --locked`
