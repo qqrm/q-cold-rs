@@ -4098,6 +4098,145 @@ mod tests {
     }
 
     #[test]
+    fn graph_queue_ready_items_advance_in_dependency_waves() {
+        let mut run = queue_run_fixture("graph-waves", "running", -1);
+        run.execution_mode = "graph".to_string();
+        let mut plan = vec![
+            queue_item_fixture("graph-waves", "bootstrap-a", 0, "pending", None),
+            queue_item_fixture("graph-waves", "bootstrap-b", 1, "pending", None),
+            queue_item_fixture("graph-waves", "fanout-c", 2, "pending", None),
+            queue_item_fixture("graph-waves", "fanout-d", 3, "pending", None),
+            queue_item_fixture("graph-waves", "join-e", 4, "pending", None),
+            queue_item_fixture("graph-waves", "tail-f", 5, "pending", None),
+        ];
+        plan[2].depends_on = vec!["bootstrap-a".to_string()];
+        plan[3].depends_on = vec!["bootstrap-a".to_string(), "bootstrap-b".to_string()];
+        plan[4].depends_on = vec!["fanout-c".to_string(), "fanout-d".to_string()];
+        plan[5].depends_on = vec!["join-e".to_string()];
+
+        assert_eq!(
+            queue_ready_item_ids(&run, &plan),
+            ids(&["bootstrap-a", "bootstrap-b"])
+        );
+
+        set_queue_item_status(&mut plan, "bootstrap-a", "success");
+        assert_eq!(
+            queue_ready_item_ids(&run, &plan),
+            ids(&["bootstrap-b", "fanout-c"])
+        );
+
+        set_queue_item_status(&mut plan, "bootstrap-b", "success");
+        assert_eq!(
+            queue_ready_item_ids(&run, &plan),
+            ids(&["fanout-c", "fanout-d"])
+        );
+
+        set_queue_item_status(&mut plan, "fanout-c", "success");
+        assert_eq!(queue_ready_item_ids(&run, &plan), ids(&["fanout-d"]));
+
+        set_queue_item_status(&mut plan, "fanout-d", "success");
+        assert_eq!(queue_ready_item_ids(&run, &plan), ids(&["join-e"]));
+
+        set_queue_item_status(&mut plan, "join-e", "success");
+        assert_eq!(queue_ready_item_ids(&run, &plan), ids(&["tail-f"]));
+    }
+
+    #[test]
+    fn graph_queue_does_not_unblock_dependents_on_failed_or_blocked_prerequisites() {
+        for terminal_status in ["failed", "blocked"] {
+            let mut run = queue_run_fixture("graph-stop", "running", -1);
+            run.execution_mode = "graph".to_string();
+            let upstream =
+                queue_item_fixture("graph-stop", "upstream", 0, terminal_status, Some("agent-1"));
+            let mut dependent = queue_item_fixture("graph-stop", "dependent", 1, "pending", None);
+            dependent.depends_on = vec!["upstream".to_string()];
+            let independent = queue_item_fixture("graph-stop", "independent", 2, "pending", None);
+            let items = vec![upstream, dependent, independent];
+
+            assert_eq!(
+                queue_ready_item_ids(&run, &items),
+                ids(&["independent"]),
+                "terminal prerequisite status {terminal_status} must not satisfy dependencies"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_queue_scheduler_stops_on_non_success_closeout_without_advancing_dependents() {
+        for terminal_status in ["failed", "blocked"] {
+            let _guard = test_support::env_guard();
+            let temp = tempdir().unwrap();
+            std::env::set_var("QCOLD_STATE_DIR", temp.path());
+            let mut run = queue_run_fixture(&format!("run-{terminal_status}"), "running", -1);
+            run.execution_mode = "graph".to_string();
+            let mut upstream =
+                queue_item_fixture(&run.id, "upstream", 0, terminal_status, Some("agent-1"));
+            upstream.message = format!("upstream ended as {terminal_status}");
+            let mut dependent = queue_item_fixture(&run.id, "dependent", 1, "pending", None);
+            dependent.depends_on = vec!["upstream".to_string()];
+            let independent = queue_item_fixture(&run.id, "independent", 2, "pending", None);
+            let items = vec![upstream, dependent, independent];
+
+            state::replace_web_queue(&run, &items).unwrap();
+            run_web_queue(&run.id).unwrap();
+            let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+            let stored_run = stored_run.unwrap();
+
+            assert_eq!(stored_run.status, "failed");
+            assert_eq!(stored_run.current_index, 0);
+            assert_eq!(stored_run.message, format!("upstream ended as {terminal_status}"));
+            assert_eq!(
+                stored_items
+                    .iter()
+                    .map(|item| (item.id.as_str(), item.status.as_str(), item.agent_id.as_deref()))
+                    .collect::<Vec<_>>(),
+                [
+                    ("upstream", terminal_status, Some("agent-1")),
+                    ("dependent", "pending", None),
+                    ("independent", "pending", None),
+                ],
+                "scheduler must stop the graph before spawning unrelated or downstream work"
+            );
+        }
+    }
+
+    #[test]
+    fn graph_dependency_normalization_keeps_only_valid_unique_prerequisites() {
+        let mut items = vec![
+            queue_item_fixture("graph", "first", 0, "pending", None),
+            queue_item_fixture("graph", "second", 1, "pending", None),
+            queue_item_fixture("graph", "third", 2, "pending", None),
+        ];
+        items[2].depends_on = vec![
+            "first".to_string(),
+            "missing".to_string(),
+            "first".to_string(),
+            "third".to_string(),
+            "second".to_string(),
+        ];
+
+        normalize_queue_dependencies("graph", &mut items).unwrap();
+
+        assert_eq!(
+            items[2].depends_on,
+            vec!["first".to_string(), "second".to_string()]
+        );
+    }
+
+    #[test]
+    fn sequence_dependency_normalization_strips_graph_edges() {
+        let mut items = vec![
+            queue_item_fixture("sequence", "first", 0, "pending", None),
+            queue_item_fixture("sequence", "second", 1, "pending", None),
+        ];
+        items[1].depends_on = vec!["first".to_string()];
+
+        normalize_queue_dependencies("sequence", &mut items).unwrap();
+
+        assert!(items.iter().all(|item| item.depends_on.is_empty()));
+    }
+
+    #[test]
     fn sequence_queue_still_runs_one_ready_item_at_a_time() {
         let run = queue_run_fixture("sequence", "running", -1);
         let items = vec![
@@ -4124,6 +4263,28 @@ mod tests {
         items[1].depends_on = vec!["first".to_string()];
 
         assert!(normalize_queue_dependencies("graph", &mut items).is_err());
+    }
+
+    fn queue_ready_item_ids(
+        run: &state::QueueRunRow,
+        items: &[state::QueueItemRow],
+    ) -> Vec<String> {
+        queue_ready_items(run, items)
+            .iter()
+            .map(|item| item.id.clone())
+            .collect()
+    }
+
+    fn ids(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    fn set_queue_item_status(items: &mut [state::QueueItemRow], id: &str, status: &str) {
+        let item = items
+            .iter_mut()
+            .find(|item| item.id == id)
+            .unwrap_or_else(|| panic!("missing queue item fixture {id}"));
+        item.status = status.to_string();
     }
 
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
