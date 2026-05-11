@@ -502,51 +502,97 @@
     .queue-step.running, .queue-step.starting { border-left: 4px solid var(--info); }
     .queue-step.blocked, .queue-step.stopped, .queue-step.paused { border-left: 4px solid var(--warn); }
     .queue-graph-board {
-      display: flex;
-      align-items: flex-start;
-      gap: 12px;
+      display: grid;
+      gap: 10px;
       min-height: 220px;
-      overflow-x: auto;
       padding-bottom: 4px;
     }
-    .queue-graph-column {
-      display: grid;
-      align-content: start;
-      gap: 7px;
-      min-width: min(220px, 82vw);
-      max-width: 260px;
+    .queue-graph-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: space-between;
       border: 1px solid var(--line);
       border-radius: 8px;
-      padding: 9px;
+      padding: 8px 9px;
       background: var(--panel);
-    }
-    .queue-graph-column p {
-      margin: 0;
       color: var(--muted);
-      font-size: 11px;
-      line-height: 1.35;
+      font-size: 12px;
     }
-    .queue-graph-column h3 {
+    .queue-graph-add-wave {
+      width: auto;
+      min-width: 82px;
+      padding: 0 8px;
+      font-size: 12px;
+    }
+    .queue-graph-row {
+      display: grid;
+      gap: 6px;
+    }
+    .queue-graph-row > h3 {
       margin: 0;
       font-size: 12px;
       color: var(--muted);
       text-transform: uppercase;
       letter-spacing: 0;
     }
-    .queue-graph-root {
-      min-width: 160px;
-      max-width: 170px;
-      border-style: dashed;
-      color: var(--muted);
-      background: transparent;
+    .queue-graph-row-lanes {
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 2px;
     }
-    .queue-graph-root p {
+    .queue-graph-wave {
+      display: grid;
+      gap: 7px;
+      flex: 0 0 min(520px, 86vw);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      background: var(--panel);
+    }
+    .queue-graph-wave-head {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) repeat(4, 28px);
+      align-items: center;
+      gap: 6px;
+    }
+    .queue-graph-wave-head span {
+      color: var(--muted);
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .queue-graph-wave-head button.compact {
+      margin-left: auto;
+    }
+    .queue-graph-wave-lane {
+      display: flex;
+      align-items: stretch;
+      gap: 8px;
+      min-height: 78px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+    }
+    .queue-graph-empty-wave {
+      margin: 0;
+      min-width: 160px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+    .queue-graph-wave h3 {
       margin: 0;
       font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0;
     }
     .queue-graph-card {
       display: grid;
       gap: 6px;
+      flex: 0 0 220px;
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 7px;
@@ -580,6 +626,23 @@
       color: var(--muted);
       font-size: 11px;
       line-height: 1.3;
+    }
+    .queue-graph-wave-select {
+      width: 100%;
+      min-width: 0;
+      padding: 5px 6px;
+      font-size: 12px;
+    }
+    .queue-graph-gate-toggle {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .queue-graph-gate-toggle input {
+      width: auto;
+      margin: 0;
     }
     .queue-graph-deps {
       display: flex;

@@ -18,40 +18,122 @@
     }
 
     function renderQueueGraph() {
+      queueWaves = normalizeQueueWaves(queueWaves, queueItems);
+      syncQueueWaveDependencies();
       const board = document.createElement('div');
       board.className = 'queue-graph-board';
-      const levels = queueGraphLevels();
-      const startColumn = document.createElement('section');
-      startColumn.className = 'queue-graph-column queue-graph-root';
-      startColumn.innerHTML = '<h3>Runs first</h3><p>Drop here to remove prerequisites.</p>';
-      startColumn.addEventListener('dragover', allowQueueGraphDrop);
-      startColumn.addEventListener('drop', (event) => {
-        event.preventDefault();
-        const sourceId = event.dataTransfer.getData('text/qcold-queue-item');
-        const item = queueItems.find((candidate) => candidate.id === sourceId);
-        if (!item || queueRun.running) return;
-        item.dependsOn = [];
-        saveQueueStorage();
-        renderQueue();
-      });
-      board.appendChild(startColumn);
+      const rows = queueGraphRows();
+      const toolbar = document.createElement('div');
+      toolbar.className = 'queue-graph-toolbar';
+      const hint = document.createElement('span');
+      hint.textContent = 'Stages run top to bottom. Waves in one stage run side by side.';
+      const addWave = queueActionButton('Add wave', createQueueWave, 'Add wave');
+      addWave.classList.add('queue-graph-add-wave');
+      addWave.disabled = queueRun.running;
+      toolbar.append(hint, addWave);
+      board.appendChild(toolbar);
 
-      levels.forEach((items, index) => {
-        const column = document.createElement('section');
-        column.className = 'queue-graph-column';
-        const heading = document.createElement('h3');
-        heading.textContent = `Wave ${index + 1}`;
-        const hint = document.createElement('p');
-        hint.textContent = index === 0 ? 'Starts when run begins.' : 'Starts after earlier waits pass.';
-        column.append(heading, hint);
-        items.forEach((item) => column.appendChild(queueGraphCard(item)));
-        board.appendChild(column);
+      rows.forEach((row, rowIndex) => {
+        const rowNode = document.createElement('section');
+        rowNode.className = 'queue-graph-row';
+        const rowTitle = document.createElement('h3');
+        rowTitle.textContent = `Stage ${rowIndex + 1}`;
+        const rowLanes = document.createElement('div');
+        rowLanes.className = 'queue-graph-row-lanes';
+        row.waves.forEach((level) => rowLanes.appendChild(queueGraphWave(level)));
+        rowNode.append(rowTitle, rowLanes);
+        board.appendChild(rowNode);
       });
       queueStatus.replaceChildren(board);
     }
 
+    function queueGraphWave(level) {
+      const column = document.createElement('section');
+      column.className = 'queue-graph-wave';
+      column.dataset.waveId = level.wave.id;
+      column.addEventListener('dragover', allowQueueGraphDrop);
+      column.addEventListener('drop', (event) => {
+        event.preventDefault();
+        const sourceId = event.dataTransfer.getData('text/qcold-queue-item');
+        moveQueueItemToWave(sourceId, level.wave.id);
+      });
+      const head = document.createElement('div');
+      head.className = 'queue-graph-wave-head';
+      const heading = document.createElement('h3');
+      heading.textContent = queueWaveLabel(level.wave);
+      const meta = document.createElement('span');
+      meta.textContent = `${level.items.length} task${level.items.length === 1 ? '' : 's'}`;
+      const parallel = queueActionButton('+', () => createQueueWave(level.wave.row), 'Add parallel wave');
+      parallel.disabled = queueRun.running;
+      const up = queueActionButton('↑', () => moveQueueWave(level.wave.id, -1), 'Move wave up');
+      up.disabled = queueRun.running || level.wave.row <= 0;
+      const down = queueActionButton('↓', () => moveQueueWave(level.wave.id, 1), 'Move wave down');
+      down.disabled = queueRun.running;
+      const remove = queueActionButton('×', () => removeQueueWave(level.wave.id), 'Remove wave');
+      remove.classList.add('danger', 'icon-remove');
+      remove.disabled = queueRun.running || queueWaves.length <= 1 || level.items.length > 0;
+      head.append(heading, meta, parallel, up, down, remove);
+      const lane = document.createElement('div');
+      lane.className = 'queue-graph-wave-lane';
+      if (!level.items.length) {
+        const empty = document.createElement('p');
+        empty.className = 'queue-graph-empty-wave';
+        empty.textContent = 'Drop a task here.';
+        lane.appendChild(empty);
+      }
+      level.items.forEach((item) => lane.appendChild(queueGraphCard(item)));
+      column.append(head, lane);
+      return column;
+    }
+
     function queueGraphLevels() {
-      const byId = new Map(queueItems.map((item) => [item.id, item]));
+      return queueWaves.map((wave) => ({
+        wave,
+        items: queueItems.filter((item) => item.waveId === wave.id),
+      }));
+    }
+
+    function queueGraphRows() {
+      const rows = [];
+      queueGraphLevels().forEach((level) => {
+        const row = Number(level.wave.row || 0);
+        if (!rows[row]) rows[row] = { row, waves: [] };
+        rows[row].waves.push(level);
+      });
+      return rows.filter(Boolean);
+    }
+
+    function queueWaveLabel(wave) {
+      return `Wave ${queueWaves.findIndex((candidate) => candidate.id === wave.id) + 1}`;
+    }
+
+    function normalizeQueueWaves(waves, items) {
+      const normalized = (Array.isArray(waves) ? waves : [])
+        .map((wave) => (typeof wave === 'string' ? { id: wave } : wave))
+        .filter((wave) => wave?.id)
+        .map((wave, index) => ({ id: wave.id, row: Number(wave.row ?? index) }));
+      if (!normalized.length) normalized.push({ id: newQueueWaveId(), row: 0 });
+      let known = new Set(normalized.map((wave) => wave.id));
+      const missing = items.filter((item) => !item.waveId || !known.has(item.waveId));
+      if (missing.some((item) => item.dependsOn?.length)) {
+        assignQueueWavesFromDependencies(normalized, items);
+        known = new Set(normalized.map((wave) => wave.id));
+      }
+      const lastWave = lastQueueWave(normalized);
+      for (const item of items) {
+        if (!item.waveId || !known.has(item.waveId)) item.waveId = lastWave.id;
+      }
+      return normalized;
+    }
+
+    function lastQueueWave(waves = queueWaves) {
+      return waves.reduce((last, wave) => {
+        return Number(wave.row || 0) >= Number(last.row || 0) ? wave : last;
+      }, waves[0]);
+    }
+
+    function assignQueueWavesFromDependencies(waves, items) {
+      const byId = new Map(items.map((item) => [item.id, item]));
       const memo = new Map();
       const depth = (item, stack = new Set()) => {
         if (!item) return 0;
@@ -64,13 +146,60 @@
         memo.set(item.id, value);
         return value;
       };
-      const levels = [];
-      queueItems.forEach((item) => {
+      items.forEach((item) => {
         const level = depth(item);
-        if (!levels[level]) levels[level] = [];
-        levels[level].push(item);
+        while (!waves[level]) waves.push({ id: newQueueWaveId(), row: level });
+        item.waveId = waves[level].id;
       });
-      return levels.filter(Boolean);
+    }
+
+    function newQueueWaveId() {
+      return `wave-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    function createQueueWave(row = null) {
+      if (queueRun.running) return;
+      const nextRow = Math.max(0, ...queueWaves.map((wave) => Number(wave.row || 0))) + 1;
+      queueWaves.push({ id: newQueueWaveId(), row: row === null ? nextRow : Number(row || 0) });
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function removeQueueWave(waveId) {
+      if (queueRun.running || queueWaves.length <= 1) return;
+      if (queueItems.some((item) => item.waveId === waveId)) return;
+      queueWaves = queueWaves.filter((wave) => wave.id !== waveId);
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function moveQueueWave(waveId, delta) {
+      if (queueRun.running) return;
+      const wave = queueWaves.find((candidate) => candidate.id === waveId);
+      if (!wave) return;
+      wave.row = Math.max(0, Number(wave.row || 0) + delta);
+      syncQueueWaveDependencies();
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function moveQueueItemToWave(itemId, waveId) {
+      if (!itemId || !waveId || queueRun.running) return;
+      const item = queueItems.find((candidate) => candidate.id === itemId);
+      if (!item || item.waveId === waveId) return;
+      item.waveId = waveId;
+      syncQueueWaveDependencies();
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function syncQueueWaveDependencies() {
+      const waveItems = queueGraphRows().map((row) => row.waves.flatMap((level) => level.items));
+      let previousGates = [];
+      for (const items of waveItems) {
+        for (const item of items) item.dependsOn = previousGates.map((dependency) => dependency.id);
+        previousGates = items.filter((item) => item.gatesNext !== false);
+      }
     }
 
     function queueGraphCard(item) {
@@ -89,7 +218,7 @@
         event.preventDefault();
         event.stopPropagation();
         const sourceId = event.dataTransfer.getData('text/qcold-queue-item');
-        addQueueDependency(sourceId, item.id);
+        moveQueueItemToWave(sourceId, item.waveId);
       });
 
       const title = document.createElement('div');
@@ -102,8 +231,10 @@
       const direction = document.createElement('p');
       direction.className = 'queue-graph-card-hint';
       direction.textContent = queueRun.running
-        ? 'Waiting follows dependency chips.'
-        : 'Drop a prerequisite here.';
+        ? 'Dependency chips are locked for this run.'
+        : 'Choose a wave or drag into one.';
+      const waveSelect = queueWaveSelect(item);
+      const gate = queueGateToggle(item);
       const deps = document.createElement('div');
       deps.className = 'queue-graph-deps';
       if (item.dependsOn?.length) {
@@ -131,8 +262,40 @@
       );
       fullPrompt.classList.add('queue-graph-prompt-action');
       controls.prepend(fullPrompt);
-      card.append(title, prompt, direction, deps, controls);
+      card.append(title, prompt, direction, waveSelect, gate, deps, controls);
       return card;
+    }
+
+    function queueWaveSelect(item) {
+      const select = document.createElement('select');
+      select.className = 'queue-graph-wave-select';
+      select.disabled = queueRun.running;
+      queueWaves.forEach((wave, index) => {
+        const option = document.createElement('option');
+        option.value = wave.id;
+        option.textContent = `Wave ${index + 1}`;
+        select.appendChild(option);
+      });
+      select.value = item.waveId || queueWaves[queueWaves.length - 1]?.id || '';
+      select.addEventListener('change', () => moveQueueItemToWave(item.id, select.value));
+      return select;
+    }
+
+    function queueGateToggle(item) {
+      const label = document.createElement('label');
+      label.className = 'queue-graph-gate-toggle';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = item.gatesNext !== false;
+      input.disabled = queueRun.running;
+      input.addEventListener('change', () => {
+        item.gatesNext = input.checked;
+        syncQueueWaveDependencies();
+        saveQueueStorage();
+        renderQueue();
+      });
+      label.append(input, document.createTextNode('Gate next'));
+      return label;
     }
 
     function queuePromptPreview(prompt) {
@@ -251,7 +414,9 @@
         await appendQueueTask(prompt);
         return;
       }
-      queueItems.push({ ...defaultQueueItem(), prompt });
+      queueWaves = normalizeQueueWaves(queueWaves, queueItems);
+      const waveId = queueGraphMode ? lastQueueWave(queueWaves).id : '';
+      queueItems.push({ ...defaultQueueItem(), prompt, waveId });
       queueInput.value = '';
       saveQueueStorage();
       renderQueue();
@@ -437,6 +602,7 @@
         }
       }
       queueItems = [];
+      queueWaves = [{ id: newQueueWaveId(), row: 0 }];
       queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
       saveQueueStorage();
       await loadSnapshot();

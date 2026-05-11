@@ -43,6 +43,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueSaved = loadQueueStorage();
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
+    let queueWaves = normalizeQueueWaves(queueSaved.waves || [], queueItems);
     let queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
     let transcriptContext = { taskId: '', terminalTarget: '', chatAvailable: false };
     let agentLimits = null;
@@ -145,12 +146,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function saveQueueStorage() {
+      if (queueGraphMode) syncQueueWaveDependencies();
       const draftItems = queueItems.filter((item) => !item.runId);
-      if (!draftItems.length) {
+      const draftWaves = normalizeQueueWaves(queueWaves, draftItems);
+      if (!draftItems.length && draftWaves.length <= 1) {
         localStorage.removeItem(queueStorageKey);
         return;
       }
       localStorage.setItem(queueStorageKey, JSON.stringify({
+        waves: draftWaves.map((wave) => ({ id: wave.id, row: Number(wave.row || 0) })),
         items: draftItems.map((item) => ({
           id: item.id,
           runId: '',
@@ -159,6 +163,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
           agentId: '',
           agentCommand: item.agentCommand,
           dependsOn: item.dependsOn || [],
+          waveId: item.waveId || '',
+          gatesNext: item.gatesNext !== false,
           repoRoot: item.repoRoot,
           repoName: item.repoName,
           position: null,
@@ -178,6 +184,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         agentId: '',
         agentCommand: '',
         dependsOn: [],
+        waveId: '',
+        gatesNext: true,
         repoRoot: '',
         repoName: '',
         position: null,
@@ -457,6 +465,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         queueItems = (state.queue.records || [])
           .map(queueItemFromServer)
           .filter((item) => !removingQueueItems.has(queueItemKey(item)));
+        queueWaves = normalizeQueueWaves([], queueItems);
         queueRun = {
           running: Boolean(state.queue.running),
           stopped: state.queue.run?.status === 'stopped',
@@ -473,6 +482,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const beforeCount = queueItems.length;
       queueItems = queueItems.filter((item) => !isStaleQueueItem(item));
       if (queueItems.length !== beforeCount) {
+        changed = true;
+      }
+      const previousWaves = queueWaves.map((wave) => wave.id).join(',');
+      queueWaves = normalizeQueueWaves(queueWaves, queueItems);
+      if (previousWaves !== queueWaves.map((wave) => wave.id).join(',')) {
         changed = true;
       }
       if (!queueTaskRecords().length) {
@@ -516,6 +530,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         prompt: item.prompt || '',
         slug: item.slug || '',
         dependsOn: Array.isArray(item.depends_on) ? item.depends_on : [],
+        waveId: '',
+        gatesNext: true,
         agentId: item.agent_id || '',
         agentCommand: item.agent_command || '',
         repoRoot: item.repo_root || '',
