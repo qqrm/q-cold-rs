@@ -733,7 +733,7 @@
     }
     .terminal-head {
       display: grid;
-      grid-template-columns: minmax(120px, 1fr) auto minmax(160px, 1fr);
+      grid-template-columns: minmax(120px, 1fr) auto auto minmax(160px, 1fr);
       gap: 10px;
       align-items: center;
       padding: 8px 10px;
@@ -741,6 +741,7 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .terminal-activity { justify-self: start; }
     .terminal-title {
       display: flex;
       align-items: center;

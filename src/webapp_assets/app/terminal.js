@@ -567,7 +567,9 @@
       node.dataset.agentId = terminal.agent_id || '';
       const head = document.createElement('div');
       head.className = 'terminal-head';
-      head.innerHTML = '<div data-role="title"></div><span data-role="kind"></span><span data-role="cwd"></span>';
+      head.innerHTML =
+        '<div data-role="title"></div><span data-role="activity"></span><span data-role="kind"></span>' +
+        '<span data-role="cwd"></span>';
       const output = document.createElement('pre');
       output.className = 'terminal-output';
       output.tabIndex = 0;
@@ -575,6 +577,28 @@
       const compose = terminalComposer(terminal);
       node.append(head, output, compose);
       return node;
+    }
+
+    function terminalActivityBadge(node, terminal, nextOutput) {
+      const previousOutput = terminalOutputCache.get(terminal.target);
+      const hasPreviousSnapshot = terminalOutputCache.has(terminal.target);
+      const hasOutput = nextOutput.length > 0;
+      const changed = hasPreviousSnapshot && previousOutput !== nextOutput;
+      if (changed) node.dataset.lastOutputChangeAt = String(Date.now());
+
+      const badgeNode = document.createElement('span');
+      let tone = 'ready';
+      let text = 'live idle - no recent output';
+      if (!hasOutput) {
+        tone = 'warn';
+        text = 'waiting for first output';
+      } else if (changed) {
+        tone = 'open';
+        text = 'receiving output';
+      }
+      badgeNode.className = `badge ${tone} terminal-activity`;
+      badgeNode.textContent = text;
+      return badgeNode;
     }
 
     function updateTerminalCard(node, terminal) {
@@ -589,6 +613,7 @@
       head.querySelector('[data-role="cwd"]').textContent = terminal.cwd || '';
       const output = node.querySelector('.terminal-output');
       const nextOutput = terminal.output || '';
+      head.querySelector('[data-role="activity"]').replaceChildren(terminalActivityBadge(node, terminal, nextOutput));
       if (terminalOutputCache.get(terminal.target) !== nextOutput) {
         const shouldFollowTail = !terminalOutputCache.has(terminal.target) || isTerminalAtTail(output);
         const previousScrollTop = output.scrollTop;
