@@ -511,6 +511,7 @@
 
     function renderTerminals() {
       const terminals = model.terminals;
+      const pageScroll = captureTerminalPageScroll();
       document.getElementById('terminal-count').textContent = `${terminals.count} attachable`;
       document.getElementById('nav-terminals').textContent = String(terminals.count);
       if (!terminals.records.length) {
@@ -519,8 +520,10 @@
           'but no attachable terminal sessions. Start new agents through Q-COLD so they run in ' +
           'managed terminal sessions.</div>';
         terminalOutputCache.clear();
+        restoreTerminalPageScroll(pageScroll);
         return;
       }
+      terminalList.querySelectorAll('.empty').forEach((node) => node.remove());
       const targets = new Set(terminals.records.map((terminal) => terminal.target));
       Array.from(terminalList.querySelectorAll('.terminal-card')).forEach((node) => {
         if (!targets.has(node.dataset.target)) {
@@ -528,20 +531,33 @@
           node.remove();
         }
       });
-      for (const terminal of terminals.records) {
+      terminals.records.forEach((terminal, index) => {
         let node = terminalList.querySelector(`.terminal-card[data-target="${cssEscape(terminal.target)}"]`);
         if (!node) {
           node = createTerminalCard(terminal);
-          terminalList.appendChild(node);
         }
+        const reference = terminalList.children[index] || null;
+        if (reference !== node) terminalList.insertBefore(node, reference);
         updateTerminalCard(node, terminal);
-        terminalList.appendChild(node);
-      }
+      });
+      restoreTerminalPageScroll(pageScroll);
     }
 
     function cssEscape(value) {
       if (window.CSS && CSS.escape) return CSS.escape(value);
       return String(value).replace(/["\\]/g, '\\$&');
+    }
+
+    function captureTerminalPageScroll() {
+      return document.getElementById('view-terminals').classList.contains('active')
+        ? { left: window.scrollX, top: window.scrollY }
+        : null;
+    }
+
+    function restoreTerminalPageScroll(position) {
+      if (!position) return;
+      window.scrollTo(position.left, position.top);
+      window.requestAnimationFrame(() => window.scrollTo(position.left, position.top));
     }
 
     function createTerminalCard(terminal) {
@@ -574,6 +590,6 @@
       const output = node.querySelector('.terminal-output');
       const nextOutput = terminal.output || '';
       if (terminalOutputCache.get(terminal.target) !== nextOutput) {
-        const shouldFollowTail = isTerminalAtTail(output);
+        const shouldFollowTail = !terminalOutputCache.has(terminal.target) || isTerminalAtTail(output);
         const previousScrollTop = output.scrollTop;
         renderAnsi(output, nextOutput);
