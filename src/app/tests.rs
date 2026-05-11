@@ -4,12 +4,14 @@ mod tests {
     use super::{
         cargo_subcommand_args, codex_account_from_agent_command,
         codex_task_telemetry_for_worktree_in_roots,
-        find_codex_session_summary_in_root, is_queue_agent_track, parse_codex_session_summary,
-        parse_rfc3339_unix, polish_task_text, prompt_from_agent_command,
-        repo_root_for_agent_cwd_from_repositories, render_token_efficiency, render_token_usage,
-        slug_from_title, task_flow_metadata_equivalent, unix_now,
+        codex_import_matches_existing, find_codex_session_summary_in_root, is_queue_agent_track,
+        parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
+        prompt_from_agent_command, repo_root_for_agent_cwd_from_repositories,
+        render_token_efficiency, render_token_usage, slug_from_title,
+        task_flow_metadata_equivalent, unix_now,
     };
     use crate::repository::RepositoryConfig;
+    use crate::state;
     use std::collections::HashSet;
     use std::ffi::OsString;
     use std::fs;
@@ -568,6 +570,40 @@ mod tests {
         let root = repo_root_for_agent_cwd_from_repositories(Some(&agent_cwd), &[repo]).unwrap();
 
         assert_eq!(root, primary.canonicalize().unwrap().display().to_string());
+    }
+
+    #[test]
+    fn codex_session_import_updates_when_repo_root_drifts() {
+        let source = "codex-session";
+        let title = "status";
+        let description = "status";
+        let status = "closed:unknown";
+        let cwd = "/home/qqrm/repos/github/WT/vitastor/agents/agent-c1-123";
+        let metadata = r#"{"kind":"codex-session-import"}"#;
+        let existing = state::new_task_record(
+            "adhoc/1-status".to_string(),
+            source.to_string(),
+            title.to_string(),
+            description.to_string(),
+            status.to_string(),
+            Some("/home/qqrm/repos/github/qcold".to_string()),
+            Some(cwd.to_string()),
+            Some("c1-123".to_string()),
+            Some(metadata.to_string()),
+        );
+        let candidate = state::new_task_record(
+            existing.id.clone(),
+            source.to_string(),
+            title.to_string(),
+            description.to_string(),
+            status.to_string(),
+            Some("/home/qqrm/repos/github/vitastor".to_string()),
+            Some(cwd.to_string()),
+            Some("c1-123".to_string()),
+            Some(metadata.to_string()),
+        );
+
+        assert!(!codex_import_matches_existing(&existing, &candidate));
     }
 
     #[test]

@@ -71,9 +71,11 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
                     .ok()
                     .map(|path| path.display().to_string())
             });
+        let cwd_string = cwd.as_ref().map(|path| path.display().to_string());
+        let agent_id = agent.id.clone();
         let metadata = serde_json::json!({
             "kind": "codex-session-import",
-            "agent_id": agent.id.clone(),
+            "agent_id": agent_id.clone(),
             "track": agent.track.clone(),
             "command": command,
             "codex_account": account,
@@ -86,16 +88,6 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             "task_complete": summary.task_complete,
         });
         let metadata_json = metadata.to_string();
-        if let Some(existing_record) = existing_record {
-            if existing_record.source == source
-                && existing_record.title == title
-                && existing_record.description == record_description
-                && existing_record.status == status
-                && existing_record.metadata_json.as_deref() == Some(metadata_json.as_str())
-            {
-                continue;
-            }
-        }
         let record = state::new_task_record(
             record_id,
             source,
@@ -103,10 +95,15 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             record_description,
             status,
             repo_root,
-            cwd.map(|path| path.display().to_string()),
-            Some(agent.id),
+            cwd_string,
+            Some(agent_id),
             Some(metadata_json),
         );
+        if let Some(existing_record) = existing_record {
+            if codex_import_matches_existing(existing_record, &record) {
+                continue;
+            }
+        }
         let stored = state::upsert_task_record(&record)?;
         if let Some(path) = codex_session_path_from_task_record(&stored) {
             claimed_session_paths.insert(path);
@@ -115,6 +112,20 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
     }
 
     Ok(synced)
+}
+
+fn codex_import_matches_existing(
+    existing_record: &state::TaskRecordRow,
+    candidate: &state::TaskRecordRow,
+) -> bool {
+    existing_record.source == candidate.source
+        && existing_record.title == candidate.title
+        && existing_record.description == candidate.description
+        && existing_record.status == candidate.status
+        && existing_record.repo_root == candidate.repo_root
+        && existing_record.cwd == candidate.cwd
+        && existing_record.agent_id == candidate.agent_id
+        && existing_record.metadata_json == candidate.metadata_json
 }
 
 fn repo_root_for_agent_cwd(cwd: Option<&Path>) -> Option<String> {
