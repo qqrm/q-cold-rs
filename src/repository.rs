@@ -131,49 +131,123 @@ pub fn list() -> Result<Vec<RepositoryConfig>> {
 }
 
 pub fn active() -> Result<RepositoryConfig> {
-    resolve(AdapterContext::ActiveRepository)
+    Ok(resolve_unchecked(AdapterContext::ActiveRepository)?.repo)
 }
 
+/// Resolve a repository for adapter-backed command execution.
+///
+/// This path rejects mismatches between the caller's git checkout and the
+/// resolved repository target. Read-only registry views use `active()` so they
+/// remain available even when an operator needs to inspect or repair state.
 pub fn for_adapter_context(context: AdapterContext) -> Result<RepositoryConfig> {
-    resolve(context)
+    let resolved = resolve_unchecked(context)?;
+    ensure_cwd_matches_resolved_repo(&resolved.repo, context, &resolved.source)?;
+    Ok(resolved.repo)
 }
 
-fn resolve(context: AdapterContext) -> Result<RepositoryConfig> {
+struct ResolvedRepository {
+    repo: RepositoryConfig,
+    source: String,
+}
+
+fn resolve_unchecked(context: AdapterContext) -> Result<ResolvedRepository> {
     if let Some(root) = optional_env("QCOLD_REPO_ROOT") {
         let root = canonical_root(Path::new(&root))?;
         if root.join(".task/task.env").is_file() {
-            return match context {
-                AdapterContext::ActiveRepository => config_for_managed_worktree_primary(&root),
-                AdapterContext::CwdManagedWorktree => config_for_managed_worktree(&root),
+            let repo = match context {
+                AdapterContext::ActiveRepository => config_for_managed_worktree_primary(&root)?,
+                AdapterContext::CwdManagedWorktree => config_for_managed_worktree(&root)?,
             };
+            return Ok(ResolvedRepository {
+                repo,
+                source: format!("QCOLD_REPO_ROOT={}", root.display()),
+            });
         }
         if matches!(context, AdapterContext::CwdManagedWorktree) {
             if let Some(root) = cwd_managed_worktree_root()? {
-                return config_for_managed_worktree(&root);
+                return Ok(ResolvedRepository {
+                    repo: config_for_managed_worktree(&root)?,
+                    source: format!("cwd managed worktree {}", root.display()),
+                });
             }
         }
-        return fallback_for_root(&root);
+        return Ok(ResolvedRepository {
+            repo: fallback_for_root(&root)?,
+            source: format!("QCOLD_REPO_ROOT={}", root.display()),
+        });
     }
     if let Some(id) = optional_env("QCOLD_ACTIVE_REPO") {
-        return active_by_id(&id);
+        return Ok(ResolvedRepository {
+            repo: active_by_id(&id)?,
+            source: format!("QCOLD_ACTIVE_REPO={id}"),
+        });
     }
     if matches!(context, AdapterContext::CwdManagedWorktree) {
         if let Some(root) = cwd_managed_worktree_root()? {
-            return config_for_managed_worktree(&root);
+            return Ok(ResolvedRepository {
+                repo: config_for_managed_worktree(&root)?,
+                source: format!("cwd managed worktree {}", root.display()),
+            });
         }
     }
 
     let repos = list()?;
     if repos.is_empty() {
         if let Some(root) = cwd_managed_worktree_root()? {
-            return config_for_managed_worktree_primary(&root);
+            return Ok(ResolvedRepository {
+                repo: config_for_managed_worktree_primary(&root)?,
+                source: format!("cwd managed worktree {}", root.display()),
+            });
         }
-        return fallback();
+        return Ok(ResolvedRepository {
+            repo: fallback()?,
+            source: "current checkout fallback".to_string(),
+        });
     }
     if let Some(repo) = repos.iter().find(|repo| repo.active) {
-        return Ok(repo.clone());
+        return Ok(ResolvedRepository {
+            repo: repo.clone(),
+            source: format!("active repository {}", repo.id),
+        });
     }
-    Ok(repos[0].clone())
+    Ok(ResolvedRepository {
+        repo: repos[0].clone(),
+        source: format!("first registered repository {}", repos[0].id),
+    })
+}
+
+fn ensure_cwd_matches_resolved_repo(
+    repo: &RepositoryConfig,
+    context: AdapterContext,
+    source: &str,
+) -> Result<()> {
+    let cwd_root = match git_root() {
+        Ok(root) => canonical_root(&root)?,
+        Err(_) => return Ok(()),
+    };
+    if cwd_root == repo.root {
+        return Ok(());
+    }
+
+    let cwd_primary = if cwd_root.join(".task/task.env").is_file() {
+        primary_repo_path(&cwd_root)?
+    } else {
+        None
+    };
+    match context {
+        AdapterContext::ActiveRepository if cwd_primary.as_deref() == Some(repo.root.as_path()) => {
+            return Ok(());
+        }
+        AdapterContext::CwdManagedWorktree if repo.root == cwd_root => return Ok(()),
+        _ => {}
+    }
+
+    bail!(
+        "repository target mismatch: cwd git root is {}; resolved target root is {}; source is {source}; \
+         mutating or task-flow-sensitive commands must run from the target checkout or one of its managed worktrees",
+        cwd_root.display(),
+        repo.root.display(),
+    )
 }
 
 pub fn active_root() -> Result<PathBuf> {
@@ -184,6 +258,8 @@ pub fn current_or_active() -> Result<RepositoryConfig> {
     if let Some(repo) = current_checkout_config()? {
         return Ok(repo);
     }
+    // This fallback is intentionally unguarded for read-oriented callers. Do
+    // not use it to dispatch mutating adapter work.
     active()
 }
 
@@ -490,7 +566,9 @@ mod tests {
     fn managed_worktree_config_reuses_registered_primary_adapter_settings() {
         let _guard = crate::test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
+        let original_cwd = env::current_dir().unwrap();
         env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        env::set_current_dir(temp.path()).unwrap();
 
         let primary = temp.path().join("primary");
         let worktree = temp.path().join("WT/primary/anchor-task");
@@ -533,6 +611,7 @@ mod tests {
 
         env::remove_var("QCOLD_REPO_ROOT");
         env::remove_var("QCOLD_STATE_DIR");
+        env::set_current_dir(original_cwd).unwrap();
     }
 
     #[test]

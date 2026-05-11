@@ -173,9 +173,6 @@ fn agent_labels_by_id() -> HashMap<String, AgentLabelRecord> {
 
 fn generated_agent_label(context: &agents::TerminalAgentContext) -> String {
     let suffix = short_terminal_id(&context.id);
-    if let Some(summary) = terminal_command_summary(&context.command) {
-        return format!("{}: {} #{suffix}", context.track, summary);
-    }
     format!("{} #{suffix}", context.track)
 }
 
@@ -242,6 +239,7 @@ fn short_terminal_id(id: &str) -> String {
     }
 }
 
+#[cfg(test)]
 fn terminal_command_summary(command: &str) -> Option<String> {
     let command = command.trim();
     if command.is_empty() {
@@ -268,6 +266,7 @@ fn terminal_command_summary(command: &str) -> Option<String> {
     (!rest.is_empty()).then(|| truncate_chars(rest, 56))
 }
 
+#[cfg(test)]
 fn quoted_command_segments(command: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut chars = command.chars();

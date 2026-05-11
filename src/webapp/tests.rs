@@ -137,10 +137,16 @@ mod tests {
         };
 
         let instruction = queue_task_instruction(&item);
-        assert!(instruction.contains("home base for /workspace/repo"));
+        assert!(instruction.contains("Q-COLD_TASK_PACKET"));
+        assert!(instruction.contains("repo_root: /workspace/repo"));
+        assert!(instruction.contains("task_slug: task-run-01"));
+        assert!(instruction.contains("selected_command: c1"));
         assert!(instruction.contains("cargo qcold task open task-run-01"));
-        assert!(instruction.contains("then do: do focused work"));
-        assert!(instruction.contains("requires task pause or blocked closeout"));
+        assert!(instruction.contains("task_env: .task/task.env (after open, if present)"));
+        assert!(instruction.contains("task_logs: .task/logs/ (after open, if present)"));
+        assert!(instruction.contains("pause_or_blocked_only_for: business decision"));
+        assert!(instruction.contains("operator_request: |\n  do focused work"));
+        assert!(!instruction.contains("home base for /workspace/repo"));
     }
 
     #[test]
@@ -165,6 +171,32 @@ mod tests {
         };
 
         assert_eq!(queue_terminal_scope(&item), "task/task-mozgpaqk-03");
+    }
+
+    #[test]
+    fn queue_labels_use_slug_and_repo_not_prompt() {
+        let item = state::QueueItemRow {
+            id: "item-with-sensitive-prompt".to_string(),
+            run_id: "run".to_string(),
+            position: 0,
+            depends_on: Vec::new(),
+            prompt: "rotate production credential".to_string(),
+            slug: "task-run-01".to_string(),
+            repo_root: Some("/workspace/repo".to_string()),
+            repo_name: Some("repo".to_string()),
+            agent_command: "c1".to_string(),
+            agent_id: None,
+            status: "pending".to_string(),
+            message: String::new(),
+            attempts: 0,
+            next_attempt_at: None,
+            started_at: 0,
+            updated_at: 0,
+        };
+
+        assert_eq!(queue_display_label(&item), "repo task-run-01");
+        assert_eq!(queue_agent_id(&item), "qa-task-run-01");
+        assert!(!queue_display_label(&item).contains("credential"));
     }
 
     #[test]
@@ -625,6 +657,89 @@ mod tests {
             terminal_command_summary("codex exec \"inspect terminal panes\"").as_deref(),
             Some("inspect terminal panes")
         );
+    }
+
+    #[test]
+    fn generated_agent_label_does_not_include_prompt_text() {
+        let context = agents::TerminalAgentContext {
+            id: "queue-run-1234567890".to_string(),
+            track: "queue-run".to_string(),
+            session: "qcold-queue-run-1234567890".to_string(),
+            pane: "0.0".to_string(),
+            target: "qcold-queue-run-1234567890:0.0".to_string(),
+            started_at: 123,
+            command: "codex exec \"rotate production credential\"".to_string(),
+        };
+
+        let label = generated_agent_label(&context);
+
+        assert_eq!(label, "queue-run #7890");
+        assert!(!label.contains("credential"));
+    }
+
+    #[test]
+    fn task_chat_resume_packet_reports_existing_state_paths() {
+        let temp = tempdir().unwrap();
+        let cwd = temp.path().join("task-worktree");
+        let session = temp.path().join("session.jsonl");
+        fs::create_dir_all(cwd.join(".task/logs")).unwrap();
+        fs::write(cwd.join(".task/task.env"), "TASK_ID=task/example\n").unwrap();
+        fs::write(&session, "{}\n").unwrap();
+        let record = state::TaskRecordRow {
+            id: "task/example".to_string(),
+            source: "task-flow".to_string(),
+            sequence: Some(7),
+            title: "example".to_string(),
+            description: "operator body".to_string(),
+            status: "paused".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            repo_root: Some(temp.path().join("repo").display().to_string()),
+            cwd: Some(cwd.display().to_string()),
+            agent_id: None,
+            metadata_json: Some(
+                serde_json::json!({"session_path": session.display().to_string()}).to_string(),
+            ),
+        };
+
+        let packet = task_chat_resume_packet(&record);
+
+        assert!(packet.contains("Q-COLD_RESUME_PACKET"));
+        assert!(packet.contains("task_id: task/example"));
+        assert!(packet.contains("task_env: "));
+        assert!(packet.contains(".task/task.env"));
+        assert!(packet.contains("task_logs: "));
+        assert!(packet.contains(".task/logs"));
+        assert!(packet.contains(&format!("codex_session_path: {}", session.display())));
+        assert!(packet.contains("visible task state only"));
+        assert!(!packet.contains("operator body"));
+    }
+
+    #[test]
+    fn task_chat_resume_packet_omits_stale_state_paths() {
+        let record = state::TaskRecordRow {
+            id: "task/example".to_string(),
+            source: "task-flow".to_string(),
+            sequence: Some(7),
+            title: "example".to_string(),
+            description: "operator body".to_string(),
+            status: "paused".to_string(),
+            created_at: 1,
+            updated_at: 2,
+            repo_root: None,
+            cwd: Some("/definitely/missing/qcold-task".to_string()),
+            agent_id: None,
+            metadata_json: Some(
+                serde_json::json!({"session_path": "/definitely/missing/session.jsonl"})
+                    .to_string(),
+            ),
+        };
+
+        let packet = task_chat_resume_packet(&record);
+
+        assert!(packet.contains("Q-COLD_RESUME_PACKET"));
+        assert!(!packet.contains("cwd: /definitely/missing/qcold-task"));
+        assert!(!packet.contains("codex_session_path: /definitely/missing/session.jsonl"));
     }
 
     #[test]

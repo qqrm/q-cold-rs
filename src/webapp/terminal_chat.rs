@@ -145,13 +145,26 @@ fn ensure_task_chat_target(task_id: &str) -> Result<(String, String)> {
         .or(record.repo_root.as_deref().filter(|path| Path::new(path).is_dir()))
         .map(PathBuf::from);
     let request = AgentStartRequest {
+        id: Some(task_chat_agent_id(&record.id)),
         cwd,
         track: "task-chat".to_string(),
         command,
     };
     let agent = start_web_agent(&request)?;
-    let target = wait_for_agent_terminal_target(&agent.id)
-        .context("task chat terminal did not appear")?;
+    let Some(target) = wait_for_agent_terminal_target(&agent.id) else {
+        let _ = agents::terminate_agent(&agent.id);
+        bail!("task chat terminal did not appear");
+    };
+    let _ = state::save_terminal_metadata(
+        &target,
+        Some(&task_chat_display_label(&record)),
+        Some(&record.id),
+    );
+    thread::sleep(Duration::from_millis(500));
+    if let Err(err) = send_task_chat_text(&target, &task_chat_resume_packet(&record)) {
+        let _ = agents::terminate_agent(&agent.id);
+        return Err(err);
+    }
     record.agent_id = Some(agent.id.clone());
     state::upsert_task_record(&record)?;
     if let Some(item) = queue_item {
@@ -174,6 +187,94 @@ fn active_terminal_target_for_agent(agent_id: &str) -> Option<String> {
         .into_iter()
         .find(|context| context.id == agent_id)
         .map(|context| context.target)
+}
+
+fn task_chat_agent_id(task_id: &str) -> String {
+    let slug = task_id
+        .strip_prefix("task/")
+        .unwrap_or(task_id)
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('-')
+        .to_string();
+    if slug.is_empty() {
+        "task-chat".to_string()
+    } else if slug.len() <= 36 {
+        format!("chat-{slug}")
+    } else {
+        let prefix = slug.chars().take(24).collect::<String>();
+        format!("chat-{prefix}-{}", stable_short_hash(task_id))
+    }
+}
+
+fn task_chat_display_label(record: &state::TaskRecordRow) -> String {
+    let slug = record.id.strip_prefix("task/").unwrap_or(&record.id);
+    record
+        .repo_root
+        .as_deref()
+        .and_then(|root| Path::new(root).file_name())
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map_or_else(|| slug.to_string(), |name| format!("{name} {slug}"))
+}
+
+fn task_chat_resume_packet(record: &state::TaskRecordRow) -> String {
+    let mut packet = String::new();
+    let _ = writeln!(packet, "Q-COLD_RESUME_PACKET");
+    let _ = writeln!(packet, "task_id: {}", record.id);
+    if let Some(root) = record.repo_root.as_deref() {
+        let _ = writeln!(packet, "repo_root: {root}");
+    }
+    if let Some(cwd) = record.cwd.as_deref().filter(|path| Path::new(path).is_dir()) {
+        let _ = writeln!(packet, "cwd: {cwd}");
+        for (label, path) in existing_task_state_paths(Path::new(cwd)) {
+            let _ = writeln!(packet, "{label}: {}", path.display());
+        }
+    }
+    if let Some(path) = codex_session_path_from_metadata(record.metadata_json.as_deref())
+        .filter(|path| Path::new(path).is_file())
+    {
+        let _ = writeln!(packet, "codex_session_path: {path}");
+    }
+    let _ = writeln!(packet, "instruction: resume from visible task state only");
+    let _ = writeln!(packet, "END_Q-COLD_RESUME_PACKET");
+    packet
+}
+
+fn existing_task_state_paths(cwd: &Path) -> Vec<(&'static str, PathBuf)> {
+    let mut paths = Vec::new();
+    let task_env = cwd.join(".task/task.env");
+    if task_env.is_file() {
+        paths.push(("task_env", task_env));
+    }
+    for (label, relative) in [
+        ("task_logs", ".task/logs"),
+        ("task_log", ".task/log"),
+        ("task_iterations", ".task/iterations"),
+    ] {
+        let path = cwd.join(relative);
+        if path.exists() {
+            paths.push((label, path));
+        }
+    }
+    paths
+}
+
+fn stable_short_hash(value: &str) -> String {
+    let mut hash = 0xcbf2_9ce4_8422_2325_u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    let hex = format!("{hash:016x}");
+    hex[8..].to_string()
 }
 
 fn handle_terminal_metadata(
@@ -735,9 +836,18 @@ fn webapp_write_token_required() -> bool {
 
 fn start_web_agent(request: &AgentStartRequest) -> Result<agents::AgentRecord> {
     if let Some(cwd) = request.cwd.clone() {
-        agents::start_terminal_shell_agent_in_cwd(&request.track, &request.command, &cwd)
+        agents::start_terminal_shell_agent_with_id_in_cwd(
+            request.id.clone(),
+            &request.track,
+            &request.command,
+            &cwd,
+        )
     } else {
-        agents::start_terminal_shell_agent(&request.track, &request.command)
+        agents::start_terminal_shell_agent_with_id(
+            request.id.clone(),
+            &request.track,
+            &request.command,
+        )
     }
 }
 

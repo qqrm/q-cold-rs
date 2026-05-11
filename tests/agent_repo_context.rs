@@ -12,6 +12,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use assert_cmd::Command as AssertCommand;
+use predicates::str::contains;
 use tempfile::tempdir;
 
 #[test]
@@ -80,6 +81,121 @@ fn codex_agent_launch_prefers_daemon_cwd_checkout_over_active_repository() {
     assert!(captured.contains(&format!("repo={}", daemon_repo.display())));
     assert!(captured.contains("/WT/qcold/agents/"));
     assert!(!captured.contains(&format!("repo={}", active_repo.display())));
+}
+
+#[test]
+fn mutating_adapter_command_rejects_inherited_repo_root_from_another_checkout() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let inherited_repo = temp.path().join("vitastor");
+    let cwd_repo = temp.path().join("qcold");
+
+    seed_git_repo(&inherited_repo);
+    seed_git_repo(&cwd_repo);
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args(["verify", "fast"])
+        .current_dir(&cwd_repo)
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env("QCOLD_REPO_ROOT", &inherited_repo)
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .failure()
+        .stderr(contains("repository target mismatch"))
+        .stderr(contains(format!(
+            "cwd git root is {}",
+            cwd_repo.canonicalize().unwrap().display()
+        )))
+        .stderr(contains(format!(
+            "resolved target root is {}",
+            inherited_repo.canonicalize().unwrap().display()
+        )))
+        .stderr(contains("source is QCOLD_REPO_ROOT="));
+}
+
+#[test]
+fn mutating_adapter_command_rejects_active_repo_from_another_checkout() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let active_repo = temp.path().join("vitastor");
+    let cwd_repo = temp.path().join("qcold");
+
+    seed_git_repo(&active_repo);
+    seed_git_repo(&cwd_repo);
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args([
+            "repo",
+            "add",
+            "vitastor",
+            &active_repo.display().to_string(),
+            "--set-active",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args(["verify", "fast"])
+        .current_dir(&cwd_repo)
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .failure()
+        .stderr(contains("repository target mismatch"))
+        .stderr(contains(format!(
+            "cwd git root is {}",
+            cwd_repo.canonicalize().unwrap().display()
+        )))
+        .stderr(contains(format!(
+            "resolved target root is {}",
+            active_repo.canonicalize().unwrap().display()
+        )))
+        .stderr(contains("source is active repository vitastor"));
+}
+
+#[test]
+fn status_rejects_active_repo_from_another_checkout() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let active_repo = temp.path().join("vitastor");
+    let cwd_repo = temp.path().join("qcold");
+
+    seed_git_repo(&active_repo);
+    seed_git_repo(&cwd_repo);
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args([
+            "repo",
+            "add",
+            "vitastor",
+            &active_repo.display().to_string(),
+            "--set-active",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .arg("status")
+        .current_dir(&cwd_repo)
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .failure()
+        .stderr(contains("repository target mismatch"))
+        .stderr(contains("source is active repository vitastor"));
 }
 
 fn seed_git_repo(path: &Path) {

@@ -397,6 +397,7 @@ fn start_web_queue_item(
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
     let request = AgentStartRequest {
+        id: Some(queue_agent_id(item)),
         cwd: item.repo_root.as_ref().map(PathBuf::from),
         track: queue_track(run_id),
         command: item.agent_command.clone(),
@@ -415,24 +416,31 @@ fn start_web_queue_item(
         None,
     )?;
     let Some(target) = wait_for_agent_terminal_target(&agent.id) else {
-        return Ok(QueueItemOutcome::retryable_failure(
+        return Ok(retry_after_queue_agent_launch_failure(
+            &agent.id,
             "agent terminal did not appear",
         ));
     };
     set_queue_terminal_scope(&target, item)?;
     thread::sleep(Duration::from_secs(1));
     if let Err(err) = send_terminal_text_to_target(&target, "/new") {
-        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+        return Ok(retry_after_queue_agent_launch_failure(
+            &agent.id,
+            &format!("{err:#}"),
+        ));
     }
     thread::sleep(Duration::from_millis(500));
     if let Err(err) = send_terminal_text_to_target(&target, &queue_task_instruction(item)) {
-        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+        return Ok(retry_after_queue_agent_launch_failure(
+            &agent.id,
+            &format!("{err:#}"),
+        ));
     }
     state::update_web_queue_item(
         run_id,
         &item.id,
         "running",
-        &format!("agent {}", agent.id),
+        &format!("{} ({})", queue_display_label(item), agent.id),
         Some(&agent.id),
         attempts,
         None,
@@ -440,15 +448,26 @@ fn start_web_queue_item(
     wait_for_queue_item_closeout(run_id, item, &agent.id, attempts)
 }
 
+fn retry_after_queue_agent_launch_failure(agent_id: &str, message: &str) -> QueueItemOutcome {
+    let cleanup = cleanup_queue_agent(agent_id);
+    QueueItemOutcome::retryable_failure(format!("{message}; {cleanup}"))
+}
+
 fn set_queue_terminal_scope(target: &str, item: &state::QueueItemRow) -> Result<()> {
-    let metadata = terminal_metadata_by_target();
-    let name = metadata.get(target).and_then(|metadata| metadata.name.as_deref());
     let scope = queue_terminal_scope(item);
-    state::save_terminal_metadata(target, name, Some(&scope))
+    let name = queue_display_label(item);
+    state::save_terminal_metadata(target, Some(&name), Some(&scope))
 }
 
 fn queue_terminal_scope(item: &state::QueueItemRow) -> String {
     format!("task/{}", item.slug)
+}
+
+fn queue_display_label(item: &state::QueueItemRow) -> String {
+    item.repo_name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .map_or_else(|| item.slug.clone(), |name| format!("{name} {}", item.slug))
 }
 
 fn wait_for_queue_item_closeout(
@@ -756,17 +775,34 @@ fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
 
 fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let root = item.repo_root.as_deref().unwrap_or("<repo>");
-    format!(
-        "Use the launched host-side agent workspace as your home base for {root}; do not enter a \
-         devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task {slug} with cargo qcold task \
-         open {slug}, enter that managed task worktree and its devcontainer if the task flow \
-         provides one, reread AGENTS.md and task logs, then do: {prompt} Drive the task to \
-         terminal closeout unless a business or external blocker requires task pause or blocked \
-         closeout. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or \
-         task.",
-        slug = item.slug,
-        prompt = item.prompt.trim(),
-    )
+    let mut packet = String::new();
+    let _ = writeln!(packet, "Q-COLD_TASK_PACKET");
+    let _ = writeln!(packet, "repo_root: {root}");
+    let _ = writeln!(packet, "task_slug: {}", item.slug);
+    let _ = writeln!(packet, "selected_command: {}", item.agent_command);
+    let _ = writeln!(packet, "launch_context: host-side $QCOLD_AGENT_WORKTREE");
+    let _ = writeln!(packet, "required_flow:");
+    let _ = writeln!(packet, "  - cargo qcold task open {}", item.slug);
+    let _ = writeln!(packet, "  - cargo qcold task enter");
+    let _ = writeln!(packet, "  - reread AGENTS.md and available task logs");
+    let _ = writeln!(packet, "state_pointers:");
+    let _ = writeln!(packet, "  task_env: .task/task.env (after open, if present)");
+    let _ = writeln!(packet, "  task_logs: .task/logs/ (after open, if present)");
+    let _ = writeln!(packet, "validation_closeout:");
+    let _ = writeln!(packet, "  expect: run relevant validation, then terminal closeout");
+    let _ = writeln!(
+        packet,
+        "  success: cargo qcold task closeout --outcome success --message \"<message>\""
+    );
+    let _ = writeln!(packet, "blocker_boundary:");
+    let _ = writeln!(packet, "  pause_or_blocked_only_for: business decision or external resource");
+    let _ = writeln!(packet, "operator_request: |");
+    for line in item.prompt.trim().lines() {
+        let _ = writeln!(packet, "  {line}");
+    }
+    let _ = writeln!(packet, "after_closeout: cd back to $QCOLD_AGENT_WORKTREE");
+    let _ = writeln!(packet, "END_Q-COLD_TASK_PACKET");
+    packet
 }
 
 fn clean_queue_run_id(value: &str) -> String {
@@ -791,6 +827,16 @@ fn clean_queue_slug(
 
 fn queue_track(run_id: &str) -> String {
     format!("queue-{}", sanitize_daemon_id(run_id))
+}
+
+fn queue_agent_id(item: &state::QueueItemRow) -> String {
+    let slug = sanitize_daemon_id(&item.slug);
+    if slug.len() <= 36 {
+        format!("qa-{slug}")
+    } else {
+        let prefix = slug.chars().take(24).collect::<String>();
+        format!("qa-{prefix}-{}", stable_short_hash(&item.id))
+    }
 }
 
 fn queue_slug(run_id: &str, index: usize) -> String {

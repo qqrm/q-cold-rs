@@ -279,6 +279,7 @@ struct CommandTemplates {
 }
 
 struct AgentStartRequest {
+    id: Option<String>,
     cwd: Option<PathBuf>,
     track: String,
     command: String,

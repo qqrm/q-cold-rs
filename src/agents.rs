@@ -278,14 +278,19 @@ pub fn start_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
     )
 }
 
-pub fn start_terminal_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
+pub fn start_terminal_shell_agent_with_id(
+    id: Option<String>,
+    track: &str,
+    command: &str,
+) -> Result<AgentRecord> {
     if command.trim().is_empty() {
         bail!("agent command is empty");
     }
-    start_terminal_agent(None, track, command, None)
+    start_terminal_agent(id, track, command, None)
 }
 
-pub fn start_terminal_shell_agent_in_cwd(
+pub fn start_terminal_shell_agent_with_id_in_cwd(
+    id: Option<String>,
     track: &str,
     command: &str,
     cwd: &Path,
@@ -293,7 +298,7 @@ pub fn start_terminal_shell_agent_in_cwd(
     if command.trim().is_empty() {
         bail!("agent command is empty");
     }
-    start_terminal_agent(None, track, command, Some(cwd))
+    start_terminal_agent(id, track, command, Some(cwd))
 }
 
 fn start_agent(
@@ -478,6 +483,9 @@ fn prepare_launch_context(
 fn resolve_codex_launch_cwd() -> Result<PathBuf> {
     let current = env::current_dir().context("failed to read current directory")?;
     if managed_task_root_for(&current).is_some() {
+        return Ok(current);
+    }
+    if git_root_for(&current).is_ok() {
         return Ok(current);
     }
 

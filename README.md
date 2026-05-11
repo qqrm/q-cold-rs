@@ -129,8 +129,12 @@ task queue for starting tracked agents.
 
 `qcold repo add` stores repository connections in the local Q-COLD
 SQLite database. Adapter-backed commands such as `status`, `task`, `verify`,
-`ci`, `build`, `install`, `compat`, and `ffi` use the active repository instead
-of the daemon process cwd. Worktree-sensitive commands such as `task closeout`,
+`ci`, `build`, `install`, `compat`, and `ffi` use the active repository when
+the command is launched from that checkout or from one of its managed
+worktrees. They fail instead of silently dispatching when the current git
+checkout and resolved target repository disagree, including when
+`QCOLD_REPO_ROOT`, `QCOLD_ACTIVE_REPO`, or a registry active repository points
+at another checkout. Worktree-sensitive commands such as `task closeout`,
 `task enter`, `task finalize`, `task iteration-notify`, and validation commands
 run from a managed task worktree use that worktree even when a primary checkout
 is the active repository. The web dashboard and Q-COLD-started Codex agents use
@@ -138,7 +142,8 @@ the daemon's current git checkout when the daemon was launched from one, falling
 back to the active repository only when the daemon cwd is not inside a checkout.
 If no repository is registered, Q-COLD falls back to
 the current checkout for development compatibility. `QCOLD_REPO_ROOT` and
-`QCOLD_ACTIVE_REPO` can override the resolved connection for one process.
+`QCOLD_ACTIVE_REPO` can override the resolved connection for one process only
+when the override is coherent with the current checkout or managed worktree.
 
 Telegram outbound notifications still use `TELEGRAM_BOT_TOKEN` plus
 `QCOLD_TELEGRAM_OPERATOR_CHAT_ID` or `TELEGRAM_CHAT_ID` through the repository
@@ -182,9 +187,14 @@ tasks wait until their dependency set succeeds.
 Each queued row starts the selected Codex-like command without an argv prompt,
 waits for the attachable terminal pane, sends `/new`, and then sends the
 generated managed-task instruction so the row does not inherit the previous
-Codex chat context. Queue launcher agents are internal transport and do not
-create separate ad-hoc task records; the visible task state belongs to the
-managed `task/<slug>` record.
+Codex chat context. That instruction is a compact `Q-COLD_TASK_PACKET` with
+the repository root, task slug, selected command, required task-flow commands,
+validation and closeout expectation, blocker boundary, state pointers such as
+`.task/task.env` and task logs, and the operator request. Queue launcher
+agents use slug/repository-derived display labels and short session ids rather
+than prompt-derived labels. They are internal transport and do not create
+separate ad-hoc task records; the visible task state belongs to the managed
+`task/<slug>` record.
 The Queue is run by the Mini App backend, not by a long-lived browser loop.
 The browser submits the queued rows to `/api/queue/run`, can append more rows
 to that active run through `/api/queue/append`, and otherwise only renders the
@@ -222,8 +232,10 @@ operator messages back into the pane even before Codex telemetry has captured a
 session transcript; if no transcript is available yet, the modal falls back to
 the live terminal output. Blocked task chats remain operator-actionable: if the
 original pane has exited but the saved Codex session id is known, Q-COLD starts a
-fresh attachable `resume` terminal target before sending the next operator
-message. Removing a persisted queue row is the cleanup boundary for that work:
+fresh attachable `resume` terminal target, applies the task slug/repository
+display label, and sends a `Q-COLD_RESUME_PACKET` that references only visible
+task state paths that exist before sending the next operator message. Removing
+a persisted queue row is the cleanup boundary for that work:
 the backend removes the row, removes the matching `task/<slug>` record, and
 terminates the associated executor agent when one is still known. Rows without a
 task record still switch to the Tasks view while recording a row-level

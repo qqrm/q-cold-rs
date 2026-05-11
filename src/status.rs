@@ -4,13 +4,17 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
-use crate::{repository, state};
+use crate::{
+    repository::{self, AdapterContext},
+    state,
+};
 
 pub fn run() -> Result<u8> {
+    let repo = repository::for_adapter_context(AdapterContext::ActiveRepository)?;
     if let Err(err) = crate::sync_codex_task_records() {
         eprintln!("warning: failed to refresh Codex task token telemetry: {err:#}");
     }
-    print!("{}", snapshot()?);
+    print!("{}", snapshot_for(&repo.root)?);
     if let Some(summary) = task_record_token_snapshot()? {
         print!("{summary}");
     }
