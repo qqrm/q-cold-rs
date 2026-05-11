@@ -354,6 +354,20 @@
     .queue-add-actions {
       justify-content: flex-end;
     }
+    .queue-graph-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .queue-graph-toggle input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+    }
     .queue-run-actions {
       justify-content: space-between;
     }
@@ -462,6 +476,76 @@
     .queue-step.failed { border-left: 4px solid var(--bad); }
     .queue-step.running, .queue-step.starting { border-left: 4px solid var(--info); }
     .queue-step.blocked, .queue-step.stopped, .queue-step.paused { border-left: 4px solid var(--warn); }
+    .queue-graph-board {
+      display: flex;
+      gap: 10px;
+      min-height: 220px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+    .queue-graph-column {
+      display: grid;
+      align-content: start;
+      gap: 8px;
+      min-width: min(280px, 86vw);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--panel);
+    }
+    .queue-graph-column h3 {
+      margin: 0;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .queue-graph-root {
+      min-width: 190px;
+      border-style: dashed;
+      color: var(--muted);
+    }
+    .queue-graph-root p {
+      margin: 0;
+      font-size: 12px;
+    }
+    .queue-graph-card {
+      display: grid;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px;
+      background: var(--soft);
+      cursor: grab;
+    }
+    .queue-graph-card:active { cursor: grabbing; }
+    .queue-graph-card.success { border-left: 4px solid var(--ok); }
+    .queue-graph-card.failed { border-left: 4px solid var(--bad); }
+    .queue-graph-card.running, .queue-graph-card.starting { border-left: 4px solid var(--info); }
+    .queue-graph-card.blocked, .queue-graph-card.stopped, .queue-graph-card.paused { border-left: 4px solid var(--warn); }
+    .queue-graph-card-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+    }
+    .queue-graph-card p {
+      margin: 0;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      font-size: 13px;
+    }
+    .queue-graph-deps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+    .queue-dependency-chip {
+      min-width: 0;
+      width: auto;
+      padding: 4px 7px;
+      font-size: 11px;
+    }
     .agent-limit-toolbar {
       justify-content: flex-start;
       margin: 0 0 8px;

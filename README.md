@@ -166,6 +166,14 @@ dropdown of registered repositories plus one preferred Codex-like command per
 available account (`c1`, `c2`, or `codexN`) with auth/limit status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
+By default, Queue execution remains ordered and starts only the first unfinished
+row. Enabling Graph execution changes the draft into a dependency graph:
+task cards are draggable, dropping one task card onto another makes the target
+wait for the dropped task, and dropping a card into the Runs first column
+removes its prerequisites. Q-COLD rejects cyclic graph dependencies. In Graph
+execution, all queued tasks whose prerequisites have reached `closed:success`
+are started in parallel through separate Q-COLD terminal agents; downstream
+tasks wait until their dependency set succeeds.
 Each queued row starts the selected Codex-like command without an argv prompt,
 waits for the attachable terminal pane, sends `/new`, and then sends the
 generated managed-task instruction so the row does not inherit the previous
@@ -173,13 +181,14 @@ Codex chat context. Queue launcher agents are internal transport and do not
 create separate ad-hoc task records; the visible task state belongs to the
 managed `task/<slug>` record.
 The Queue is run by the Mini App backend, not by a long-lived browser loop.
-The browser submits the ordered rows to `/api/queue/run`, can append more rows
+The browser submits the queued rows to `/api/queue/run`, can append more rows
 to that active run through `/api/queue/append`, and otherwise only renders the
 backend queue snapshot. The backend stores the active run in Q-COLD state,
-starts one fresh Q-COLD terminal agent per queued prompt, waits for the matching
-managed `task/<slug>` record to reach `closed:success`, and then advances to
-the next row. After a row reaches `closed:success`, Q-COLD terminates the
-row's executor agent terminal while keeping the completed queue row as run
+starts one fresh Q-COLD terminal agent per runnable queued prompt, waits for the
+matching managed `task/<slug>` record to reach `closed:success`, and then
+advances any newly unblocked graph nodes. After a row reaches
+`closed:success`, Q-COLD terminates the row's executor agent terminal while
+keeping the completed queue row as run
 history; for Zellij-backed agents, cleanup deletes the session record instead
 of leaving a resurrectable exited session in the terminal list. If the backend
 is restarted while a queue run is active, the next

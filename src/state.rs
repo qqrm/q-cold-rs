@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 
 #[derive(Clone, Debug)]
@@ -60,6 +60,7 @@ pub struct TerminalMetadataRow {
 pub struct QueueRunRow {
     pub id: String,
     pub status: String,
+    pub execution_mode: String,
     pub selected_agent_command: String,
     pub selected_repo_root: Option<String>,
     pub selected_repo_name: Option<String>,
@@ -76,6 +77,7 @@ pub struct QueueItemRow {
     pub id: String,
     pub run_id: String,
     pub position: i64,
+    pub depends_on: Vec<String>,
     pub prompt: String,
     pub slug: String,
     pub repo_root: Option<String>,
@@ -184,12 +186,13 @@ pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()
         .context("failed to clear web queue runs")?;
     tx.execute(
         "insert into web_queue_runs
-             (id, status, selected_agent_command, selected_repo_root, selected_repo_name,
+             (id, status, execution_mode, selected_agent_command, selected_repo_root, selected_repo_name,
               track, current_index, stop_requested, message, created_at_unix, updated_at_unix)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         params![
             run.id,
             run.status,
+            run.execution_mode,
             run.selected_agent_command,
             run.selected_repo_root,
             run.selected_repo_name,
@@ -205,14 +208,15 @@ pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()
     for item in items {
         tx.execute(
             "insert into web_queue_items
-                 (id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                 (id, run_id, position, depends_on_json, prompt, slug, repo_root, repo_name, agent_command,
                   agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
                   updated_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 item.id,
                 item.run_id,
                 item.position,
+                queue_depends_on_json(&item.depends_on)?,
                 item.prompt,
                 item.slug,
                 item.repo_root,
@@ -256,14 +260,15 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
     for item in items {
         tx.execute(
             "insert into web_queue_items
-                 (id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                 (id, run_id, position, depends_on_json, prompt, slug, repo_root, repo_name, agent_command,
                   agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
                   updated_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 item.id,
                 item.run_id,
                 item.position,
+                queue_depends_on_json(&item.depends_on)?,
                 item.prompt,
                 item.slug,
                 item.repo_root,
@@ -300,7 +305,7 @@ pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     let connection = open_db()?;
     let run = connection
         .query_row(
-            "select id, status, selected_agent_command, selected_repo_root, selected_repo_name,
+            "select id, status, execution_mode, selected_agent_command, selected_repo_root, selected_repo_name,
                     track, current_index, stop_requested, message, created_at_unix, updated_at_unix
              from web_queue_runs
              order by updated_at_unix desc
@@ -317,7 +322,7 @@ pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
         .prepare(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
                     agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                    updated_at_unix
+                    updated_at_unix, depends_on_json
              from web_queue_items
              where run_id = ?1
              order by position, id",
@@ -335,7 +340,7 @@ pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<Queu
     let connection = open_db()?;
     let run = connection
         .query_row(
-            "select id, status, selected_agent_command, selected_repo_root, selected_repo_name,
+            "select id, status, execution_mode, selected_agent_command, selected_repo_root, selected_repo_name,
                     track, current_index, stop_requested, message, created_at_unix, updated_at_unix
              from web_queue_runs
              where id = ?1",
@@ -351,7 +356,7 @@ pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<Queu
         .prepare(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
                     agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                    updated_at_unix
+                    updated_at_unix, depends_on_json
              from web_queue_items
              where run_id = ?1
              order by position, id",
@@ -482,13 +487,13 @@ pub fn delete_web_queue_item_if_exists(
 ) -> Result<Option<QueueItemRow>> {
     let mut connection = open_db()?;
     let tx = connection
-        .transaction()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("failed to start web queue item delete transaction")?;
     let item = tx
         .query_row(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
                     agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                    updated_at_unix
+                    updated_at_unix, depends_on_json
              from web_queue_items
              where run_id = ?1 and id = ?2",
             params![run_id, item_id],
@@ -994,6 +999,7 @@ fn open_db() -> Result<Connection> {
              create table if not exists web_queue_runs (
                  id text primary key,
                  status text not null,
+                 execution_mode text not null default 'sequence',
                  selected_agent_command text not null,
                  selected_repo_root text,
                  selected_repo_name text,
@@ -1008,6 +1014,7 @@ fn open_db() -> Result<Connection> {
                  id text primary key,
                  run_id text not null references web_queue_runs(id) on delete cascade,
                  position integer not null,
+                 depends_on_json text not null default '[]',
                  prompt text not null,
                  slug text not null,
                  repo_root text,
@@ -1069,6 +1076,18 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
     ensure_column(connection, "tasks", "sequence", "integer")?;
     ensure_column(connection, "agents", "cwd", "text")?;
     ensure_web_queue_schema(connection)?;
+    ensure_column(
+        connection,
+        "web_queue_runs",
+        "execution_mode",
+        "text not null default 'sequence'",
+    )?;
+    ensure_column(
+        connection,
+        "web_queue_items",
+        "depends_on_json",
+        "text not null default '[]'",
+    )?;
     connection
         .execute(
             "create unique index if not exists tasks_repo_sequence
@@ -1087,6 +1106,7 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
             "create table if not exists web_queue_runs (
                  id text primary key,
                  status text not null,
+                 execution_mode text not null default 'sequence',
                  selected_agent_command text not null,
                  selected_repo_root text,
                  selected_repo_name text,
@@ -1101,6 +1121,7 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  id text primary key,
                  run_id text not null references web_queue_runs(id) on delete cascade,
                  position integer not null,
+                 depends_on_json text not null default '[]',
                  prompt text not null,
                  slug text not null,
                  repo_root text,
@@ -1310,23 +1331,33 @@ fn queue_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueRunRow> 
     Ok(QueueRunRow {
         id: row.get(0)?,
         status: row.get(1)?,
-        selected_agent_command: row.get(2)?,
-        selected_repo_root: row.get(3)?,
-        selected_repo_name: row.get(4)?,
-        track: row.get(5)?,
-        current_index: row.get(6)?,
-        stop_requested: row.get::<_, i64>(7)? != 0,
-        message: row.get(8)?,
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        execution_mode: row.get(2)?,
+        selected_agent_command: row.get(3)?,
+        selected_repo_root: row.get(4)?,
+        selected_repo_name: row.get(5)?,
+        track: row.get(6)?,
+        current_index: row.get(7)?,
+        stop_requested: row.get::<_, i64>(8)? != 0,
+        message: row.get(9)?,
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
 fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow> {
+    let depends_on_json = row.get::<_, Option<String>>(15)?.unwrap_or_default();
+    let depends_on = serde_json::from_str(&depends_on_json).map_err(|err| {
+        rusqlite::Error::FromSqlConversionFailure(
+            15,
+            rusqlite::types::Type::Text,
+            Box::new(err),
+        )
+    })?;
     Ok(QueueItemRow {
         id: row.get(0)?,
         run_id: row.get(1)?,
         position: row.get(2)?,
+        depends_on,
         prompt: row.get(3)?,
         slug: row.get(4)?,
         repo_root: row.get(5)?,
@@ -1340,6 +1371,10 @@ fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow
         started_at: row.get(13)?,
         updated_at: row.get(14)?,
     })
+}
+
+fn queue_depends_on_json(depends_on: &[String]) -> Result<String> {
+    serde_json::to_string(depends_on).context("failed to encode queue dependencies")
 }
 
 fn parse_legacy_agent(line: &str, log_dir: &Path) -> Result<AgentRow> {

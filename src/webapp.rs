@@ -40,6 +40,7 @@ const AGENT_LIMIT_STATUS_TIMEOUT: u64 = 20;
 const WEB_QUEUE_RETRY_DELAYS: [u64; 3] = [60, 300, 600];
 static AGENT_LIMIT_CACHE: OnceLock<Mutex<Option<AgentLimitCache>>> = OnceLock::new();
 static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static WEB_QUEUE_ITEM_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[derive(Args, Clone)]
 pub struct ServeArgs {
@@ -573,9 +574,11 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     );
     let now = unix_now();
     let track = queue_track(&run_id);
+    let execution_mode = clean_queue_execution_mode(payload.execution_mode.as_deref());
     let run = state::QueueRunRow {
         id: run_id.clone(),
         status: "running".to_string(),
+        execution_mode,
         selected_agent_command: selected_agent_command.to_string(),
         selected_repo_root: payload.selected_repo_root.filter(|value| !value.trim().is_empty()),
         selected_repo_name: payload.selected_repo_name.filter(|value| !value.trim().is_empty()),
@@ -587,7 +590,7 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
         updated_at: now,
     };
     let mut used_slugs = HashSet::new();
-    let items = prompts
+    let mut items = prompts
         .into_iter()
         .enumerate()
         .map(|(index, item)| {
@@ -608,6 +611,7 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
                     .unwrap_or_else(|| format!("queue-{run_id}-{}", index + 1)),
                 run_id: run_id.clone(),
                 position: i64::try_from(index).unwrap_or(i64::MAX),
+                depends_on: item.depends_on.unwrap_or_default(),
                 prompt: item.prompt.trim().to_string(),
                 slug,
                 repo_root: item
@@ -632,6 +636,7 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
             }
         })
         .collect::<Vec<_>>();
+    normalize_queue_dependencies(&run.execution_mode, &mut items)?;
     state::replace_web_queue(&run, &items)?;
     spawn_web_queue_worker(run_id.clone());
     Ok(run_id)
@@ -684,7 +689,7 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
         .max()
         .unwrap_or(-1)
         .saturating_add(1);
-    let items = prompts
+    let mut items = prompts
         .into_iter()
         .enumerate()
         .map(|(offset, item)| {
@@ -708,6 +713,7 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
                     .unwrap_or_else(|| format!("queue-{run_id}-{}", index + 1)),
                 run_id: run_id.clone(),
                 position: start_position.saturating_add(i64::try_from(offset).unwrap_or(0)),
+                depends_on: item.depends_on.unwrap_or_default(),
                 prompt: item.prompt.trim().to_string(),
                 slug,
                 repo_root: item
@@ -732,6 +738,14 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
             }
         })
         .collect::<Vec<_>>();
+    let mut all_items = existing_items.clone();
+    all_items.extend(items.clone());
+    normalize_queue_dependencies(&run.execution_mode, &mut all_items)?;
+    let normalized = all_items
+        .into_iter()
+        .filter(|item| items.iter().any(|new_item| new_item.id == item.id))
+        .collect::<Vec<_>>();
+    items = normalized;
     let count = items.len();
     state::append_web_queue_items(&run_id, &items)?;
     spawn_web_queue_worker(run_id);
@@ -785,6 +799,75 @@ fn handle_queue_continue_result(
     state::continue_web_queue_run(&run_id)?;
     spawn_web_queue_worker(run_id);
     Ok(())
+}
+
+fn clean_queue_execution_mode(value: Option<&str>) -> String {
+    match value.map(str::trim) {
+        Some("graph") => "graph".to_string(),
+        _ => "sequence".to_string(),
+    }
+}
+
+fn normalize_queue_dependencies(
+    execution_mode: &str,
+    items: &mut [state::QueueItemRow],
+) -> Result<()> {
+    if execution_mode != "graph" {
+        for item in items {
+            item.depends_on.clear();
+        }
+        return Ok(());
+    }
+    let ids = items
+        .iter()
+        .map(|item| item.id.clone())
+        .collect::<HashSet<_>>();
+    for item in items.iter_mut() {
+        let mut seen = HashSet::new();
+        item.depends_on.retain(|dependency| {
+            dependency != &item.id && ids.contains(dependency) && seen.insert(dependency.clone())
+        });
+    }
+    if queue_dependency_graph_has_cycle(items) {
+        bail!("queue dependency graph contains a cycle");
+    }
+    Ok(())
+}
+
+fn queue_dependency_graph_has_cycle(items: &[state::QueueItemRow]) -> bool {
+    let by_id = items
+        .iter()
+        .map(|item| (item.id.as_str(), item.depends_on.as_slice()))
+        .collect::<HashMap<_, _>>();
+    let mut visiting = HashSet::new();
+    let mut visited = HashSet::new();
+    items
+        .iter()
+        .any(|item| queue_dependency_visit(&by_id, item.id.as_str(), &mut visiting, &mut visited))
+}
+
+fn queue_dependency_visit<'a>(
+    by_id: &HashMap<&'a str, &'a [String]>,
+    id: &'a str,
+    visiting: &mut HashSet<&'a str>,
+    visited: &mut HashSet<&'a str>,
+) -> bool {
+    if visited.contains(id) {
+        return false;
+    }
+    if !visiting.insert(id) {
+        return true;
+    }
+    if let Some(dependencies) = by_id.get(id) {
+        for dependency in *dependencies {
+            if queue_dependency_visit(by_id, dependency.as_str(), visiting, visited) {
+                return true;
+            }
+        }
+    }
+    visiting.remove(id);
+    visited.insert(id);
+    false
 }
 
 fn handle_queue_remove(headers: &HeaderMap, payload: &QueueRemoveRequest) -> TerminalSendResponse {
@@ -982,36 +1065,162 @@ fn run_web_queue(run_id: &str) -> Result<()> {
     state::update_web_queue_run(run_id, "running", -1, "running")?;
     loop {
         let (run, items) = state::load_web_queue_run(run_id)?;
-        if run.is_none() {
+        let Some(run) = run else {
             return Ok(());
-        }
+        };
         if items.is_empty() {
             state::update_web_queue_run(run_id, "failed", -1, "queue has no items")?;
             return Ok(());
         }
-        let Some(item) = items.into_iter().find(|item| !queue_item_terminal(&item.status)) else {
+        if let Some(item) = items
+            .iter()
+            .find(|item| matches!(item.status.as_str(), "failed" | "blocked"))
+        {
+            state::update_web_queue_run(run_id, "failed", item.position, &item.message)?;
+            return Ok(());
+        }
+        if items.iter().all(|item| queue_item_terminal(&item.status)) {
             state::update_web_queue_run(run_id, "success", -1, "closed successfully")?;
             return Ok(());
-        };
-        let index = item.position;
+        }
         if state::web_queue_stop_requested(run_id)? {
-            pause_web_queue_item(run_id, &item, item.agent_id.as_deref(), item.attempts)?;
-            state::update_web_queue_run(run_id, "stopped", index, "stopped by operator")?;
+            for item in items.iter().filter(|item| !queue_item_terminal(&item.status)) {
+                if !queue_item_worker_active(run_id, &item.id) {
+                    pause_web_queue_item(run_id, item, item.agent_id.as_deref(), item.attempts)?;
+                }
+            }
+            state::update_web_queue_run(run_id, "stopped", -1, "stopped by operator")?;
             return Ok(());
         }
-        state::update_web_queue_run(run_id, "running", index, &format!("running {}", item.slug))?;
-        match run_web_queue_item(run_id, &item)? {
-            QueueItemOutcome::Success => {}
-            QueueItemOutcome::Stopped => {
-                state::update_web_queue_run(run_id, "stopped", index, "stopped by operator")?;
-                return Ok(());
-            }
-            QueueItemOutcome::Failed { message, .. } => {
-                state::update_web_queue_run(run_id, "failed", index, &message)?;
-                return Ok(());
+
+        let ready = queue_ready_items(&run, &items);
+        let mut spawned = 0_usize;
+        for item in ready {
+            if spawn_web_queue_item_worker(run_id.to_string(), item) {
+                spawned += 1;
             }
         }
+        let active = queue_active_item_count(run_id, &items);
+        let runnable = items
+            .iter()
+            .filter(|item| !queue_item_terminal(&item.status))
+            .count();
+        let message = if spawned > 0 {
+            format!("started {spawned} ready task(s); {runnable} active or waiting")
+        } else if active > 0 {
+            format!("running {active} task(s); {runnable} active or waiting")
+        } else {
+            "waiting for dependencies".to_string()
+        };
+        state::update_web_queue_run(run_id, "running", -1, &message)?;
+        thread::sleep(Duration::from_secs(5));
     }
+}
+
+fn queue_ready_items(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+) -> Vec<state::QueueItemRow> {
+    if run.execution_mode != "graph" {
+        let Some(item) = items
+            .iter()
+            .filter(|item| !queue_item_terminal(&item.status))
+            .min_by_key(|item| (item.position, item.id.as_str()))
+        else {
+            return Vec::new();
+        };
+        if queue_item_is_ready_to_spawn(run, item, items) {
+            return vec![item.clone()];
+        }
+        return Vec::new();
+    }
+    let mut candidates = items
+        .iter()
+        .filter(|item| queue_item_is_ready_to_spawn(run, item, items))
+        .cloned()
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|item| (item.position, item.id.clone()));
+    candidates
+}
+
+fn queue_item_is_ready_to_spawn(
+    run: &state::QueueRunRow,
+    item: &state::QueueItemRow,
+    items: &[state::QueueItemRow],
+) -> bool {
+    !queue_item_terminal(&item.status)
+        && !queue_item_worker_active(&run.id, &item.id)
+        && (!matches!(item.status.as_str(), "starting" | "running")
+            || item
+                .agent_id
+                .as_deref()
+                .is_some_and(|agent_id| !agent_running(agent_id)))
+        && item.next_attempt_at.map_or(true, |time| time <= unix_now())
+        && queue_dependencies_satisfied(item, items)
+}
+
+fn queue_dependencies_satisfied(
+    item: &state::QueueItemRow,
+    items: &[state::QueueItemRow],
+) -> bool {
+    item.depends_on.iter().all(|dependency| {
+        items
+            .iter()
+            .find(|candidate| candidate.id == *dependency)
+            .map_or(true, |candidate| candidate.status == "success")
+    })
+}
+
+fn queue_active_item_count(run_id: &str, items: &[state::QueueItemRow]) -> usize {
+    items
+        .iter()
+        .filter(|item| {
+            queue_item_worker_active(run_id, &item.id)
+                || matches!(item.status.as_str(), "starting" | "running" | "waiting")
+        })
+        .count()
+}
+
+fn queue_item_worker_key(run_id: &str, item_id: &str) -> String {
+    format!("{run_id}:{item_id}")
+}
+
+fn queue_item_worker_active(run_id: &str, item_id: &str) -> bool {
+    let key = queue_item_worker_key(run_id, item_id);
+    WEB_QUEUE_ITEM_WORKERS
+        .get()
+        .and_then(|workers| workers.lock().ok())
+        .is_some_and(|active| active.contains(&key))
+}
+
+fn spawn_web_queue_item_worker(run_id: String, item: state::QueueItemRow) -> bool {
+    let key = queue_item_worker_key(&run_id, &item.id);
+    let workers = WEB_QUEUE_ITEM_WORKERS.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut active) = workers.lock() {
+        if !active.insert(key.clone()) {
+            return false;
+        }
+    }
+    thread::spawn(move || {
+        let item_id = item.id.clone();
+        if let Err(err) = run_web_queue_item(&run_id, &item) {
+            let _ = state::update_web_queue_item(
+                &run_id,
+                &item_id,
+                "failed",
+                &format!("{err:#}"),
+                item.agent_id.as_deref(),
+                item.attempts,
+                None,
+            );
+        }
+        if let Some(workers) = WEB_QUEUE_ITEM_WORKERS.get() {
+            if let Ok(mut active) = workers.lock() {
+                active.remove(&key);
+            }
+        }
+    });
+    true
 }
 
 fn queue_item_terminal(status: &str) -> bool {
@@ -3700,6 +3909,7 @@ struct TaskTranscriptMessage {
 #[derive(Deserialize)]
 struct QueueRunRequest {
     run_id: Option<String>,
+    execution_mode: Option<String>,
     selected_agent_command: String,
     selected_repo_root: Option<String>,
     selected_repo_name: Option<String>,
@@ -3711,6 +3921,7 @@ struct QueueRunItemRequest {
     id: Option<String>,
     prompt: String,
     slug: Option<String>,
+    depends_on: Option<Vec<String>>,
     repo_root: Option<String>,
     repo_name: Option<String>,
     agent_command: Option<String>,
@@ -3916,6 +4127,7 @@ mod tests {
             id: "item".to_string(),
             run_id: "run".to_string(),
             position: 0,
+            depends_on: Vec::new(),
             prompt: "do focused work".to_string(),
             slug: "task-run-01".to_string(),
             repo_root: Some("/workspace/repo".to_string()),
@@ -3943,6 +4155,7 @@ mod tests {
             id: "item".to_string(),
             run_id: "run".to_string(),
             position: 0,
+            depends_on: Vec::new(),
             prompt: "do focused work".to_string(),
             slug: "task-mozgpaqk-03".to_string(),
             repo_root: Some("/workspace/repo".to_string()),
@@ -4036,6 +4249,9 @@ mod tests {
 
     #[test]
     fn running_queue_removal_contract_covers_active_future_and_terminal_rows() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let run = queue_run_fixture("run", "running", 3);
         let cases = [
             ("success", 2, None, true),
@@ -4065,8 +4281,10 @@ mod tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let run = queue_run_fixture("run-contract", "running", 1);
+        let mut third = queue_item_fixture("run-contract", "third", 3, "pending", None);
+        third.depends_on = vec!["first".to_string()];
         let items = vec![
-            queue_item_fixture("run-contract", "third", 3, "pending", None),
+            third,
             queue_item_fixture("run-contract", "first", 1, "success", Some("agent-1")),
             queue_item_fixture("run-contract", "second", 2, "pending", None),
         ];
@@ -4075,6 +4293,7 @@ mod tests {
         let (stored_run, stored_items) = state::load_web_queue_run("run-contract").unwrap();
 
         assert_eq!(stored_run.unwrap().id, "run-contract");
+        assert_eq!(stored_items[2].depends_on, vec!["first".to_string()]);
         assert_eq!(
             stored_items
                 .iter()
@@ -4130,10 +4349,69 @@ mod tests {
         );
     }
 
+    #[test]
+    fn graph_queue_ready_items_respect_dependencies() {
+        let mut run = queue_run_fixture("graph", "running", -1);
+        run.execution_mode = "graph".to_string();
+        let mut first = queue_item_fixture("graph", "first", 0, "pending", None);
+        let second = queue_item_fixture("graph", "second", 1, "pending", None);
+        let mut third = queue_item_fixture("graph", "third", 2, "pending", None);
+        third.depends_on = vec!["first".to_string(), "second".to_string()];
+        let items = vec![first.clone(), second.clone(), third.clone()];
+
+        assert_eq!(
+            queue_ready_items(&run, &items)
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+
+        first.status = "success".to_string();
+        let items = vec![first, second, third];
+        assert_eq!(
+            queue_ready_items(&run, &items)
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["second"]
+        );
+    }
+
+    #[test]
+    fn sequence_queue_still_runs_one_ready_item_at_a_time() {
+        let run = queue_run_fixture("sequence", "running", -1);
+        let items = vec![
+            queue_item_fixture("sequence", "first", 0, "pending", None),
+            queue_item_fixture("sequence", "second", 1, "pending", None),
+        ];
+
+        assert_eq!(
+            queue_ready_items(&run, &items)
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first"]
+        );
+    }
+
+    #[test]
+    fn graph_dependency_normalization_rejects_cycles() {
+        let mut items = vec![
+            queue_item_fixture("graph", "first", 0, "pending", None),
+            queue_item_fixture("graph", "second", 1, "pending", None),
+        ];
+        items[0].depends_on = vec!["second".to_string()];
+        items[1].depends_on = vec!["first".to_string()];
+
+        assert!(normalize_queue_dependencies("graph", &mut items).is_err());
+    }
+
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
             status: status.to_string(),
+            execution_mode: "sequence".to_string(),
             selected_agent_command: "c1".to_string(),
             selected_repo_root: None,
             selected_repo_name: None,
@@ -4157,6 +4435,7 @@ mod tests {
             id: id.to_string(),
             run_id: run_id.to_string(),
             position,
+            depends_on: Vec::new(),
             prompt: format!("prompt {id}"),
             slug: format!("task-{id}"),
             repo_root: None,

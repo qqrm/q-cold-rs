@@ -17,6 +17,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueAgentState = document.getElementById('queue-agent-state');
     const queueState = document.getElementById('queue-state');
     const queueStatus = document.getElementById('queue-status');
+    const queueGraphModeInput = document.getElementById('queue-graph-mode');
     const transcriptModal = document.getElementById('transcript-modal');
     const transcriptTitle = document.getElementById('transcript-title');
     const transcriptSubtitle = document.getElementById('transcript-subtitle');
@@ -35,8 +36,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueStorageKey = 'qcold-task-queue-v4';
     const queueAgentStorageKey = 'qcold-task-queue-agent-v1';
     const queueRepoStorageKey = 'qcold-task-queue-repo-v1';
+    const queueGraphModeStorageKey = 'qcold-task-queue-graph-mode-v1';
     let selectedQueueAgent = localStorage.getItem(queueAgentStorageKey) || '';
     let selectedQueueRepoRoot = localStorage.getItem(queueRepoStorageKey) || '';
+    let queueGraphMode = localStorage.getItem(queueGraphModeStorageKey) === '1';
     const queueSaved = loadQueueStorage();
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
@@ -151,6 +154,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
           slug: '',
           agentId: '',
           agentCommand: item.agentCommand,
+          dependsOn: item.dependsOn || [],
           repoRoot: item.repoRoot,
           repoName: item.repoName,
           position: null,
@@ -169,6 +173,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         slug: '',
         agentId: '',
         agentCommand: '',
+        dependsOn: [],
         repoRoot: '',
         repoName: '',
         position: null,
@@ -449,6 +454,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
           runId: state.queue.run?.id || existingQueueRunId(),
           status: state.queue.run?.status || '',
         };
+        queueGraphMode = state.queue.run?.execution_mode === 'graph';
         return;
       }
       queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
@@ -498,6 +504,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         runId: item.run_id || '',
         prompt: item.prompt || '',
         slug: item.slug || '',
+        dependsOn: Array.isArray(item.depends_on) ? item.depends_on : [],
         agentId: item.agent_id || '',
         agentCommand: item.agent_command || '',
         repoRoot: item.repo_root || '',
@@ -514,7 +521,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function renderQueue() {
       document.getElementById('nav-queue').textContent = String(queueItems.length);
-      queueState.textContent = queueRun.running ? queueRunningText() : queueRun.stopped ? 'stopped' : 'idle';
+      queueGraphModeInput.checked = queueGraphMode;
+      queueGraphModeInput.disabled = queueRun.running || queueRun.stopped;
+      queueState.textContent = queueRun.running ? queueRunningText() : queueRun.stopped ? 'stopped' : queueGraphMode ? 'graph' : 'idle';
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
       queueInput.disabled = false;
       renderQueueRepoSelector();
@@ -531,6 +540,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
         empty.className = 'empty';
         empty.textContent = 'No queued tasks.';
         queueStatus.replaceChildren(empty);
+        return;
+      }
+      if (queueGraphMode) {
+        renderQueueGraph();
         return;
       }
       queueStatus.replaceChildren(...queueItems.map((item, index) => {
@@ -557,8 +570,155 @@ const tg = window.Telegram && window.Telegram.WebApp;
       stopButton.classList.toggle('visible', queueRun.running || queueRun.stopped);
     }
 
+    function renderQueueGraph() {
+      const board = document.createElement('div');
+      board.className = 'queue-graph-board';
+      const levels = queueGraphLevels();
+      const startColumn = document.createElement('section');
+      startColumn.className = 'queue-graph-column queue-graph-root';
+      startColumn.innerHTML = '<h3>Runs first</h3><p>Drop a task here to remove its prerequisites.</p>';
+      startColumn.addEventListener('dragover', allowQueueGraphDrop);
+      startColumn.addEventListener('drop', (event) => {
+        event.preventDefault();
+        const sourceId = event.dataTransfer.getData('text/qcold-queue-item');
+        const item = queueItems.find((candidate) => candidate.id === sourceId);
+        if (!item || queueRun.running) return;
+        item.dependsOn = [];
+        saveQueueStorage();
+        renderQueue();
+      });
+      board.appendChild(startColumn);
+
+      levels.forEach((items, index) => {
+        const column = document.createElement('section');
+        column.className = 'queue-graph-column';
+        const heading = document.createElement('h3');
+        heading.textContent = `Wave ${index + 1}`;
+        column.appendChild(heading);
+        items.forEach((item) => column.appendChild(queueGraphCard(item)));
+        board.appendChild(column);
+      });
+      queueStatus.replaceChildren(board);
+    }
+
+    function queueGraphLevels() {
+      const byId = new Map(queueItems.map((item) => [item.id, item]));
+      const memo = new Map();
+      const depth = (item, stack = new Set()) => {
+        if (!item) return 0;
+        if (memo.has(item.id)) return memo.get(item.id);
+        if (stack.has(item.id)) return 0;
+        stack.add(item.id);
+        const value = Math.max(0, ...(item.dependsOn || [])
+          .map((dependency) => depth(byId.get(dependency), stack) + 1));
+        stack.delete(item.id);
+        memo.set(item.id, value);
+        return value;
+      };
+      const levels = [];
+      queueItems.forEach((item) => {
+        const level = depth(item);
+        if (!levels[level]) levels[level] = [];
+        levels[level].push(item);
+      });
+      return levels.filter(Boolean);
+    }
+
+    function queueGraphCard(item) {
+      const index = queueItems.findIndex((candidate) => candidate.id === item.id);
+      const view = queueItemView(item);
+      const card = document.createElement('article');
+      card.className = `queue-graph-card ${view.status}`;
+      card.draggable = !queueRun.running;
+      card.dataset.itemId = item.id;
+      card.addEventListener('dragstart', (event) => {
+        event.dataTransfer.effectAllowed = 'linkMove';
+        event.dataTransfer.setData('text/qcold-queue-item', item.id);
+      });
+      card.addEventListener('dragover', allowQueueGraphDrop);
+      card.addEventListener('drop', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const sourceId = event.dataTransfer.getData('text/qcold-queue-item');
+        addQueueDependency(sourceId, item.id);
+      });
+
+      const title = document.createElement('div');
+      title.className = 'queue-graph-card-title';
+      title.append(badge(queueStatusText(item)), document.createTextNode(` #${index + 1}`));
+      const prompt = document.createElement('p');
+      prompt.textContent = item.prompt || '(empty prompt)';
+      const deps = document.createElement('div');
+      deps.className = 'queue-graph-deps';
+      if (item.dependsOn?.length) {
+        item.dependsOn.forEach((dependency) => {
+          const depIndex = queueItems.findIndex((candidate) => candidate.id === dependency);
+          const chip = queueActionButton(`waits #${depIndex + 1}`, () => removeQueueDependency(dependency, item.id), 'Remove dependency');
+          chip.classList.add('queue-dependency-chip');
+          deps.appendChild(chip);
+        });
+      } else {
+        const chip = document.createElement('span');
+        chip.className = 'badge ready';
+        chip.textContent = 'no prerequisites';
+        deps.appendChild(chip);
+      }
+      const controls = queueItemControls(index);
+      card.append(title, prompt, deps, controls);
+      return card;
+    }
+
+    function allowQueueGraphDrop(event) {
+      if (queueRun.running) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'link';
+    }
+
+    function addQueueDependency(sourceId, targetId) {
+      if (!sourceId || !targetId || sourceId === targetId || queueRun.running) return;
+      const target = queueItems.find((item) => item.id === targetId);
+      if (!target) return;
+      target.dependsOn = Array.from(new Set([...(target.dependsOn || []), sourceId]));
+      if (queueGraphHasCycle()) {
+        target.dependsOn = target.dependsOn.filter((id) => id !== sourceId);
+        appendLocalMessage('error', 'Dependency would create a cycle');
+        return;
+      }
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function removeQueueDependency(sourceId, targetId) {
+      const target = queueItems.find((item) => item.id === targetId);
+      if (!target || queueRun.running) return;
+      target.dependsOn = (target.dependsOn || []).filter((id) => id !== sourceId);
+      saveQueueStorage();
+      renderQueue();
+    }
+
+    function queueGraphHasCycle() {
+      const byId = new Map(queueItems.map((item) => [item.id, item]));
+      const visiting = new Set();
+      const visited = new Set();
+      const visit = (id) => {
+        if (visited.has(id)) return false;
+        if (visiting.has(id)) return true;
+        visiting.add(id);
+        const item = byId.get(id);
+        const cyclic = (item?.dependsOn || []).some(visit);
+        visiting.delete(id);
+        visited.add(id);
+        return cyclic;
+      };
+      return queueItems.some((item) => visit(item.id));
+    }
+
     function queueRunningText() {
       const activePosition = Number(queueRun.activeIndex);
+      if (queueGraphMode || queueRun.status === 'graph') {
+        const active = queueItems.filter((item) => ['starting', 'running', 'waiting'].includes(queueItemView(item).status)).length;
+        return `running ${active}/${queueItems.length}`;
+      }
       const visibleIndex = queueItems.findIndex((item) => Number(item.position) === activePosition);
       const ordinal = visibleIndex >= 0
         ? visibleIndex + 1
@@ -672,7 +832,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
         currentIndex = index;
       }
       if (currentIndex === -1) return;
-      queueItems.splice(currentIndex, 1);
+      const [removed] = queueItems.splice(currentIndex, 1);
+      if (removed?.id) {
+        queueItems.forEach((candidate) => {
+          candidate.dependsOn = (candidate.dependsOn || []).filter((id) => id !== removed.id);
+        });
+      }
       saveQueueStorage();
       renderQueue();
     }
@@ -1898,6 +2063,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           run_id: queueRun.runId,
+          execution_mode: queueGraphMode ? 'graph' : 'sequence',
           selected_agent_command: selectedAgent.command,
           selected_repo_root: selectedRepo.root || '',
           selected_repo_name: selectedRepo.name || '',
@@ -1905,6 +2071,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
             id: item.id,
             prompt: item.prompt,
             slug: item.slug,
+            depends_on: queueGraphMode ? (item.dependsOn || []) : [],
             repo_root: item.repoRoot,
             repo_name: item.repoName,
             agent_command: item.agentCommand || selectedAgent.command,
@@ -2018,6 +2185,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
     document.getElementById('run-queue').addEventListener('click', runQueue);
     document.getElementById('stop-queue').addEventListener('click', stopQueue);
     document.getElementById('refresh-agent-limits').addEventListener('click', () => loadAgentLimits(true));
+    queueGraphModeInput.addEventListener('change', () => {
+      queueGraphMode = queueGraphModeInput.checked;
+      localStorage.setItem(queueGraphModeStorageKey, queueGraphMode ? '1' : '0');
+      renderQueue();
+    });
     queueInput.addEventListener('keydown', (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addQueueTask();
     });
