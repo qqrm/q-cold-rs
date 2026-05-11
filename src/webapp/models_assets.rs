@@ -426,8 +426,7 @@ fn run_agent_status_probe(command: &str) -> io::Result<std::process::Output> {
     Command::new("timeout")
         .arg(format!("{AGENT_LIMIT_STATUS_TIMEOUT}s"))
         .arg(command)
-        .arg("exec")
-        .arg("status")
+        .arg("--version")
         .env("QCOLD_AGENT_MANAGED_WORKTREE", "0")
         .stdin(Stdio::null())
         .output()
@@ -480,12 +479,13 @@ fn classify_agent_status_output(
     let summary = if limited {
         extract_relevant_status_line(&text).unwrap_or_else(|| "limit reached".to_string())
     } else if timed_out {
-        format!("status probe timed out after {AGENT_LIMIT_STATUS_TIMEOUT}s")
+        format!("readiness probe timed out after {AGENT_LIMIT_STATUS_TIMEOUT}s")
     } else if output.status.success() {
-        extract_relevant_status_line(&text).unwrap_or_else(|| "status probe completed".to_string())
+        extract_relevant_status_line(&text)
+            .unwrap_or_else(|| "readiness probe completed".to_string())
     } else {
         extract_relevant_status_line(&text)
-            .unwrap_or_else(|| format!("status probe exited with {}", output.status))
+            .unwrap_or_else(|| format!("readiness probe exited with {}", output.status))
     };
     AgentLimitRecord {
         command: agent.command.clone(),

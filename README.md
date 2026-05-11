@@ -179,7 +179,7 @@ The dashboard opens to the Queue view and keeps repository/task/agent overview
 state in a compact always-visible status strip. Its Queue view accepts
 one task prompt at a time, appends it to a visible ordered queue, shows a
 dropdown of registered repositories plus one preferred Codex-like command per
-available account (`c1`, `c2`, or `codexN`) with auth/limit status, and starts
+available account (`c1`, `c2`, or `codexN`) with auth/readiness status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
 By default, Queue execution remains ordered and starts only the first unfinished
@@ -276,12 +276,12 @@ available for debugging, but terminal readiness ignores task worktrees whose
 task env has already reached a `closed:*` status. It streams state updates with
 server-sent events and includes an `Auto`/`Dark`/`Light` theme switch stored in
 browser local storage. The Agents view shows
-detected local agent commands and their account/auth/limit probe status before
-the running-process sections. Limit probes run through a cached
+detected local agent commands and their account/auth/readiness probe status before
+the running-process sections. Readiness probes run through a cached
 `/api/agent-limits` request when the Agents view is opened or refreshed. Q-COLD
 uses each account's base command such as `c1`, `c2`, or `codexN` with
-`exec status`, retries transient failures, and avoids compact `cc*` wrappers so
-probing does not create terminal-agent sessions. The same view shows only
+`--version`, retries transient failures, and avoids compact `cc*` wrappers so
+probing does not create model sessions. The same view shows only
 currently running Q-COLD tracked agents and separates them from host-discovered
 agent programs: native `codex` processes plus the Q-COLD web control daemon.
 Exited Q-COLD agent records remain available through the CLI registry surface,
