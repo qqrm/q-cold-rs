@@ -179,9 +179,8 @@ fixture or debugging task explicitly needs them.
 
 - Every non-trivial iteration should pass `cargo xtask verify fast` locally
   before terminal closeout. The repository-local `xtask` implementation is the
-  GitHub Actions/`act` preflight entry point, and Q-COLD self-hosted
-  `cargo qcold verify` plus successful task closeout invoke it through the same
-  adapter boundary.
+  local preflight entry point, and Q-COLD self-hosted `cargo qcold verify` plus
+  successful task closeout invoke it through the same adapter boundary.
 - The self-hosted fast gate enforces tracked text hygiene before heavier
   validation: new tracked text files must stay at or below 1,000 lines, all
   tracked text lines must stay at or below 120 characters, and any large-file

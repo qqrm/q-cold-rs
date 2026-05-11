@@ -50,8 +50,7 @@ clean commit build.
 
 ## Local iteration checks
 
-Run the same preflight gate locally before closing a task or asking CI to
-evaluate it:
+Run the same preflight gate locally before closing a task:
 
 ```bash
 cargo xtask verify fast
@@ -71,7 +70,6 @@ environment has the required fixtures:
 ```bash
 cargo xtask verify full
 cargo xtask verify task-flow
-act -W .github/workflows/preflight.yml -j preflight
 ```
 
 ## Task records

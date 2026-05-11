@@ -1,4 +1,5 @@
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -95,8 +96,13 @@ fn tracked_text(repo: &Path, relative: &Path) -> Result<Option<String>> {
     if ignored_tracked_path(relative) {
         return Ok(None);
     }
-    let bytes = fs::read(repo.join(relative))
-        .with_context(|| format!("failed to read {}", relative.display()))?;
+    let bytes = match fs::read(repo.join(relative)) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", relative.display()));
+        }
+    };
     if bytes.contains(&0) {
         return Ok(None);
     }
@@ -152,5 +158,14 @@ mod tests {
             "docs/screenshots/qcold-web-terminals.jpg"
         )));
         assert!(!ignored_tracked_path(Path::new("src/webapp.rs")));
+    }
+
+    #[test]
+    fn pending_deleted_tracked_files_are_ignored() {
+        assert!(
+            tracked_text(Path::new("."), Path::new("definitely-missing.yml"))
+                .unwrap()
+                .is_none()
+        );
     }
 }
