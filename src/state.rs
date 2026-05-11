@@ -7,15 +7,6 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
-#[derive(Clone, Debug, Serialize)]
-pub struct HistoryEntry {
-    pub id: i64,
-    pub timestamp: u64,
-    pub source: String,
-    pub role: String,
-    pub text: String,
-}
-
 #[derive(Clone, Debug)]
 pub struct AgentRow {
     pub id: String,
@@ -97,81 +88,6 @@ pub struct QueueItemRow {
     pub next_attempt_at: Option<u64>,
     pub started_at: u64,
     pub updated_at: u64,
-}
-
-pub fn append_history(source: &str, role: &str, text: &str) -> Result<()> {
-    let text = text.trim();
-    if text.is_empty() {
-        return Ok(());
-    }
-    let connection = open_db()?;
-    backfill_history(&connection)?;
-    connection
-        .execute(
-            "insert into history (timestamp_unix, source, role, text) values (?1, ?2, ?3, ?4)",
-            params![unix_now(), source, role, text],
-        )
-        .context("failed to insert history message")?;
-    Ok(())
-}
-
-pub fn load_history(limit: usize) -> Result<Vec<HistoryEntry>> {
-    let connection = open_db()?;
-    backfill_history(&connection)?;
-    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let mut statement = connection
-        .prepare(
-            "select id, timestamp_unix, source, role, text
-             from history
-             order by id desc
-             limit ?1",
-        )
-        .context("failed to prepare history query")?;
-    let mut entries = statement
-        .query_map([limit], |row| {
-            Ok(HistoryEntry {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                source: row.get(2)?,
-                role: row.get(3)?,
-                text: row.get(4)?,
-            })
-        })
-        .context("failed to query history")?
-        .collect::<Result<Vec<_>, _>>()
-        .context("failed to decode history rows")?;
-    entries.reverse();
-    Ok(entries)
-}
-
-pub fn load_history_for_source(source: &str, limit: usize) -> Result<Vec<HistoryEntry>> {
-    let connection = open_db()?;
-    backfill_history(&connection)?;
-    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
-    let mut statement = connection
-        .prepare(
-            "select id, timestamp_unix, source, role, text
-             from history
-             where source = ?1
-             order by id desc
-             limit ?2",
-        )
-        .context("failed to prepare source history query")?;
-    let mut entries = statement
-        .query_map(params![source, limit], |row| {
-            Ok(HistoryEntry {
-                id: row.get(0)?,
-                timestamp: row.get(1)?,
-                source: row.get(2)?,
-                role: row.get(3)?,
-                text: row.get(4)?,
-            })
-        })
-        .context("failed to query source history")?
-        .collect::<Result<Vec<_>, _>>()
-        .context("failed to decode source history rows")?;
-    entries.reverse();
-    Ok(entries)
 }
 
 pub fn load_agents(legacy_path: &Path) -> Result<Vec<AgentRow>> {
@@ -1262,20 +1178,6 @@ fn backfill_task_sequences(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn backfill_history(connection: &Connection) -> Result<()> {
-    if table_count(connection, "history")? > 0 || !table_exists(connection, "messages")? {
-        return Ok(());
-    }
-    connection
-        .execute(
-            "insert into history (id, timestamp_unix, source, role, text)
-             select id, timestamp, source, role, text from messages order by id",
-            [],
-        )
-        .context("failed to backfill history from messages")?;
-    Ok(())
-}
-
 fn backfill_agents(connection: &Connection, legacy_path: &Path) -> Result<()> {
     if table_count(connection, "agents")? > 0 || !legacy_path.is_file() {
         return Ok(());
@@ -1493,18 +1395,6 @@ fn table_count(connection: &Connection, table: &str) -> Result<i64> {
     connection
         .query_row(&sql, [], |row| row.get(0))
         .with_context(|| format!("failed to count {table}"))
-}
-
-fn table_exists(connection: &Connection, table: &str) -> Result<bool> {
-    connection
-        .query_row(
-            "select 1 from sqlite_master where type = 'table' and name = ?1",
-            [table],
-            |_| Ok(()),
-        )
-        .optional()
-        .map(|value| value.is_some())
-        .context("failed to inspect sqlite schema")
 }
 
 fn table_has_column(connection: &Connection, table: &str, column: &str) -> Result<bool> {

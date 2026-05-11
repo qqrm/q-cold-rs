@@ -1,6 +1,5 @@
 mod adapter;
 mod agents;
-mod history;
 mod repo_bundle;
 mod repository;
 mod state;

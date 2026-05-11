@@ -1,15 +1,13 @@
 use std::collections::BTreeSet;
 use std::env;
-use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use serde::{Deserialize, Serialize};
 
-use crate::{agents, history, repository, state, status, webapp};
+use crate::{agents, state, status, webapp};
 
 const TELEGRAM_INBOUND_ENABLED: bool = false;
 
@@ -72,12 +70,9 @@ struct TelegramConfig {
     api_base_url: String,
     bot_token: String,
     operator_chat_id: String,
-    meta_chat_id: String,
     allowed_user_ids: BTreeSet<i64>,
     allowed_usernames: BTreeSet<String>,
-    meta_agent_command: Option<String>,
     webapp_url: Option<String>,
-    history_enabled: bool,
     task_id_override: Option<String>,
 }
 
@@ -87,8 +82,6 @@ impl TelegramConfig {
         let operator_chat_id = optional_env("QCOLD_TELEGRAM_OPERATOR_CHAT_ID")
             .or_else(|| optional_env("TELEGRAM_CHAT_ID"))
             .context("set QCOLD_TELEGRAM_OPERATOR_CHAT_ID or TELEGRAM_CHAT_ID")?;
-        let meta_chat_id =
-            optional_env("QCOLD_TELEGRAM_META_CHAT_ID").unwrap_or_else(|| operator_chat_id.clone());
         let allowed_user_ids =
             parse_allowed_users(optional_env("QCOLD_TELEGRAM_ALLOWED_USER_IDS").as_deref())?;
         let allowed_usernames =
@@ -103,12 +96,9 @@ impl TelegramConfig {
                 .unwrap_or_else(|| "https://api.telegram.org".to_string()),
             bot_token,
             operator_chat_id,
-            meta_chat_id,
             allowed_user_ids,
             allowed_usernames,
-            meta_agent_command: optional_env("QCOLD_META_AGENT_COMMAND"),
             webapp_url: optional_env("QCOLD_TELEGRAM_WEBAPP_URL"),
-            history_enabled: true,
             task_id_override: None,
         })
     }
@@ -211,7 +201,7 @@ impl Router {
             if !Self::is_task_creation_context(message)? {
                 return Ok(Some(TelegramAction::Send(
                     message.reply(
-                        "/task can only be created from the operator or meta chat general context."
+                        "/task can only be created from the operator chat general context."
                             .to_string(),
                     ),
                 )));
@@ -248,19 +238,6 @@ impl Router {
             }
         }
 
-        if self.is_meta_chat(message)
-            || Self::is_direct_operator_chat(message)
-            || message.reply_to_message.is_some()
-        {
-            if self.config.history_enabled {
-                if let Err(err) = history::append("telegram", "operator", text) {
-                    eprintln!("Telegram history append failed: {err:#}");
-                }
-            }
-            let response = meta_agent_reply(text, message, &self.config)?;
-            return Ok(Some(TelegramAction::Send(message.reply(response))));
-        }
-
         Ok(None)
     }
 
@@ -277,17 +254,11 @@ impl Router {
         if !id_allowed && !username_allowed {
             return false;
         }
-        self.is_operator_chat(message)
-            || self.is_meta_chat(message)
-            || Self::is_direct_operator_chat(message)
+        self.is_operator_chat(message) || Self::is_direct_operator_chat(message)
     }
 
     fn is_operator_chat(&self, message: &TelegramMessage) -> bool {
         message.chat.id.to_string() == self.config.operator_chat_id
-    }
-
-    fn is_meta_chat(&self, message: &TelegramMessage) -> bool {
-        message.chat.id.to_string() == self.config.meta_chat_id
     }
 
     fn is_direct_operator_chat(message: &TelegramMessage) -> bool {
@@ -324,7 +295,6 @@ fn help_text() -> String {
         "/agent_start <track> :: <command> - start an agent through Q-COLD",
         "/help - show this help",
         "",
-        "Plain messages in the meta chat and replies in allowed chats are routed to the meta-agent.",
         "Messages inside a task topic are recorded as task input.",
     ]
     .join("\n")
@@ -388,75 +358,6 @@ fn parse_agent_start(request: &str) -> Result<(&str, &str)> {
         anyhow::bail!("usage: /agent_start <track> :: <command>");
     }
     Ok((track, command))
-}
-
-fn meta_agent_reply(
-    text: &str,
-    message: &TelegramMessage,
-    config: &TelegramConfig,
-) -> Result<String> {
-    let command = meta_agent_command(config.meta_agent_command.as_deref())?;
-    let prompt = if config.history_enabled {
-        history::prompt_context(text, 20)
-            .unwrap_or_else(|_| format!("Current operator message:\n{}", text.trim()))
-    } else {
-        format!("Current operator message:\n{}", text.trim())
-    };
-    run_meta_agent_command(&command, &prompt, message)
-}
-
-fn run_meta_agent_command(command: &str, text: &str, message: &TelegramMessage) -> Result<String> {
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .env("QCOLD_TELEGRAM_CHAT_ID", message.chat.id.to_string())
-        .env("QCOLD_TELEGRAM_MESSAGE_ID", message.message_id.to_string())
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("failed to spawn meta-agent command: {command}"))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(text.as_bytes())
-            .context("failed to write prompt to meta-agent command")?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .context("failed to wait for meta-agent command")?;
-    if output.status.success() {
-        let response = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if response.is_empty() {
-            return Ok("Meta-agent returned no output.".to_string());
-        }
-        return Ok(response);
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    Ok(format!("Meta-agent command failed: {}", stderr.trim()))
-}
-
-fn meta_agent_command(configured: Option<&str>) -> Result<String> {
-    if let Some(command) = configured {
-        if !command.trim().is_empty() {
-            return Ok(command.to_string());
-        }
-    }
-    let cwd = repository::active_root()?;
-    Ok(default_meta_agent_command(&cwd))
-}
-
-fn default_meta_agent_command(cwd: &PathBuf) -> String {
-    format!(
-        "c1 exec --ephemeral --cd {} -",
-        shell_quote(&cwd.display().to_string())
-    )
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 struct TelegramClient {
@@ -577,11 +478,6 @@ impl TelegramClient {
     }
 
     fn send_message(&self, message: &SendMessage) -> Result<()> {
-        if self.config.history_enabled {
-            if let Err(err) = history::append("telegram", "assistant", &message.text) {
-                eprintln!("Telegram history append failed: {err:#}");
-            }
-        }
         for text in split_telegram_text(&message.text) {
             let payload = SendMessagePayload {
                 chat_id: &message.chat_id,
@@ -655,7 +551,6 @@ struct TelegramMessage {
     chat: TelegramChat,
     from: Option<TelegramUser>,
     text: Option<String>,
-    reply_to_message: Option<Box<TelegramMessage>>,
 }
 
 impl TelegramMessage {
@@ -917,28 +812,11 @@ mod tests {
             api_base_url: "http://127.0.0.1".to_string(),
             bot_token: "token".to_string(),
             operator_chat_id: "100".to_string(),
-            meta_chat_id: "200".to_string(),
             allowed_user_ids: BTreeSet::from([7]),
             allowed_usernames: BTreeSet::new(),
-            meta_agent_command: None,
             webapp_url: None,
-            history_enabled: false,
             task_id_override: Some("qcd-000001".to_string()),
         }
-    }
-
-    fn config_with_meta_agent() -> TelegramConfig {
-        let mut config = config();
-        config.meta_agent_command = Some("sh -c 'cat >/dev/null; printf handled'".to_string());
-        config
-    }
-
-    #[test]
-    fn default_meta_agent_command_uses_c1_exec() {
-        assert_eq!(
-            default_meta_agent_command(&PathBuf::from("/workspace/repo")),
-            "c1 exec --ephemeral --cd '/workspace/repo' -"
-        );
     }
 
     fn message(chat_id: i64, text: &str) -> TelegramMessage {
@@ -954,13 +832,12 @@ mod tests {
                 username: Some("chttlr".to_string()),
             }),
             text: Some(text.to_string()),
-            reply_to_message: None,
         }
     }
 
     #[test]
     fn telegram_inbound_control_plane_is_frozen() {
-        let router = Router::new(config_with_meta_agent());
+        let router = Router::new(config());
         for (index, text) in [
             "/help",
             "/status",
@@ -975,13 +852,9 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let mut msg = message(200, text);
-            if text == "what are you doing?" {
-                msg.reply_to_message = Some(Box::new(message(200, "previous bot message")));
-            }
             let update = TelegramUpdate {
                 update_id: i64::try_from(index).unwrap() + 1,
-                message: Some(msg),
+                message: Some(message(200, text)),
             };
             assert!(router.route(&update).unwrap().is_none());
         }

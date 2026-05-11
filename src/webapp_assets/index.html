@@ -33,31 +33,14 @@
     <div class="shell">
       <aside class="sidebar">
         <nav class="nav" aria-label="Dashboard">
-          <button class="active" data-view="chat">Chat <span class="nav-count" id="nav-chat">0</span></button>
           <button data-view="terminals">Terminals <span class="nav-count" id="nav-terminals">0</span></button>
           <button data-view="tasks">Tasks <span class="nav-count" id="nav-tasks">0</span></button>
           <button data-view="agents">Agents <span class="nav-count" id="nav-agents">0</span></button>
-          <button data-view="queue">Queue <span class="nav-count" id="nav-queue">0</span></button>
+          <button class="active" data-view="queue">Queue <span class="nav-count" id="nav-queue">0</span></button>
         </nav>
       </aside>
 
       <div>
-        <section class="view active" id="view-chat">
-          <div class="panel">
-            <div class="panel-head">
-              <h2>Meta-Agent Chat</h2>
-              <span class="badge ready" id="write-state">local write</span>
-            </div>
-            <div class="chat-log" id="chat-log"></div>
-            <div class="chat-compose">
-              <label>Message or command<textarea id="chat-input" placeholder="/status"></textarea></label>
-              <div class="actions">
-                <button id="send-chat">Send</button>
-              </div>
-            </div>
-          </div>
-        </section>
-
         <section class="view" id="view-terminals">
           <div class="panel">
             <div class="panel-head">
@@ -112,7 +95,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-queue">
+        <section class="view active" id="view-queue">
           <div class="panel">
             <div class="panel-head">
               <h2>Task Queue</h2>

@@ -118,9 +118,9 @@ per-task telemetry is available.
 
 ## Web interface
 
-The local web dashboard server exposes the operator dashboard. It includes the
-meta-agent chat, task-flow status, managed agents, attachable terminal panes,
-and a command composer for starting tracked agents.
+The local web dashboard server exposes the operator dashboard. It includes
+task-flow status, managed agents, attachable terminal panes, and the backend
+task queue for starting tracked agents.
 
 `qcold repo add` stores repository connections in the local Q-COLD
 SQLite database. Adapter-backed commands such as `status`, `task`, `verify`,
@@ -141,11 +141,10 @@ adapter notification flow. Inbound Telegram control is frozen: `qcold telegram
 poll` acknowledges updates so they do not accumulate, clears the bot slash
 command menu with `setMyCommands`, and deliberately does not route messages,
 slash commands, Mini App launch requests, task creation, agent starts, or
-meta-agent chat. The web dashboard itself is served by
+chat. The web dashboard itself is served by
 `qcold telegram serve --listen <addr>` and exposes an Axum-backed operator
-dashboard with repository context, task-flow status, managed agents, shared
-local history, and a meta-agent command composer. Use `--daemon` for the
-persistent local control plane:
+dashboard with repository context, task-flow status, managed agents, terminals,
+and the task queue. Use `--daemon` for the persistent local control plane:
 
 ```bash
 qcold telegram serve --listen 127.0.0.1:8787 --daemon
@@ -160,8 +159,8 @@ Q-COLD rebuild to serve the same binary/assets version that was just installed.
 Without `--daemon`, `telegram serve` stays in the foreground for systemd or
 other external supervisors.
 
-The dashboard opens to the meta-agent chat and keeps repository/task/agent
-overview state in a compact always-visible status strip. Its Queue view accepts
+The dashboard opens to the Queue view and keeps repository/task/agent overview
+state in a compact always-visible status strip. Its Queue view accepts
 one task prompt at a time, appends it to a visible ordered queue, shows a
 dropdown of registered repositories plus one preferred Codex-like command per
 available account (`c1`, `c2`, or `codexN`) with auth/limit status, and starts
@@ -236,13 +235,9 @@ from session JSONL metadata. Long task descriptions are collapsed into a
 single-line preview with a prompt disclosure so task cards stay scannable while
 the full prompt remains available in place. Raw managed-worktree status remains
 available for debugging, but terminal readiness ignores task worktrees whose
-task env has already reached a `closed:*` status. It streams state and history
-updates with server-sent events and includes an `Auto`/`Dark`/`Light` theme
-switch stored in browser local storage.
-The web chat displays web-origin meta-agent messages only; GUI slash commands
-such as `/agent_start`, `/status`, and their control-plane responses are kept
-out of the visible chat history and the meta-agent prompt. The meta-agent prompt
-can still use the broader shared local history as context. The Agents view shows
+task env has already reached a `closed:*` status. It streams state updates with
+server-sent events and includes an `Auto`/`Dark`/`Light` theme switch stored in
+browser local storage. The Agents view shows
 detected local agent commands and their account/auth/limit probe status before
 the running-process sections. Limit probes run through a cached
 `/api/agent-limits` request when the Agents view is opened or refreshed. Q-COLD
@@ -314,15 +309,15 @@ requests must then send it as `X-QCOLD-Write-Token`.
 
 Q-COLD state is stored in one local SQLite database under `QCOLD_STATE_DIR` or
 `~/.local/state/qcold/qcold.sqlite3`. The database owns repository registry,
-chat history, managed-agent records, Telegram task topics, events, and the
+managed-agent records, Telegram task topics, events, and the
 initial schema for runs, claims, budgets, and recipes. Legacy `agents.tsv`,
 `telegram_tasks.tsv`, and `task-events/*.log` files are imported on first read
 when the corresponding SQLite tables are empty.
 
 Telegram Mini App launch and inbound chat routing are currently suspended.
-`QCOLD_TELEGRAM_WEBAPP_URL`, `QCOLD_TELEGRAM_META_CHAT_ID`, `/app`, `/task`,
-plain Telegram messages, and Telegram replies are ignored by the poller while
-the Telegram control plane is frozen.
+`QCOLD_TELEGRAM_WEBAPP_URL`, `/app`, `/task`, plain Telegram messages, and
+Telegram replies are ignored by the poller while the Telegram control plane is
+frozen.
 
 Historically, in a forum supergroup, `/task <description>` created a per-task
 topic when the bot had permission to manage topics. Existing topic mappings

@@ -17,8 +17,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueAgentState = document.getElementById('queue-agent-state');
     const queueState = document.getElementById('queue-state');
     const queueStatus = document.getElementById('queue-status');
-    const chatLog = document.getElementById('chat-log');
-    const chatInput = document.getElementById('chat-input');
     const transcriptModal = document.getElementById('transcript-modal');
     const transcriptTitle = document.getElementById('transcript-title');
     const transcriptSubtitle = document.getElementById('transcript-subtitle');
@@ -1332,7 +1330,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const host = model.hostAgents;
       const available = model.availableAgents;
       const hostRecords = host.records || [];
-      const hostAgentCount = hostRecords.filter((agent) => agent.kind !== 'meta-agent').length;
+      const hostAgentCount = hostRecords.filter((agent) => agent.kind !== 'web-daemon').length;
       const daemonCount = hostRecords.length - hostAgentCount;
       document.getElementById('agent-count').textContent = `${data.runningCount} running`;
       document.getElementById('host-agent-count').textContent = daemonCount
@@ -1623,26 +1621,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return node;
     }
 
-    function renderHistory(items) {
-      document.getElementById('nav-chat').textContent = String(items.length);
-      if (!items.length) {
-        chatLog.innerHTML = '<div class="empty">No local chat history yet.</div>';
-        return;
-      }
-      chatLog.replaceChildren(...items.map(messageNode));
-      chatLog.scrollTop = chatLog.scrollHeight;
-    }
-
     function appendLocalMessage(role, text, source = 'web') {
-      const existingEmpty = chatLog.querySelector('.empty');
-      if (existingEmpty) chatLog.replaceChildren();
-      chatLog.appendChild(messageNode({
-        timestamp: Math.floor(Date.now() / 1000),
-        source,
-        role,
-        text,
-      }));
-      chatLog.scrollTop = chatLog.scrollHeight;
+      const label = String(text || '').trim() || 'No output';
+      setLiveState(label.length > 80 ? `${label.slice(0, 77)}...` : label, role === 'error' ? 'failed' : 'ready');
+      if (role === 'error') console.error(`[${source}] ${label}`);
     }
 
     function renderSystemStrip() {
@@ -1676,11 +1658,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('strip-closeouts').textContent = `${incomplete} closeout residue`;
       document.getElementById('strip-closeouts').className = incomplete ? 'strip-text bad' : 'strip-text';
       const hostRecords = model.hostAgents.records || [];
-      const hostAgentCount = hostRecords.filter((agent) => agent.kind !== 'meta-agent').length;
+      const hostAgentCount = hostRecords.filter((agent) => agent.kind !== 'web-daemon').length;
       const daemonCount = hostRecords.length - hostAgentCount;
       document.getElementById('strip-agents').textContent = `${model.terminals.count} terminals / ${hostAgentCount} host${daemonCount ? ` / ${daemonCount} daemon` : ''}`;
-      document.getElementById('write-state').textContent = 'local write';
-      document.getElementById('write-state').className = 'badge ready';
     }
 
     function render() {
@@ -1719,16 +1699,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function applySnapshot(snapshot) {
       state = snapshot.state;
       render();
-      renderHistory(snapshot.history || []);
       setLiveState('Live');
     }
 
     async function loadSnapshot() {
       try {
         const response = await fetch('/api/state', { cache: 'no-store' });
-        const nextState = await response.json();
-        const historyResponse = await fetch('/api/history', { cache: 'no-store' });
-        applySnapshot({ state: nextState, history: await historyResponse.json() });
+        applySnapshot({ state: await response.json() });
       } catch (err) {
         setLiveState('Offline', 'failed');
         if (!state) status.textContent = String(err);
@@ -1745,36 +1722,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       eventSource.addEventListener('snapshot', (event) => applySnapshot(JSON.parse(event.data)));
       eventSource.addEventListener('error', () => setLiveState('Offline', 'failed'));
       eventSource.onopen = () => setLiveState('Live');
-    }
-
-    async function postChatText(text) {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({ text }),
-      });
-      const payload = await response.json();
-      if (!response.ok && payload.ok !== false) {
-        payload.ok = false;
-      }
-      return payload;
-    }
-
-    async function sendChat(text, source = 'web') {
-      const trimmed = text.trim();
-      if (!trimmed) return;
-      appendLocalMessage('operator', trimmed, source);
-      if (source === 'web') chatInput.value = '';
-      try {
-        const payload = await postChatText(trimmed);
-        appendLocalMessage(payload.ok ? 'assistant' : 'error', payload.output || 'No output', source);
-        return payload;
-      } catch (err) {
-        appendLocalMessage('error', String(err), source);
-        return { ok: false, output: String(err) };
-      }
     }
 
     async function sendTerminal(target, input) {
@@ -2018,11 +1965,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (viewNames.has(fromHash)) return fromHash;
       const stored = localStorage.getItem('qcold-view') || '';
       if (stored === 'start') return 'queue';
-      return viewNames.has(stored) ? stored : 'chat';
+      return viewNames.has(stored) ? stored : 'queue';
     }
 
     function setActiveView(view, persist = true) {
-      const next = viewNames.has(view) ? view : 'chat';
+      const next = viewNames.has(view) ? view : 'queue';
       viewButtons.forEach((button) => button.classList.toggle('active', button.dataset.view === next));
       document.querySelectorAll('.view').forEach((item) => item.classList.remove('active'));
       document.getElementById(`view-${next}`).classList.add('active');
@@ -2058,7 +2005,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
     }
 
-    document.getElementById('send-chat').addEventListener('click', () => sendChat(chatInput.value));
     document.getElementById('close-transcript').addEventListener('click', closeTaskTranscript);
     transcriptSend.addEventListener('click', sendTranscriptMessage);
     transcriptInput.addEventListener('keydown', (event) => {
@@ -2085,9 +2031,6 @@ const tg = window.Telegram && window.Telegram.WebApp;
       selectedQueueAgent = queueAgentSelect.value;
       localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
       renderQueue();
-    });
-    chatInput.addEventListener('keydown', (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendChat(chatInput.value);
     });
     themeButtons.forEach((button) => {
       button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));

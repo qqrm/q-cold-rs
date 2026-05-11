@@ -517,7 +517,6 @@
     .message.error { border-left: 4px solid var(--bad); }
     .message-head { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
     .message-text { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-    .chat-compose { display: grid; gap: 8px; margin-top: 12px; }
     .terminal-list { display: grid; gap: 10px; }
     .terminal-card {
       border: 1px solid var(--line);

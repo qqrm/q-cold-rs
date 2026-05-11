@@ -18,7 +18,7 @@ use axum::{
     },
     response::{
         sse::{Event, KeepAlive, Sse},
-        Html, IntoResponse, Response,
+        Html, IntoResponse,
     },
     routing::{get, post},
     Router,
@@ -28,7 +28,7 @@ use futures_util::stream;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{agents, history, repository, state, status};
+use crate::{agents, repository, state, status};
 
 const DAEMON_STARTUP_CHECKS: usize = 10;
 const DAEMON_STARTUP_CHECK_INTERVAL: Duration = Duration::from_millis(100);
@@ -328,9 +328,7 @@ fn router() -> Router {
         .route("/api/queue/continue", post(api_queue_continue))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
-        .route("/api/history", get(api_history))
         .route("/api/events", get(api_events))
-        .route("/api/chat", post(api_chat))
         .route("/healthz", get(healthz))
 }
 
@@ -470,17 +468,6 @@ async fn api_task_chat_send(
     no_store((status, Json(response)))
 }
 
-async fn api_history() -> Response {
-    match web_history() {
-        Ok(entries) => no_store(Json(entries)).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to load history: {err:#}"),
-        )
-            .into_response(),
-    }
-}
-
 async fn api_events() -> impl IntoResponse {
     let events = stream::unfold(true, |first| async move {
         if !first {
@@ -496,16 +483,6 @@ async fn api_events() -> impl IntoResponse {
         Some((Ok::<Event, Infallible>(event), false))
     });
     no_store(Sse::new(events).keep_alive(KeepAlive::default()))
-}
-
-async fn api_chat(headers: HeaderMap, Json(payload): Json<ChatRequest>) -> impl IntoResponse {
-    let response = handle_chat_payload(&headers, &payload);
-    let status = if response.ok {
-        StatusCode::OK
-    } else {
-        StatusCode::BAD_REQUEST
-    };
-    no_store((status, Json(response)))
 }
 
 async fn api_terminal_send(
@@ -548,12 +525,7 @@ where
 fn event_snapshot() -> Result<EventSnapshot> {
     Ok(EventSnapshot {
         state: dashboard_state(),
-        history: web_history()?,
     })
-}
-
-fn web_history() -> Result<Vec<history::HistoryEntry>> {
-    history::load_recent_meta_visible_for_source("web", 20)
 }
 
 fn handle_queue_run(headers: &HeaderMap, payload: QueueRunRequest) -> TerminalSendResponse {
@@ -2317,23 +2289,6 @@ fn terminal_paste_buffer_name() -> Result<String> {
     Ok(format!("qcold-web-send-{}-{nanos}", std::process::id()))
 }
 
-fn handle_chat_payload(headers: &HeaderMap, payload: &ChatRequest) -> ChatResponse {
-    match handle_chat_payload_result(headers, payload) {
-        Ok(output) => ChatResponse { ok: true, output },
-        Err(err) => ChatResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
-    }
-}
-
-fn handle_chat_payload_result(headers: &HeaderMap, payload: &ChatRequest) -> Result<String> {
-    if webapp_write_token_required() {
-        require_write_token(headers)?;
-    }
-    route_chat_text(&payload.text)
-}
-
 fn require_write_token(headers: &HeaderMap) -> Result<()> {
     let expected = optional_env("QCOLD_WEBAPP_WRITE_TOKEN")
         .context("set QCOLD_WEBAPP_WRITE_TOKEN before enabling GUI command execution")?;
@@ -2350,114 +2305,6 @@ fn require_write_token(headers: &HeaderMap) -> Result<()> {
 fn webapp_write_token_required() -> bool {
     optional_env("QCOLD_WEBAPP_REQUIRE_WRITE_TOKEN")
         .is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes" | "on"))
-}
-
-fn route_chat_text(text: &str) -> Result<String> {
-    let text = text.trim();
-    if text.is_empty() {
-        bail!("enter a command or prompt");
-    }
-    if command_matches(text, "status") {
-        return respond(status::telegram_snapshot()?);
-    }
-    if command_matches(text, "agents") {
-        return respond(agents::snapshot()?);
-    }
-    if command_matches(text, "repos") || command_matches(text, "context") {
-        return respond(context_text());
-    }
-    if command_matches(text, "app") || command_matches(text, "ui") {
-        return respond(context_text());
-    }
-    if command_matches(text, "help") {
-        return respond(help_text());
-    }
-    if command_payload(text, "task").is_some() {
-        return respond(
-            "/task creates Telegram task topics. Use Telegram for task topics or /agent_start here."
-                .to_string(),
-        );
-    }
-    if let Some(request) = command_payload(text, "agent_start") {
-        let request = parse_agent_start(request)?;
-        return match start_web_agent(&request) {
-            Ok(record) => {
-                let output = format!("Started agent:\n{}", agents::snapshot_line(&record));
-                Ok(output)
-            }
-            Err(err) => {
-                let output = format!("Failed to start agent: {err:#}");
-                Ok(output)
-            }
-        };
-    }
-    if text.starts_with('/') {
-        bail!("unknown GUI command. Try /status, /repos, /agents, /help, or /agent_start <track> :: <command>");
-    }
-    history::append("web", "operator", text)?;
-    let output = run_meta_agent(text)?;
-    history::append("web", "assistant", &output)?;
-    Ok(output)
-}
-
-fn respond(output: String) -> Result<String> {
-    Ok(output)
-}
-
-fn command_matches(text: &str, command: &str) -> bool {
-    text == format!("/{command}") || text.starts_with(&format!("/{command}@"))
-}
-
-fn command_payload<'a>(text: &'a str, command: &str) -> Option<&'a str> {
-    let (head, rest) = text.split_once(' ').unwrap_or((text, ""));
-    if command_matches(head, command) {
-        return Some(rest);
-    }
-    None
-}
-
-fn help_text() -> String {
-    [
-        "Q-COLD Web control plane",
-        "/status - show repository task state",
-        "/repos - show connected repository context",
-        "/agents - show Q-COLD managed agents",
-        "/agent_start [--cwd <repo>] <track> :: <command> - start an agent through Q-COLD",
-        "/app - show dashboard context",
-        "/help - show this help",
-        "",
-        "Plain messages start the configured meta-agent command, or `c1 exec --ephemeral --cd <repo> -` by default.",
-    ]
-    .join("\n")
-}
-
-fn parse_agent_start(request: &str) -> Result<AgentStartRequest> {
-    let Some((track, command)) = request.split_once("::") else {
-        bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
-    };
-    let mut words = shell_words(track);
-    let cwd = if words.first().is_some_and(|word| word == "--cwd") {
-        if words.len() < 3 {
-            bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
-        }
-        words.remove(0);
-        Some(PathBuf::from(words.remove(0)))
-    } else {
-        None
-    };
-    if words.len() != 1 {
-        bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
-    }
-    let track = words.remove(0);
-    let command = command.trim();
-    if track.is_empty() || command.is_empty() {
-        bail!("usage: /agent_start [--cwd <repo>] <track> :: <command>");
-    }
-    Ok(AgentStartRequest {
-        cwd,
-        track,
-        command: command.to_string(),
-    })
 }
 
 fn start_web_agent(request: &AgentStartRequest) -> Result<agents::AgentRecord> {
@@ -2499,54 +2346,6 @@ fn shell_words(command: &str) -> Vec<String> {
         words.push(current);
     }
     words
-}
-
-fn run_meta_agent(text: &str) -> Result<String> {
-    let command = meta_agent_command()?;
-    let prompt = history::prompt_context(text, 20)
-        .unwrap_or_else(|_| format!("Current operator message:\n{}", text.trim()));
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(&command)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("failed to spawn meta-agent command: {command}"))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(prompt.as_bytes())
-            .context("failed to write prompt to meta-agent command")?;
-    }
-    let output = child
-        .wait_with_output()
-        .context("failed to wait for meta-agent command")?;
-    if output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if stdout.is_empty() {
-            return Ok("Meta-agent returned no output.".to_string());
-        }
-        return Ok(stdout);
-    }
-    Ok(format!(
-        "Meta-agent command failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    ))
-}
-
-fn meta_agent_command() -> Result<String> {
-    if let Some(command) = optional_env("QCOLD_META_AGENT_COMMAND") {
-        return Ok(command);
-    }
-    let cwd = repository::current_or_active_root()?;
-    Ok(default_meta_agent_command(&cwd))
-}
-
-fn default_meta_agent_command(cwd: &Path) -> String {
-    format!(
-        "c1 exec --ephemeral --cd {} -",
-        shell_quote(&cwd.display().to_string())
-    )
 }
 
 fn shell_quote(value: &str) -> String {
@@ -3092,7 +2891,7 @@ fn classify_host_agent(args: &[String]) -> Option<String> {
         && args.iter().any(|arg| arg == "serve")
         && args.iter().any(|arg| arg == "--daemon-child")
     {
-        return Some("meta-agent".to_string());
+        return Some("web-daemon".to_string());
     }
     None
 }
@@ -3248,7 +3047,6 @@ struct DashboardState {
 #[derive(Serialize)]
 struct EventSnapshot {
     state: DashboardState,
-    history: Vec<history::HistoryEntry>,
 }
 
 #[derive(Serialize)]
@@ -3943,11 +3741,6 @@ struct QueueClearRequest {
 }
 
 #[derive(Deserialize)]
-struct ChatRequest {
-    text: String,
-}
-
-#[derive(Deserialize)]
 struct TaskChatTargetRequest {
     task_id: String,
 }
@@ -3973,12 +3766,6 @@ struct TerminalMetadataRequest {
     target: String,
     name: Option<String>,
     scope: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ChatResponse {
-    ok: bool,
-    output: String,
 }
 
 #[derive(Serialize)]
@@ -4073,7 +3860,7 @@ mod tests {
     }
 
     #[test]
-    fn host_agent_classifier_detects_qcold_meta_daemon() {
+    fn host_agent_classifier_detects_qcold_web_daemon() {
         let args = vec![
             "/opt/qcold-demo/bin/qcold".to_string(),
             "telegram".to_string(),
@@ -4082,15 +3869,7 @@ mod tests {
             "127.0.0.1:8787".to_string(),
             "--daemon-child".to_string(),
         ];
-        assert_eq!(classify_host_agent(&args).as_deref(), Some("meta-agent"));
-    }
-
-    #[test]
-    fn default_meta_agent_command_uses_c1_exec() {
-        assert_eq!(
-            default_meta_agent_command(Path::new("/workspace/repo")),
-            "c1 exec --ephemeral --cd '/workspace/repo' -"
-        );
+        assert_eq!(classify_host_agent(&args).as_deref(), Some("web-daemon"));
     }
 
     #[test]
@@ -4129,15 +3908,6 @@ mod tests {
         assert!(template.contains("host-side agent workspace"));
         assert!(template.contains("do not enter a devcontainer from $QCOLD_AGENT_WORKTREE"));
         assert!(template.contains("enter that managed task worktree and its devcontainer"));
-    }
-
-    #[test]
-    fn agent_start_parser_accepts_cwd_prefix() {
-        let request = parse_agent_start("--cwd '/workspace/repo with space' queue :: c1 exec 'do work'").unwrap();
-
-        assert_eq!(request.cwd.as_deref(), Some(Path::new("/workspace/repo with space")));
-        assert_eq!(request.track, "queue");
-        assert_eq!(request.command, "c1 exec 'do work'");
     }
 
     #[test]
