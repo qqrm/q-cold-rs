@@ -679,7 +679,7 @@
         const liveOutput = transcriptTerminalOutputNode(terminal);
         if (liveOutput) nodes.push(liveOutput);
         transcriptLog.replaceChildren(...nodes);
-        transcriptLog.scrollTop = transcriptLog.scrollHeight;
+        scrollTranscriptToEnd();
       } catch (err) {
         transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
           className: 'empty',
@@ -693,7 +693,7 @@
       const wrap = transcriptTerminalOutputNode(terminal);
       if (wrap) {
         transcriptLog.replaceChildren(wrap);
-        transcriptLog.scrollTop = transcriptLog.scrollHeight;
+        scrollTranscriptToEnd();
         return;
       }
       transcriptLog.replaceChildren(Object.assign(document.createElement('div'), {
@@ -722,6 +722,16 @@
       renderAnsi(output, terminal.output);
       block.append(head, output);
       return block;
+    }
+
+    function scrollTranscriptToEnd() {
+      const scroll = () => {
+        const liveOutput = transcriptLog.querySelector('.transcript-terminal-output');
+        if (liveOutput) liveOutput.scrollTop = liveOutput.scrollHeight;
+        transcriptLog.scrollTop = transcriptLog.scrollHeight;
+      };
+      scroll();
+      window.requestAnimationFrame(scroll);
     }
 
     function renderTranscriptComposer() {

@@ -7,7 +7,7 @@
           role: 'error',
           text: payload.output || 'failed to send task message',
         }));
-        transcriptLog.scrollTop = transcriptLog.scrollHeight;
+        scrollTranscriptToEnd();
         return;
       }
       if (payload.target) transcriptContext.terminalTarget = payload.target;
