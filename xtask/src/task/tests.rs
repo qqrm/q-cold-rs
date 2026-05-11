@@ -50,6 +50,26 @@ mod tests {
     }
 
     #[test]
+    fn task_env_round_trips_multiline_description() {
+        let root = unique_test_dir("qcold-task-env-multiline");
+        let worktree = root.join("task");
+        let mut task = test_task_env();
+        task.task_description = "first line\nsecond line with 'quote'\nthird\\line".into();
+        task.task_worktree = worktree.clone();
+
+        write_task_env(&task).unwrap();
+
+        let content = fs::read_to_string(worktree.join(".task/task.env")).unwrap();
+        assert!(content.contains("TASK_DESCRIPTION=$'first line\\n"));
+        assert_eq!(content.lines().count(), 16);
+
+        let parsed = parse_task_env(&worktree.join(".task/task.env")).unwrap();
+
+        assert_eq!(parsed.task_description, task.task_description);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn stale_bundle_cleanup_removes_only_zip_files() {
         let root = unique_test_dir("qcold-bundle-cleanup");
         let bundles = root.join("bundles");

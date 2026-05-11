@@ -296,6 +296,9 @@ fn display_args(args: &[OsString]) -> String {
 }
 
 fn shell_quote(value: &str) -> String {
+    if value.contains(['\n', '\r']) {
+        return format!("$'{}'", ansi_c_escape(value));
+    }
     if value
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || "-_./:".contains(ch))
@@ -308,11 +311,52 @@ fn shell_quote(value: &str) -> String {
 
 fn unquote(value: &str) -> String {
     let value = value.trim();
+    if value.len() >= 3 && value.starts_with("$'") && value.ends_with('\'') {
+        return ansi_c_unescape(&value[2..value.len() - 1]);
+    }
     if value.len() >= 2 && value.starts_with('\'') && value.ends_with('\'') {
         value[1..value.len() - 1].replace("'\\''", "'")
     } else {
         value.to_string()
     }
+}
+
+fn ansi_c_escape(value: &str) -> String {
+    let mut escaped = String::new();
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '\'' => escaped.push_str("\\'"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ch => escaped.push(ch),
+        }
+    }
+    escaped
+}
+
+fn ansi_c_unescape(value: &str) -> String {
+    let mut unescaped = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            unescaped.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('\\') | None => unescaped.push('\\'),
+            Some('\'') => unescaped.push('\''),
+            Some('n') => unescaped.push('\n'),
+            Some('r') => unescaped.push('\r'),
+            Some('t') => unescaped.push('\t'),
+            Some(other) => {
+                unescaped.push('\\');
+                unescaped.push(other);
+            }
+        }
+    }
+    unescaped
 }
 
 fn json_escape(value: &str) -> String {

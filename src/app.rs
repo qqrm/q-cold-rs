@@ -582,13 +582,8 @@ fn guard_command(args: &GuardArgs) -> Result<u8> {
         .with_context(|| format!("failed to run guarded command {}", program.to_string_lossy()))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let output_text = [stdout.trim_end(), stderr.trim_end()]
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let bytes = output_text.len();
-    let lines = output_text.lines().count();
+    let bytes = output.stdout.len() + output.stderr.len();
+    let lines = raw_output_lines(&output.stdout) + raw_output_lines(&output.stderr);
     if bytes > args.max_bytes || lines > args.max_lines {
         eprintln!(
             "qcold-guard\tstatus=blocked\tbytes={bytes}\tlines={lines}\tmax_bytes={}\
@@ -606,4 +601,16 @@ fn guard_command(args: &GuardArgs) -> Result<u8> {
         eprint!("{stderr}");
     }
     Ok(u8::try_from(output.status.code().unwrap_or(1)).unwrap_or(1))
+}
+
+fn raw_output_lines(output: &[u8]) -> usize {
+    if output.is_empty() {
+        return 0;
+    }
+    let newline_count = output.split(|byte| *byte == b'\n').count() - 1;
+    if output.ends_with(b"\n") {
+        newline_count
+    } else {
+        newline_count + 1
+    }
 }

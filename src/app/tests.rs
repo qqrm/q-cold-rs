@@ -93,6 +93,42 @@ mod tests {
     }
 
     #[test]
+    fn guard_command_blocks_whitespace_heavy_raw_output() {
+        let args = GuardArgs {
+            max_bytes: 4,
+            max_lines: 100,
+            command: os_args(&["printf", "      "]),
+        };
+        let code = guard_command(&args).unwrap();
+
+        assert_eq!(code, 2);
+    }
+
+    #[test]
+    fn guard_command_allows_small_output() {
+        let args = GuardArgs {
+            max_bytes: 16,
+            max_lines: 2,
+            command: os_args(&["printf", "ok"]),
+        };
+        let code = guard_command(&args).unwrap();
+
+        assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn guard_command_propagates_child_exit_code() {
+        let args = GuardArgs {
+            max_bytes: 16,
+            max_lines: 2,
+            command: os_args(&["sh", "-c", "printf err >&2; exit 7"]),
+        };
+        let code = guard_command(&args).unwrap();
+
+        assert_eq!(code, 7);
+    }
+
+    #[test]
     fn task_text_is_polished_for_storage() {
         assert_eq!(
             polish_task_text("Сделай, блядь, CRUD для задач"),
