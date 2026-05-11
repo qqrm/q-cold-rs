@@ -26,11 +26,8 @@
       const toolbar = document.createElement('div');
       toolbar.className = 'queue-graph-toolbar';
       const hint = document.createElement('span');
-      hint.textContent = 'Waves run top to bottom. Tasks inside one wave run in parallel.';
-      const addWave = queueActionButton('Add wave', createQueueWave, 'Add wave');
-      addWave.classList.add('queue-graph-add-wave');
-      addWave.disabled = queueRun.running;
-      toolbar.append(hint, addWave);
+      hint.textContent = 'Waves run top to bottom. Drag a wave header to reorder waves.';
+      toolbar.append(hint);
       board.appendChild(toolbar);
 
       levels.forEach((level, index) => {
@@ -46,11 +43,21 @@
       column.addEventListener('dragover', allowQueueGraphDrop);
       column.addEventListener('drop', (event) => {
         event.preventDefault();
+        const sourceWaveId = event.dataTransfer.getData('text/qcold-queue-wave');
+        if (sourceWaveId) {
+          moveQueueWaveTo(sourceWaveId, level.wave.id);
+          return;
+        }
         const sourceId = event.dataTransfer.getData('text/qcold-queue-item');
         moveQueueItemToWave(sourceId, level.wave.id);
       });
       const head = document.createElement('div');
       head.className = 'queue-graph-wave-head';
+      head.draggable = !queueRun.running;
+      head.addEventListener('dragstart', (event) => {
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/qcold-queue-wave', level.wave.id);
+      });
       const headTitle = document.createElement('div');
       headTitle.className = 'queue-graph-wave-title';
       const heading = document.createElement('h3');
@@ -58,17 +65,10 @@
       const meta = document.createElement('span');
       meta.textContent = `${level.items.length} task${level.items.length === 1 ? '' : 's'}`;
       headTitle.append(heading, meta);
-      const actions = document.createElement('div');
-      actions.className = 'queue-graph-wave-actions';
-      const up = queueActionButton('↑', () => moveQueueWave(level.wave.id, -1), 'Move wave up');
-      up.disabled = queueRun.running || index === 0;
-      const down = queueActionButton('↓', () => moveQueueWave(level.wave.id, 1), 'Move wave down');
-      down.disabled = queueRun.running || index === queueWaves.length - 1;
       const remove = queueActionButton('×', () => removeQueueWave(level.wave.id), 'Remove wave');
       remove.classList.add('danger', 'icon-remove', 'queue-remove-corner');
       remove.disabled = queueRun.running || queueWaves.length <= 1 || level.items.length > 0;
-      actions.append(up, down);
-      head.append(headTitle, actions);
+      head.append(headTitle);
       const lane = document.createElement('div');
       lane.className = 'queue-graph-wave-lane';
       if (!level.items.length) {
@@ -138,7 +138,7 @@
     }
 
     function createQueueWave() {
-      if (queueRun.running) return;
+      if (queueRun.running || queueRun.stopped) return;
       queueWaves.push({ id: newQueueWaveId() });
       saveQueueStorage();
       renderQueue();
@@ -152,13 +152,13 @@
       renderQueue();
     }
 
-    function moveQueueWave(waveId, delta) {
-      if (queueRun.running) return;
-      const index = queueWaves.findIndex((candidate) => candidate.id === waveId);
-      const next = index + delta;
-      if (index < 0 || next < 0 || next >= queueWaves.length) return;
-      const [wave] = queueWaves.splice(index, 1);
-      queueWaves.splice(next, 0, wave);
+    function moveQueueWaveTo(sourceWaveId, targetWaveId) {
+      if (!sourceWaveId || !targetWaveId || sourceWaveId === targetWaveId || queueRun.running) return;
+      const sourceIndex = queueWaves.findIndex((candidate) => candidate.id === sourceWaveId);
+      const targetIndex = queueWaves.findIndex((candidate) => candidate.id === targetWaveId);
+      if (sourceIndex < 0 || targetIndex < 0) return;
+      const [wave] = queueWaves.splice(sourceIndex, 1);
+      queueWaves.splice(targetIndex, 0, wave);
       syncQueueWaveDependencies();
       saveQueueStorage();
       renderQueue();
@@ -191,6 +191,7 @@
       card.draggable = !queueRun.running;
       card.dataset.itemId = item.id;
       card.addEventListener('dragstart', (event) => {
+        event.stopPropagation();
         event.dataTransfer.effectAllowed = 'linkMove';
         event.dataTransfer.setData('text/qcold-queue-item', item.id);
       });

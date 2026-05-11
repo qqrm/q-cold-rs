@@ -515,6 +515,7 @@
       if (event.target === transcriptModal) closeTaskTranscript();
     });
     document.getElementById('add-queue-task').addEventListener('click', addQueueTask);
+    document.getElementById('add-queue-wave').addEventListener('click', createQueueWave);
     document.getElementById('clear-queue').addEventListener('click', clearQueue);
     document.getElementById('run-queue').addEventListener('click', runQueue);
     document.getElementById('stop-queue').addEventListener('click', stopQueue);

@@ -561,6 +561,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       renderQueueAgentSelector();
       document.getElementById('add-queue-task').disabled = !queueInput.value.trim();
       document.getElementById('clear-queue').disabled = !queueItems.length;
+      const addWaveButton = document.getElementById('add-queue-wave');
+      addWaveButton.hidden = !queueGraphMode;
+      addWaveButton.disabled = queueRun.running || queueRun.stopped;
       document.getElementById('run-queue').disabled = queueRun.running
         || queueRun.stopped
         || !queueItems.length

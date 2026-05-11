@@ -511,18 +511,11 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      justify-content: space-between;
       border: 1px solid var(--line);
       border-radius: 8px;
       padding: 8px 9px;
       background: var(--panel);
       color: var(--muted);
-      font-size: 12px;
-    }
-    .queue-graph-add-wave {
-      width: auto;
-      min-width: 82px;
-      padding: 0 8px;
       font-size: 12px;
     }
     .queue-graph-wave {
@@ -537,9 +530,10 @@
     .queue-graph-wave-head {
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 6px;
+      cursor: grab;
     }
+    .queue-graph-wave-head:active { cursor: grabbing; }
     .queue-graph-wave-title {
       display: grid;
       gap: 2px;
@@ -551,12 +545,6 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-    }
-    .queue-graph-wave-actions {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      margin-left: auto;
     }
     .queue-graph-wave-lane {
       display: flex;
