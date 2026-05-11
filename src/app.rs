@@ -12,8 +12,15 @@ mod webapp;
 
 use std::ffi::OsString;
 use std::fs;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::thread;
+use std::time::Duration;
 use std::{
     cmp::Reverse,
     collections::{HashMap, HashSet},
@@ -576,15 +583,56 @@ fn guard_command(args: &GuardArgs) -> Result<u8> {
     let Some((program, command_args)) = args.command.split_first() else {
         anyhow::bail!("guard requires a command");
     };
-    let output = Command::new(program)
+    let mut child = Command::new(program)
         .args(command_args)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .with_context(|| format!("failed to run guarded command {}", program.to_string_lossy()))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let bytes = output.stdout.len() + output.stderr.len();
-    let lines = raw_output_lines(&output.stdout) + raw_output_lines(&output.stderr);
-    if bytes > args.max_bytes || lines > args.max_lines {
+
+    let stdout = child
+        .stdout
+        .take()
+        .context("guarded command stdout was not captured")?;
+    let stderr = child
+        .stderr
+        .take()
+        .context("guarded command stderr was not captured")?;
+    let exceeded = Arc::new(AtomicBool::new(false));
+    let stdout_handle = spawn_guard_reader(
+        stdout,
+        args.max_bytes,
+        args.max_lines,
+        Arc::clone(&exceeded),
+    );
+    let stderr_handle = spawn_guard_reader(
+        stderr,
+        args.max_bytes,
+        args.max_lines,
+        Arc::clone(&exceeded),
+    );
+
+    let status = loop {
+        if exceeded.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            break child
+                .wait()
+                .context("failed to wait for oversized guarded command")?;
+        }
+        if let Some(status) = child
+            .try_wait()
+            .context("failed to poll guarded command status")?
+        {
+            break status;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+
+    let stdout = join_guard_reader(stdout_handle, "stdout")?;
+    let stderr = join_guard_reader(stderr_handle, "stderr")?;
+    let bytes = stdout.bytes + stderr.bytes;
+    let lines = stdout.lines + stderr.lines;
+    if exceeded.load(Ordering::Relaxed) || bytes > args.max_bytes || lines > args.max_lines {
         eprintln!(
             "qcold-guard\tstatus=blocked\tbytes={bytes}\tlines={lines}\tmax_bytes={}\
              \tmax_lines={}\tmessage=output too large; rerun with a narrower command or write raw \
@@ -594,21 +642,85 @@ fn guard_command(args: &GuardArgs) -> Result<u8> {
         );
         return Ok(2);
     }
-    if !stdout.is_empty() {
-        print!("{stdout}");
+    if !stdout.output.is_empty() {
+        print!("{}", String::from_utf8_lossy(&stdout.output));
     }
-    if !stderr.is_empty() {
-        eprint!("{stderr}");
+    if !stderr.output.is_empty() {
+        eprint!("{}", String::from_utf8_lossy(&stderr.output));
     }
-    Ok(u8::try_from(output.status.code().unwrap_or(1)).unwrap_or(1))
+    Ok(u8::try_from(status.code().unwrap_or(1)).unwrap_or(1))
 }
 
-fn raw_output_lines(output: &[u8]) -> usize {
-    if output.is_empty() {
+struct GuardedOutput {
+    output: Vec<u8>,
+    bytes: usize,
+    lines: usize,
+}
+
+fn spawn_guard_reader<R: Read + Send + 'static>(
+    reader: R,
+    max_bytes: usize,
+    max_lines: usize,
+    exceeded: Arc<AtomicBool>,
+) -> thread::JoinHandle<io::Result<GuardedOutput>> {
+    thread::spawn(move || read_guarded_output(reader, max_bytes, max_lines, &exceeded))
+}
+
+fn join_guard_reader(
+    handle: thread::JoinHandle<io::Result<GuardedOutput>>,
+    stream: &str,
+) -> Result<GuardedOutput> {
+    handle
+        .join()
+        .map_err(|_| anyhow::anyhow!("guarded command {stream} reader panicked"))?
+        .with_context(|| format!("failed to read guarded command {stream}"))
+}
+
+fn read_guarded_output<R: Read>(
+    mut reader: R,
+    max_bytes: usize,
+    max_lines: usize,
+    exceeded: &AtomicBool,
+) -> io::Result<GuardedOutput> {
+    let mut output = Vec::new();
+    let mut buffer = [0; 8192];
+    let mut bytes = 0;
+    let mut newline_count = 0;
+    let mut last_byte = None;
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        bytes += read;
+        for byte in &buffer[..read] {
+            if *byte == b'\n' {
+                newline_count += 1;
+            }
+        }
+        last_byte = buffer[..read].last().copied();
+        let remaining = max_bytes.saturating_sub(output.len());
+        if remaining > 0 {
+            output.extend_from_slice(&buffer[..read.min(remaining)]);
+        }
+        let lines = counted_output_lines(bytes, newline_count, last_byte);
+        if bytes > max_bytes || lines > max_lines {
+            exceeded.store(true, Ordering::Relaxed);
+            break;
+        }
+    }
+    Ok(GuardedOutput {
+        output,
+        bytes,
+        lines: counted_output_lines(bytes, newline_count, last_byte),
+    })
+}
+
+fn counted_output_lines(bytes: usize, newline_count: usize, last_byte: Option<u8>) -> usize {
+    if bytes == 0 {
         return 0;
     }
-    let newline_count = output.split(|byte| *byte == b'\n').count() - 1;
-    if output.ends_with(b"\n") {
+    if last_byte == Some(b'\n') {
         newline_count
     } else {
         newline_count + 1

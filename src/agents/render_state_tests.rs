@@ -599,7 +599,7 @@ mod tests {
             qcold_path: PathBuf::from("/opt/qcold/bin/qcold"),
             real_commands: vec![GuardedCommand {
                 command: "rg".to_string(),
-                env_name: "QCOLD_GUARD_REAL_RG".to_string(),
+                env_name: "QCOLD_GUARD_REAL_0_RG".to_string(),
                 real_path: PathBuf::from("/usr/bin/rg"),
             }],
         };
@@ -609,7 +609,7 @@ mod tests {
 
         assert!(prefix.contains("export QCOLD_OUTPUT_GUARD_BIN='/tmp/qcold guard/bin';"));
         assert!(prefix.contains("export QCOLD_GUARD_QCOLD='/opt/qcold/bin/qcold';"));
-        assert!(prefix.contains("export QCOLD_GUARD_REAL_RG='/usr/bin/rg';"));
+        assert!(prefix.contains("export QCOLD_GUARD_REAL_0_RG='/usr/bin/rg';"));
         assert!(prefix.contains("export PATH='/tmp/qcold guard/bin:/usr/bin:/bin';"));
     }
 
@@ -693,6 +693,43 @@ mod tests {
     }
 
     #[test]
+    fn terminal_env_prefix_removes_inherited_guard_bin_from_path() {
+        let _guard = crate::test_support::env_guard();
+        env::set_var("QCOLD_OUTPUT_GUARD_BIN", "/old/guard");
+
+        let prefix =
+            terminal_qcold_env_prefix_with_path(None, None, None, Some("/old/guard:/usr/bin:/bin"));
+
+        assert!(prefix.contains("unset QCOLD_OUTPUT_GUARD_BIN QCOLD_GUARD_QCOLD;"));
+        assert!(prefix.contains("export PATH='/usr/bin:/bin';"));
+    }
+
+    #[test]
+    fn terminal_env_prefix_replaces_inherited_guard_bin_with_new_guard_bin() {
+        let _guard = crate::test_support::env_guard();
+        env::set_var("QCOLD_OUTPUT_GUARD_BIN", "/old/guard");
+        let output_guard = OutputGuardLaunch {
+            bin_dir: PathBuf::from("/new/guard"),
+            qcold_path: PathBuf::from("/opt/qcold/bin/qcold"),
+            real_commands: vec![GuardedCommand {
+                command: "rg".to_string(),
+                env_name: "QCOLD_GUARD_REAL_0_RG".to_string(),
+                real_path: PathBuf::from("/usr/bin/rg"),
+            }],
+        };
+
+        let prefix = terminal_qcold_env_prefix_with_path(
+            None,
+            None,
+            Some(&output_guard),
+            Some("/old/guard:/usr/bin:/bin"),
+        );
+
+        assert!(prefix.contains("export PATH='/new/guard:/usr/bin:/bin';"));
+        assert!(!prefix.contains("PATH='/new/guard:/old/guard"));
+    }
+
+    #[test]
     fn output_guard_wraps_cat_only_when_configured() {
         let _guard = crate::test_support::env_guard();
         let temp = tempdir().unwrap();
@@ -723,7 +760,32 @@ mod tests {
         .unwrap()
         .unwrap();
         assert!(launch.bin_dir.join("cat").is_file());
-        assert_eq!(launch.real_commands[0].env_name, "QCOLD_GUARD_REAL_CAT");
+        assert_eq!(launch.real_commands[0].env_name, "QCOLD_GUARD_REAL_0_CAT");
+    }
+
+    #[test]
+    fn output_guard_custom_commands_get_distinct_env_names() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let bin = temp.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        write_test_executable(&bin.join("foo-bar"));
+        write_test_executable(&bin.join("foo_bar"));
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+
+        let launch = prepare_output_guard_launch_with_paths(
+            "agent",
+            125,
+            vec!["foo-bar".to_string(), "foo_bar".to_string()],
+            std::slice::from_ref(&bin),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(launch.real_commands.len(), 2);
+        assert_eq!(launch.real_commands[0].env_name, "QCOLD_GUARD_REAL_0_FOO_BAR");
+        assert_eq!(launch.real_commands[1].env_name, "QCOLD_GUARD_REAL_1_FOO_BAR");
     }
 
     #[test]

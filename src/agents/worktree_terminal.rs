@@ -294,6 +294,7 @@ fn terminal_qcold_env_prefix_with_path(
     path: Option<&str>,
 ) -> String {
     let mut prefix = String::new();
+    let inherited_guard_bin = env::var_os("QCOLD_OUTPUT_GUARD_BIN").map(PathBuf::from);
     if let Some(root) = root {
         let _ = write!(
             prefix,
@@ -308,6 +309,11 @@ fn terminal_qcold_env_prefix_with_path(
             shell_quote(&agent_worktree.display().to_string())
         );
     }
+    if inherited_guard_bin.is_some() || output_guard.is_some() {
+        prefix.push_str("unset QCOLD_OUTPUT_GUARD_BIN QCOLD_GUARD_QCOLD; ");
+    }
+    let path = path.unwrap_or_default();
+    let cleaned_path = path_without_output_guard_bin(path, inherited_guard_bin.as_deref());
     if let Some(output_guard) = output_guard {
         let _ = write!(
             prefix,
@@ -327,15 +333,29 @@ fn terminal_qcold_env_prefix_with_path(
                 shell_quote(&guarded.real_path.display().to_string())
             );
         }
-        let path = path.unwrap_or_default();
-        let guarded_path = if path.is_empty() {
+        let guarded_path = if cleaned_path.is_empty() {
             output_guard.bin_dir.display().to_string()
         } else {
-            format!("{}:{path}", output_guard.bin_dir.display())
+            format!("{}:{cleaned_path}", output_guard.bin_dir.display())
         };
         let _ = write!(prefix, "export PATH={}; ", shell_quote(&guarded_path));
+    } else if inherited_guard_bin.is_some() && cleaned_path != path {
+        let _ = write!(prefix, "export PATH={}; ", shell_quote(&cleaned_path));
     }
     prefix
+}
+
+fn path_without_output_guard_bin(path: &str, inherited_guard_bin: Option<&Path>) -> String {
+    let Some(inherited_guard_bin) = inherited_guard_bin else {
+        return path.to_string();
+    };
+    let dirs = env::split_paths(path)
+        .filter(|dir| dir.as_path() != inherited_guard_bin)
+        .collect::<Vec<_>>();
+    env::join_paths(dirs)
+        .ok()
+        .and_then(|path| path.into_string().ok())
+        .unwrap_or_else(|| path.to_string())
 }
 
 fn zellij_first_terminal_pane_once(session: &str) -> Result<String> {

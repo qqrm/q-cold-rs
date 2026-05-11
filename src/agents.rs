@@ -600,13 +600,13 @@ fn prepare_output_guard_launch_with_paths(
         return Ok(None);
     }
     let mut real_commands = Vec::new();
-    for command in commands {
+    for (index, command) in commands.into_iter().enumerate() {
         let Some(real_path) = command_path_skipping_guard_dirs(&command, path_dirs, inherited_guard_bin)
         else {
             continue;
         };
         real_commands.push(GuardedCommand {
-            env_name: guard_real_env_name(&command),
+            env_name: guard_real_env_name(index, &command),
             command,
             real_path,
         });
@@ -659,9 +659,9 @@ fn command_path_skipping_guard_dirs(
         .find(|candidate| executable_file(candidate))
 }
 
-fn guard_real_env_name(command: &str) -> String {
+fn guard_real_env_name(index: usize, command: &str) -> String {
     format!(
-        "QCOLD_GUARD_REAL_{}",
+        "QCOLD_GUARD_REAL_{index}_{}",
         command
             .chars()
             .map(|ch| {

@@ -364,8 +364,9 @@ requests must then send it as `X-QCOLD-Write-Token`.
 
 `qcold guard -- <command>...` runs a local command and suppresses stdout/stderr
 when the combined output is too large. Use it before risky broad searches,
-large log reads, or repository-wide reports. The default limits are 16 KiB and
-400 lines; when either limit is exceeded, Q-COLD prints a compact blocked
+large log reads, or repository-wide reports. The guard stops reading after the
+limit is crossed instead of retaining the full raw output. The default limits
+are 16 KiB and 400 lines; when either limit is exceeded, Q-COLD prints a compact blocked
 message and exits with code 2 so the operator or agent can rerun a narrower
 query such as `rg -l`, `rg --count`, `sed -n`, `head`, `tail`, or a path-limited
 search.
