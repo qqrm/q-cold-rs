@@ -16,7 +16,7 @@ fn ensure_queue_managed_task(item: &state::QueueItemRow) -> Result<QueueManagedT
     let repo_root = PathBuf::from(repo_root)
         .canonicalize()
         .with_context(|| format!("failed to resolve queue repository {repo_root}"))?;
-    let output = Command::new(env::current_exe().context("failed to locate Q-COLD executable")?)
+    let output = Command::new(queue_qcold_executable()?)
         .current_dir(&repo_root)
         .env("QCOLD_REPO_ROOT", &repo_root)
         .args(["task", "open", &item.slug])
@@ -39,6 +39,52 @@ fn ensure_queue_managed_task(item: &state::QueueItemRow) -> Result<QueueManagedT
     remember_queue_task_worktree(item, &repo_root, &worktree)?;
     crate::sync_codex_task_records().ok();
     Ok(QueueManagedTask { worktree })
+}
+
+fn queue_qcold_executable() -> Result<PathBuf> {
+    let current = env::current_exe().context("failed to locate current Q-COLD executable")?;
+    queue_qcold_executable_from(&current, env::var_os("PATH").as_deref())
+}
+
+fn queue_qcold_executable_from(current: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf> {
+    if executable_file(current) {
+        return Ok(current.to_path_buf());
+    }
+    if let Some(installed) = qcold_executable_from_path(path) {
+        return Ok(installed);
+    }
+    bail!(
+        "failed to locate runnable Q-COLD executable; current executable {} is unavailable and \
+         qcold was not found on PATH",
+        current.display()
+    );
+}
+
+fn qcold_executable_from_path(path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let binary = format!("qcold{}", env::consts::EXE_SUFFIX);
+    env::split_paths(path?).find_map(|directory| {
+        let candidate = directory.join(&binary);
+        executable_file(&candidate).then_some(candidate)
+    })
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    metadata.is_file() && has_execute_permission(&metadata)
+}
+
+#[cfg(unix)]
+fn has_execute_permission(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode() & 0o111 != 0
+}
+
+#[cfg(not(unix))]
+fn has_execute_permission(_metadata: &fs::Metadata) -> bool {
+    true
 }
 
 fn existing_queue_task_worktree(task_slug: &str) -> Result<Option<PathBuf>> {

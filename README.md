@@ -169,11 +169,14 @@ qcold telegram serve --listen 127.0.0.1:8787 --daemon
 Daemon mode forks the current Q-COLD executable, detaches it from agent
 lifetimes, writes pid and log files under `QCOLD_STATE_DIR` or
 `~/.local/state/qcold`, and replaces any previous Q-COLD Mini App daemon for
-the same listen address. The web assets are embedded in the Q-COLD binary, so
-rerun the daemon command after `cargo install --path . --locked` or another
-Q-COLD rebuild to serve the same binary/assets version that was just installed.
-Without `--daemon`, `telegram serve` stays in the foreground for systemd or
-other external supervisors.
+the same listen address. Queue task opening tolerates replacing the installed
+`qcold` binary while the daemon is running by falling back to the current
+`qcold` on `PATH` when the daemon's original executable path is no longer
+runnable. The web assets are embedded in the Q-COLD binary, so rerun the daemon
+command after `cargo install --path . --locked` or another Q-COLD rebuild to
+serve the same binary/assets version that was just installed. Without
+`--daemon`, `telegram serve` stays in the foreground for systemd or other
+external supervisors.
 
 The dashboard opens to the Queue view and keeps repository/task/agent overview
 state in a compact always-visible status strip. Its Queue view accepts
