@@ -225,7 +225,8 @@ pub(crate) fn task_open_full_qemu_profile_uses_prebuilt_image_override_when_conf
         .assert()
         .success()
         .stdout(contains(
-            "[task-open] devcontainer action=prebuilt profile=full-qemu image_ref=registry.example.com/repository/ci:test-full-qemu",
+            "[task-open] devcontainer action=prebuilt profile=full-qemu \
+             image_ref=registry.example.com/repository/ci:test-full-qemu",
         ));
     let worktree = task_worktree_from_assert(&open);
     let devcontainer_log =

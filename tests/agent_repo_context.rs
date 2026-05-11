@@ -30,7 +30,9 @@ fn codex_agent_launch_prefers_daemon_cwd_checkout_over_active_repository() {
     fs::write(
         &fake_codex,
         format!(
-            "#!/bin/sh\nprintf 'pwd=%s\\nrepo=%s\\nagent=%s\\n' \"$PWD\" \"$QCOLD_REPO_ROOT\" \"$QCOLD_AGENT_WORKTREE\" > {}\n",
+            "#!/bin/sh\n\
+             printf 'pwd=%s\\nrepo=%s\\nagent=%s\\n' \
+             \"$PWD\" \"$QCOLD_REPO_ROOT\" \"$QCOLD_AGENT_WORKTREE\" > {}\n",
             shell_quote(&capture.display().to_string())
         ),
     )

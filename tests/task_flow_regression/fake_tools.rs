@@ -43,7 +43,9 @@ case "$cmd" in
       [[ -n "$dev_id" && ! ( "$item_taskflow" == 1 && "$item_dev_id" == "$dev_id" ) ]] && continue
       case "$format" in
         "{{.ID}}") printf '%s\n' "$id" ;;
-        *) printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' "$id" "$name" "$item_workspace" "$item_primary" "$item_task" "$item_dev_id" "$image" "$item_taskflow" "$item_legacy" ;;
+        *) printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+          "$id" "$name" "$item_workspace" "$item_primary" "$item_task" "$item_dev_id" "$image" \
+          "$item_taskflow" "$item_legacy" ;;
       esac
     done <"$state"
     ;;
@@ -109,7 +111,8 @@ case "$cmd" in
         ref="$repo"
         [[ -n "$tag" && "$tag" != "<none>" ]] && ref="$repo:$tag"
         [[ "$target" == "$ref" || "$target" == "$repo" || "$target" == "$image_id" ]] || continue
-        printf '{"devcontainer.metadata":"{\"mounts\":[\"source=${localWorkspaceFolder},target=%s,type=bind,consistency=cached\"]}"}\n' "$image_primary"
+        printf '{"devcontainer.metadata":"{\"mounts\":[\"source=${localWorkspaceFolder},'
+        printf 'target=%s,type=bind,consistency=cached\"]}"}\n' "$image_primary"
         exit 0
       done <"$images"
       exit 1
@@ -121,7 +124,10 @@ case "$cmd" in
       case "$format" in
         "{{.Name}}") printf '/%s\n' "$name" ;;
         "{{.Config.Image}}") printf '%s\n' "$image" ;;
-        "{{json .Config.Labels}}") printf '{"taskflow.primary_repo":"%s","taskflow.task_id":"%s","taskflow.devcontainer_id":"%s"}\n' "$item_primary" "$item_task" "$item_dev_id" ;;
+        "{{json .Config.Labels}}")
+          printf '{"taskflow.primary_repo":"%s","taskflow.task_id":"%s",' "$item_primary" "$item_task"
+          printf '"taskflow.devcontainer_id":"%s"}\n' "$item_dev_id"
+          ;;
         *) exit 2 ;;
       esac
       exit 0
@@ -268,11 +274,14 @@ case "$cmd" in
 
     tmp_state="$state.tmp"
     : >"$tmp_state"
-    while IFS='|' read -r item_id item_name item_workspace item_primary item_task item_dev_id image item_taskflow item_legacy; do
+    while IFS='|' read -r \
+      item_id item_name item_workspace item_primary item_task item_dev_id image item_taskflow item_legacy
+    do
       [[ -n "$item_id" ]] || continue
       [[ "$item_id" == "$id" ]] && continue
       printf '%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
-        "$item_id" "$item_name" "$item_workspace" "$item_primary" "$item_task" "$item_dev_id" "$image" "$item_taskflow" "$item_legacy" \
+        "$item_id" "$item_name" "$item_workspace" "$item_primary" "$item_task" "$item_dev_id" \
+        "$image" "$item_taskflow" "$item_legacy" \
         >>"$tmp_state"
     done <"$state"
     printf '%s|%s|%s|%s|%s|%s|%s|1|0\n' \
@@ -439,9 +448,11 @@ if [[ "$base" =~ ^projects/:id/merge_requests/([0-9]+)$ ]]; then
     printf '{"iid":%s,"web_url":"%s"}\n' "$IID" "$WEB_URL"
   else
     if [[ "$STATE" == "merged" ]]; then
-      printf '{"state":"merged","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"},"merge_commit_sha":"%s"}\n' "$MERGE_COMMIT_SHA"
+      printf '{"state":"merged","detailed_merge_status":"mergeable",'
+      printf '"head_pipeline":{"status":"success"},"merge_commit_sha":"%s"}\n' "$MERGE_COMMIT_SHA"
     else
-      printf '{"state":"opened","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"},"merge_commit_sha":null}\n'
+      printf '{"state":"opened","detailed_merge_status":"mergeable",'
+      printf '"head_pipeline":{"status":"success"},"merge_commit_sha":null}\n'
     fi
   fi
   exit 0
@@ -451,7 +462,8 @@ if [[ "$base" =~ ^projects/:id/merge_requests/([0-9]+)/merge$ && "$method" == "P
   merge_remote_branch "$PWD"
   STATE=merged
   save_state
-  printf '{"state":"merged","detailed_merge_status":"mergeable","head_pipeline":{"status":"success"},"merge_commit_sha":"%s"}\n' "$MERGE_COMMIT_SHA"
+  printf '{"state":"merged","detailed_merge_status":"mergeable",'
+  printf '"head_pipeline":{"status":"success"},"merge_commit_sha":"%s"}\n' "$MERGE_COMMIT_SHA"
   exit 0
 fi
 

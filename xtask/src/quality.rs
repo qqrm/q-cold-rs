@@ -5,38 +5,12 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 
 const MAX_TEXT_FILE_LINES: usize = 1_000;
-const MAX_TEXT_LINE_WIDTH: usize = 180;
+const MAX_TEXT_LINE_WIDTH: usize = 120;
 
-const LARGE_FILE_EXCEPTIONS: &[LargeFileException] = &[
-    LargeFileException {
-        path: "Cargo.lock",
-        reason: "Cargo owns lockfile shape",
-    },
-    LargeFileException {
-        path: "src/app.rs",
-        reason: "existing command facade pending module split",
-    },
-    LargeFileException {
-        path: "src/webapp.rs",
-        reason: "existing web backend pending module split",
-    },
-    LargeFileException {
-        path: "src/webapp_assets/app.js",
-        reason: "existing embedded dashboard pending asset split",
-    },
-    LargeFileException {
-        path: "src/agents.rs",
-        reason: "existing agent orchestration module pending split",
-    },
-    LargeFileException {
-        path: "src/state.rs",
-        reason: "existing SQLite state module pending split",
-    },
-    LargeFileException {
-        path: "xtask/src/main.rs",
-        reason: "existing self-hosted task-flow adapter pending split",
-    },
-];
+const LARGE_FILE_EXCEPTIONS: &[LargeFileException] = &[LargeFileException {
+    path: "Cargo.lock",
+    reason: "Cargo owns lockfile shape",
+}];
 
 struct LargeFileException {
     path: &'static str,
@@ -168,7 +142,7 @@ mod tests {
 
     #[test]
     fn large_file_allowlist_is_explicit() {
-        assert!(large_file_allowed(Path::new("src/webapp.rs")));
+        assert!(large_file_allowed(Path::new("Cargo.lock")));
         assert!(!large_file_allowed(Path::new("src/new_large_module.rs")));
     }
 

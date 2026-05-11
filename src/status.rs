@@ -33,7 +33,8 @@ pub fn snapshot_for(primary_root: &Path) -> Result<String> {
     let terminal_ready = dirty_paths.is_empty() && tasks.is_empty();
     let mut lines = Vec::new();
     lines.push(format!(
-        "qcold-status\tterminal_ready={}\topen_tasks={}\tinterrupted_tasks={}\tincomplete_closeouts={}\tprimary_dirty={}\toverlaps={}",
+        "qcold-status\tterminal_ready={}\topen_tasks={}\tinterrupted_tasks={}\t\
+         incomplete_closeouts={}\tprimary_dirty={}\toverlaps={}",
         if terminal_ready { "yes" } else { "no" },
         tasks.len(),
         0,
@@ -464,12 +465,17 @@ mod tests {
 
     #[test]
     fn telegram_status_is_human_readable() {
-        let raw = "\
-qcold-status\tterminal_ready=no\topen_tasks=3\tinterrupted_tasks=0\tincomplete_closeouts=2\tprimary_dirty=0\toverlaps=0
-primary\t/workspace/repos/github/repository\tmanaged_root=/workspace/repos/github/WT/repository\tbranch_context=primary
-task\treview-batch-4\tfailed-closeout\t/workspace/repos/github/WT/repository/purple-kiwi-998-review-batch-4\tstate=attached
-task\tprimary-read-lifecycle-live-surface-broadening\topen\t/workspace/repos/github/WT/repository/red-persimmon-893-primary-read-lifecycle-live-surface-broadening\tstate=attached
-";
+        let raw = concat!(
+            "qcold-status\tterminal_ready=no\topen_tasks=3\tinterrupted_tasks=0\t",
+            "incomplete_closeouts=2\tprimary_dirty=0\toverlaps=0\n",
+            "primary\t/workspace/repos/github/repository\t",
+            "managed_root=/workspace/repos/github/WT/repository\tbranch_context=primary\n",
+            "task\treview-batch-4\tfailed-closeout\t",
+            "/workspace/repos/github/WT/repository/purple-kiwi-998-review-batch-4\tstate=attached\n",
+            "task\tprimary-read-lifecycle-live-surface-broadening\topen\t",
+            "/workspace/repos/github/WT/repository/red-persimmon-893-primary-read-lifecycle-live-surface-broadening\t",
+            "state=attached\n",
+        );
         let formatted = format_snapshot_for_telegram(raw);
         assert!(formatted.contains("Q-COLD status"));
         assert!(formatted.contains("Terminal ready: no"));

@@ -1,0 +1,561 @@
+        if (shouldFollowTail) {
+          output.scrollTop = output.scrollHeight;
+        } else {
+          output.scrollTop = Math.min(previousScrollTop, output.scrollHeight);
+        }
+        terminalOutputCache.set(terminal.target, nextOutput);
+      }
+      const input = node.querySelector('.terminal-input');
+      if (input) input.placeholder = `send to ${terminalLabel(terminal)}`;
+    }
+
+    function isTerminalAtTail(output) {
+      return output.scrollHeight - output.scrollTop - output.clientHeight <= 24;
+    }
+
+    function terminalKind(terminal) {
+      if ((terminal.target || '').startsWith('zellij:')) return `zellij / ${terminal.pane}`;
+      return `tmux / ${terminal.pane}`;
+    }
+
+    function terminalLabel(terminal) {
+      return terminal.label || terminal.generated_label || (terminal.session || 'terminal').replace(/^qcold-/, '');
+    }
+
+    function terminalTitleControl(terminal) {
+      const wrap = document.createElement('div');
+      wrap.className = 'terminal-title';
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'terminal-title-button';
+      button.title = 'Edit terminal name';
+      button.textContent = terminalLabel(terminal);
+      button.addEventListener('click', () => renderTerminalMetadataForm(wrap, terminal));
+      wrap.appendChild(button);
+      if (terminal.agent_id) {
+        const agent = document.createElement('span');
+        agent.className = 'terminal-scope';
+        agent.textContent = shortAgentId(terminal.agent_id);
+        wrap.appendChild(agent);
+      }
+      if (terminal.scope) {
+        const scope = document.createElement('span');
+        scope.className = 'terminal-scope';
+        scope.textContent = terminal.scope;
+        wrap.appendChild(scope);
+      }
+      return wrap;
+    }
+
+    function renderTerminalMetadataForm(wrap, terminal) {
+      const form = document.createElement('form');
+      form.className = 'terminal-meta-form';
+      const name = document.createElement('input');
+      name.type = 'text';
+      name.value = terminal.name || '';
+      name.placeholder = terminal.generated_label || terminalLabel(terminal);
+      name.maxLength = 80;
+      const scope = document.createElement('input');
+      scope.type = 'text';
+      scope.value = terminal.scope || '';
+      scope.placeholder = 'scope';
+      scope.maxLength = 80;
+      const save = document.createElement('button');
+      save.type = 'submit';
+      save.textContent = 'Save';
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.textContent = 'Cancel';
+      cancel.addEventListener('click', () => {
+        wrap.replaceWith(terminalTitleControl(terminal));
+      });
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        await saveTerminalMetadata(terminal.target, name.value, scope.value);
+      });
+      form.append(name, scope, save, cancel);
+      wrap.replaceChildren(form);
+      name.focus();
+    }
+
+    function terminalComposer(terminal) {
+      const compose = document.createElement('div');
+      compose.className = 'terminal-compose';
+      const input = document.createElement('textarea');
+      input.className = 'terminal-input';
+      input.placeholder = `send to ${terminalLabel(terminal)}`;
+      input.value = terminalDrafts.get(terminal.target) || '';
+      input.addEventListener('input', () => {
+        terminalDrafts.set(terminal.target, input.value);
+      });
+      input.addEventListener('keydown', (event) => {
+        if (!input.value && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+          event.preventDefault();
+          sendTerminalKey(terminal.target, terminalKeyName(event.key));
+          return;
+        }
+        if (event.key === 'Enter' && !event.shiftKey) {
+          event.preventDefault();
+          sendTerminal(terminal.target, input);
+        }
+      });
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = 'Send';
+      button.addEventListener('click', () => sendTerminal(terminal.target, input));
+      compose.append(input, button);
+      return compose;
+    }
+
+    function messageNode(entry) {
+      const node = document.createElement('article');
+      node.className = `message ${entry.role || 'assistant'}`;
+      const date = entry.timestamp ? new Date(entry.timestamp * 1000).toLocaleTimeString() : '';
+      node.innerHTML = '<div class="message-head"><span></span><span></span></div><div class="message-text"></div>';
+      node.children[0].children[0].textContent = `${entry.source || 'web'} / ${entry.role || 'assistant'}`;
+      node.children[0].children[1].textContent = date;
+      node.children[1].textContent = entry.text || '';
+      return node;
+    }
+
+    function appendLocalMessage(role, text, source = 'web') {
+      const label = String(text || '').trim() || 'No output';
+      setLiveState(label.length > 80 ? `${label.slice(0, 77)}...` : label, role === 'error' ? 'failed' : 'ready');
+      if (role === 'error') console.error(`[${source}] ${label}`);
+    }
+
+    function renderSystemStrip() {
+      const summary = model.status.summary;
+      const terminalReady = summary.terminal_ready === 'yes';
+      const openTasks = Number(summary.open_tasks || 0);
+      const incomplete = Number(summary.incomplete_closeouts || 0);
+      const dirty = Number(summary.primary_dirty || 0);
+      document.getElementById('ready-pill').textContent = terminalReady ? 'terminal ready' : 'terminal hold';
+      document.getElementById('ready-pill').className = terminalReady ? 'badge ready' : 'badge warn';
+      document.getElementById('repo-pill').textContent = `${state.repository.name} / ${state.repository.branch}`;
+      const open = model.taskRecords.open || 0;
+      const failed = model.taskRecords.failed || 0;
+      const total = Math.max(model.taskRecords.count || 0, 1);
+      const bar = document.getElementById('task-bar');
+      bar.replaceChildren();
+      const openSeg = document.createElement('div');
+      openSeg.className = 'segment open';
+      openSeg.style.flex = open || 0;
+      const failedSeg = document.createElement('div');
+      failedSeg.className = 'segment failed';
+      failedSeg.style.flex = failed || 0;
+      const idleSeg = document.createElement('div');
+      idleSeg.className = 'segment idle';
+      idleSeg.style.flex = Math.max(total - open - failed, 1);
+      bar.append(openSeg, failedSeg, idleSeg);
+      document.getElementById('strip-terminal').textContent = terminalReady ? 'Terminal OK' : 'Terminal hold';
+      document.getElementById('strip-terminal').className = terminalReady ? 'badge ready' : 'badge warn';
+      document.getElementById('strip-repo').textContent = `${state.repository.name} / ${state.repository.branch}`;
+      document.getElementById('strip-tasks').textContent = `${open} task records / `
+        + `${openTasks} worktrees / ${failed} failed${dirty ? ` / ${dirty} dirty` : ''}`;
+      document.getElementById('strip-closeouts').textContent = `${incomplete} closeout residue`;
+      document.getElementById('strip-closeouts').className = incomplete ? 'strip-text bad' : 'strip-text';
+      const hostRecords = model.hostAgents.records || [];
+      const hostAgentCount = hostRecords.filter((agent) => agent.kind !== 'web-daemon').length;
+      const daemonCount = hostRecords.length - hostAgentCount;
+      document.getElementById('strip-agents').textContent = `${model.terminals.count} terminals / `
+        + `${hostAgentCount} host${daemonCount ? ` / ${daemonCount} daemon` : ''}`;
+    }
+
+    function render() {
+      if (!state) return;
+      model = {
+        status: parseStatus(state.status.text),
+        agents: parseAgents(state.agents.text),
+        taskRecords: state.task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
+        queueTaskRecords: state.queue_task_records || { count: 0, open: 0, closed: 0, failed: 0, records: [] },
+        queue: state.queue || { count: 0, running: false, run: null, records: [] },
+        hostAgents: state.host_agents || { count: 0, records: [] },
+        terminals: state.terminals || { count: 0, records: [] },
+        availableAgents: state.available_agents || { count: 0, records: [] },
+      };
+      status.textContent = state.status.text;
+      agents.textContent = state.agents.text;
+      renderSystemStrip();
+      renderTasks();
+      renderAgents();
+      renderTerminals();
+      syncQueueFromSnapshot();
+      renderQueue();
+      if (document.getElementById('view-agents').classList.contains('active') && !agentLimits && !agentLimitsLoading) {
+        window.setTimeout(() => loadAgentLimits(false), 0);
+      }
+      if (document.getElementById('view-queue').classList.contains('active') && !agentLimits && !agentLimitsLoading) {
+        window.setTimeout(() => loadAgentLimits(false), 0);
+      }
+    }
+
+    function setLiveState(label, tone = 'ready') {
+      liveState.textContent = label;
+      liveState.className = `badge ${tone} live-indicator`;
+    }
+
+    function applySnapshot(snapshot) {
+      state = snapshot.state;
+      render();
+      setLiveState('Live');
+    }
+
+    async function loadSnapshot() {
+      try {
+        const response = await fetch('/api/state', { cache: 'no-store' });
+        applySnapshot({ state: await response.json() });
+      } catch (err) {
+        setLiveState('Offline', 'failed');
+        if (!state) status.textContent = String(err);
+      }
+    }
+
+    function connectEvents() {
+      if (!window.EventSource) {
+        loadSnapshot();
+        fallbackTimer = window.setInterval(loadSnapshot, 5000);
+        return;
+      }
+      eventSource = new EventSource('/api/events');
+      eventSource.addEventListener('snapshot', (event) => applySnapshot(JSON.parse(event.data)));
+      eventSource.addEventListener('error', () => setLiveState('Offline', 'failed'));
+      eventSource.onopen = () => setLiveState('Live');
+    }
+
+    async function sendTerminal(target, input) {
+      const trimmed = input.value.trimEnd();
+      if (!trimmed.trim() || !target) return;
+      input.value = '';
+      terminalDrafts.delete(target);
+      const payload = await postTerminalText(target, trimmed, {
+        mode: terminalTextMode(trimmed),
+        submit: true,
+      });
+      if (!payload.ok) appendLocalMessage('error', payload.output || 'failed to send terminal input');
+      window.setTimeout(loadSnapshot, 250);
+    }
+
+    async function postTerminalText(target, text, options = {}) {
+      try {
+        const response = await fetch('/api/terminal/send', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ target, text, ...options }),
+        });
+        const payload = await response.json();
+        if (!response.ok && payload.ok !== false) payload.ok = false;
+        return payload;
+      } catch (err) {
+        return { ok: false, output: String(err) };
+      }
+    }
+
+    async function sendTerminalKey(target, key) {
+      if (!target || !key) return;
+      const payload = await postTerminalText(target, '', { mode: 'key', key });
+      if (!payload.ok) appendLocalMessage('error', payload.output || 'failed to send terminal key');
+      window.setTimeout(loadSnapshot, 100);
+    }
+
+    async function sendTerminalLiteral(target, text) {
+      if (!target || !text) return;
+      const payload = await postTerminalText(target, text, { mode: 'literal', submit: false });
+      if (!payload.ok) appendLocalMessage('error', payload.output || 'failed to send terminal input');
+      window.setTimeout(loadSnapshot, 100);
+    }
+
+    function handleTerminalKeyboard(event, target) {
+      if (event.defaultPrevented || event.metaKey) return;
+      const key = terminalKeyName(event.key);
+      if (key) {
+        event.preventDefault();
+        sendTerminalKey(target, key);
+        return;
+      }
+      if (!event.ctrlKey && !event.altKey && event.key.length === 1) {
+        event.preventDefault();
+        sendTerminalLiteral(target, event.key);
+      }
+    }
+
+    function terminalKeyName(key) {
+      const names = {
+        ArrowUp: 'Up',
+        ArrowDown: 'Down',
+        ArrowLeft: 'Left',
+        ArrowRight: 'Right',
+        Enter: 'Enter',
+        Backspace: 'Backspace',
+        Delete: 'Delete',
+        Escape: 'Escape',
+        Tab: 'Tab',
+        Home: 'Home',
+        End: 'End',
+        PageUp: 'PageUp',
+        PageDown: 'PageDown',
+      };
+      return names[key] || '';
+    }
+
+    function terminalTextMode(text) {
+      return text.trimStart().startsWith('/') && !text.includes('\n') ? 'literal' : 'paste';
+    }
+
+    async function saveTerminalMetadata(target, name, scope) {
+      if (!target) return;
+      try {
+        const response = await fetch('/api/terminal/metadata', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ target, name, scope }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'Failed to save terminal metadata');
+          return;
+        }
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
+    }
+
+    function taskRecordForQueueItem(item) {
+      const repo = queueItemRepository(item);
+      return queueTaskRecords().find((task) => (
+        task.id === `task/${item.slug}`
+        && (!repo?.root || !task.repo_root || task.repo_root === repo.root)
+      ));
+    }
+
+    function runningAgent(agentId) {
+      if (!agentId || !model) return true;
+      return (model.agents.records || []).some((agent) => agent.id === agentId);
+    }
+
+    function activeQueueAgentId(item, task = taskRecordForQueueItem(item)) {
+      return [item.agentId, task?.agent_id].find((agentId) => agentId && runningAgent(agentId)) || '';
+    }
+
+    function queueRunIdFromSlug(slug) {
+      const match = /^task-(.+)-\d+$/.exec(slug || '');
+      return match?.[1] || '';
+    }
+
+    function existingQueueRunId() {
+      for (const item of queueItems) {
+        const runId = queueRunIdFromSlug(item.slug);
+        if (runId) return runId;
+      }
+      return '';
+    }
+
+    async function runQueue() {
+      if (queueRun.running || !queueItems.length) return;
+      const selectedAgent = selectedQueueAgentRecord();
+      if (!selectedAgent) return;
+      const now = Math.floor(Date.now() / 1000);
+      const selectedRepo = selectedQueueRepository();
+      queueRun = {
+        running: true,
+        stopped: false,
+        stop: false,
+        activeIndex: -1,
+        runId: existingQueueRunId() || Date.now().toString(36),
+        status: 'running',
+      };
+      const usedSlugs = usedQueueSlugs(queueRun.runId);
+      queueItems = queueItems.map((item, index) => {
+        const slug = item.slug || nextQueueSlug(queueRun.runId, usedSlugs, index);
+        const task = taskRecordForQueueItem(item);
+        const repo = item.repoRoot ? queueItemRepository(item) : selectedRepo;
+        const closedStatus = task?.status?.startsWith('closed') ? task.status : '';
+        const success = closedStatus === 'closed:success' || item.status === 'success';
+        const prompt = item.prompt.trim();
+        return {
+          ...item,
+          slug,
+          agentId: item.agentId || task?.agent_id || '',
+          repoRoot: repo.root || '',
+          repoName: repo.name || '',
+          status: success ? 'success' : closedStatus ? 'failed' : prompt ? 'pending' : 'failed',
+          message: success ? 'closed successfully' : closedStatus || (prompt ? '' : 'empty prompt'),
+          agentCommand: item.agentCommand || selectedAgent?.command || '',
+          startedAt: item.startedAt || now,
+          updatedAt: now,
+        };
+      });
+      saveQueueStorage();
+      renderQueue();
+      const response = await fetch('/api/queue/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          run_id: queueRun.runId,
+          execution_mode: queueGraphMode ? 'graph' : 'sequence',
+          selected_agent_command: selectedAgent.command,
+          selected_repo_root: selectedRepo.root || '',
+          selected_repo_name: selectedRepo.name || '',
+          items: queueItems.map((item) => ({
+            id: item.id,
+            prompt: item.prompt,
+            slug: item.slug,
+            depends_on: queueGraphMode ? (item.dependsOn || []) : [],
+            repo_root: item.repoRoot,
+            repo_name: item.repoName,
+            agent_command: item.agentCommand || selectedAgent.command,
+          })),
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.ok === false) {
+        queueRun.running = false;
+        queueItems[0].status = 'failed';
+        queueItems[0].message = payload.output || 'failed to start backend queue';
+        saveQueueStorage();
+        renderQueue();
+        return;
+      }
+      await loadSnapshot();
+    }
+
+    async function stopQueue() {
+      if (queueRun.stopped) {
+        await continueQueue();
+        return;
+      }
+      queueRun.stop = true;
+      try {
+        await fetch('/api/queue/stop', { method: 'POST' });
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
+      renderQueue();
+    }
+
+    async function continueQueue() {
+      const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
+      if (!runId) return;
+      try {
+        const response = await fetch('/api/queue/continue', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ run_id: runId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to continue queue');
+          return;
+        }
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
+      renderQueue();
+    }
+
+    function preferredView() {
+      const fromHash = window.location.hash.replace(/^#/, '');
+      if (fromHash === 'start') return 'queue';
+      if (viewNames.has(fromHash)) return fromHash;
+      const stored = localStorage.getItem('qcold-view') || '';
+      if (stored === 'start') return 'queue';
+      return viewNames.has(stored) ? stored : 'queue';
+    }
+
+    function setActiveView(view, persist = true) {
+      const next = viewNames.has(view) ? view : 'queue';
+      viewButtons.forEach((button) => button.classList.toggle('active', button.dataset.view === next));
+      document.querySelectorAll('.view').forEach((item) => item.classList.remove('active'));
+      document.getElementById(`view-${next}`).classList.add('active');
+      if (persist) {
+        localStorage.setItem('qcold-view', next);
+        if (window.location.hash !== `#${next}`) {
+          history.replaceState(null, '', `#${next}`);
+        }
+      }
+      if ((next === 'agents' || next === 'queue') && model) loadAgentLimits(false);
+    }
+
+    async function loadAgentLimits(refresh) {
+      if (!model) return;
+      if (agentLimitsLoading) return;
+      agentLimitsLoading = true;
+      renderAgents();
+      renderQueue();
+      try {
+        const response = await fetch(`/api/agent-limits${refresh ? '?refresh=true' : ''}`, { cache: 'no-store' });
+        agentLimits = await response.json();
+      } catch (err) {
+        agentLimits = {
+          cached: false,
+          count: 0,
+          records: [],
+        };
+        appendLocalMessage('error', `Failed to load agent limits: ${err}`);
+      } finally {
+        agentLimitsLoading = false;
+        renderAgents();
+        renderQueue();
+      }
+    }
+
+    document.getElementById('close-transcript').addEventListener('click', closeTaskTranscript);
+    transcriptSend.addEventListener('click', sendTranscriptMessage);
+    transcriptInput.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') sendTranscriptMessage();
+    });
+    transcriptModal.addEventListener('click', (event) => {
+      if (event.target === transcriptModal) closeTaskTranscript();
+    });
+    document.getElementById('add-queue-task').addEventListener('click', addQueueTask);
+    document.getElementById('clear-queue').addEventListener('click', clearQueue);
+    document.getElementById('run-queue').addEventListener('click', runQueue);
+    document.getElementById('stop-queue').addEventListener('click', stopQueue);
+    document.getElementById('refresh-agent-limits').addEventListener('click', () => loadAgentLimits(true));
+    queueGraphModeInput.addEventListener('change', () => {
+      queueGraphMode = queueGraphModeInput.checked;
+      localStorage.setItem(queueGraphModeStorageKey, queueGraphMode ? '1' : '0');
+      renderQueue();
+    });
+    queueInput.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') addQueueTask();
+    });
+    queueInput.addEventListener('input', renderQueue);
+    queueRepoSelect.addEventListener('change', () => {
+      selectedQueueRepoRoot = queueRepoSelect.value;
+      localStorage.setItem(queueRepoStorageKey, selectedQueueRepoRoot);
+      renderQueue();
+    });
+    queueAgentSelect.addEventListener('change', () => {
+      selectedQueueAgent = queueAgentSelect.value;
+      localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
+      renderQueue();
+    });
+    themeButtons.forEach((button) => {
+      button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
+    });
+    viewButtons.forEach((button) => {
+      button.addEventListener('click', () => {
+        setActiveView(button.dataset.view);
+      });
+    });
+    applyTheme();
+    setActiveView(preferredView(), false);
+    connectEvents();
+    window.addEventListener('hashchange', () => setActiveView(preferredView()));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        if (eventSource) eventSource.close();
+        if (fallbackTimer) window.clearInterval(fallbackTimer);
+        fallbackTimer = null;
+      } else {
+        connectEvents();
+      }
+    });

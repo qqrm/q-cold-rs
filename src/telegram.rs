@@ -88,7 +88,8 @@ impl TelegramConfig {
             parse_allowed_usernames(optional_env("QCOLD_TELEGRAM_ALLOWED_USERNAMES").as_deref());
         if allowed_user_ids.is_empty() && allowed_usernames.is_empty() {
             bail!(
-                "set QCOLD_TELEGRAM_ALLOWED_USER_IDS or QCOLD_TELEGRAM_ALLOWED_USERNAMES before enabling Telegram command execution"
+                "set QCOLD_TELEGRAM_ALLOWED_USER_IDS or QCOLD_TELEGRAM_ALLOWED_USERNAMES before \
+                 enabling Telegram command execution"
             );
         }
         Ok(Self {
@@ -316,7 +317,8 @@ fn whoami_text(message: &TelegramMessage, unrestricted: bool) -> String {
         "Operator user allowlist is active."
     };
     format!(
-        "Telegram user id: {user_id}\nUsername: @{username}\nChat id: {}\n\n{mode}\nPrefer QCOLD_TELEGRAM_ALLOWED_USER_IDS={user_id} for a stable account lock.",
+        "Telegram user id: {user_id}\nUsername: @{username}\nChat id: {}\n\n{mode}\n\
+         Prefer QCOLD_TELEGRAM_ALLOWED_USER_IDS={user_id} for a stable account lock.",
         message.chat.id
     )
 }

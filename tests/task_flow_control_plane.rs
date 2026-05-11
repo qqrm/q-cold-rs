@@ -195,7 +195,13 @@ impl TaskRepoFixture {
         fs::create_dir_all(&fakebin).unwrap();
         write_exe(
             &fakebin.join("docker"),
-            "#!/usr/bin/env bash\nset -euo pipefail\ncase \"${1:-}\" in\n  ps|images|rm|rmi) exit 0 ;;\n  inspect) exit 1 ;;\n  *) exit 0 ;;\nesac\n",
+            "#!/usr/bin/env bash\n\
+             set -euo pipefail\n\
+             case \"${1:-}\" in\n\
+               ps|images|rm|rmi) exit 0 ;;\n\
+               inspect) exit 1 ;;\n\
+               *) exit 0 ;;\n\
+             esac\n",
         );
 
         Self {

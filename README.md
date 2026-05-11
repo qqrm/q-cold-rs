@@ -61,7 +61,7 @@ The gate checks the tracked text quality surface, Rust formatting, web asset
 JavaScript syntax, binary unit tests, Clippy correctness/suspicious/perf lints
 for production binaries, and stable integration suites that do not require the
 external task-flow fixture adapter. Tracked text files must stay at or below
-1,000 lines and 180
+1,000 lines and 120
 characters per line unless `xtask` carries an explicit reviewed exception for
 pre-existing split debt. `cargo qcold verify` and successful managed task
 closeout run the same repository-local `xtask` implementation through the

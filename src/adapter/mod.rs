@@ -79,7 +79,8 @@ impl XtaskProcessAdapter {
             match sibling {
                 Some(path) if path.is_file() => XtaskMode::Manifest(path),
                 _ => bail!(
-                    "xtask process adapter is unavailable; run from a target repository checkout, set QCOLD_XTASK_MANIFEST, or pass --xtask-manifest"
+                    "xtask process adapter is unavailable; run from a target repository checkout, \
+                     set QCOLD_XTASK_MANIFEST, or pass --xtask-manifest"
                 ),
             }
         };

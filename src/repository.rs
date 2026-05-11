@@ -214,8 +214,7 @@ fn current_checkout_config_for_root(root: &Path) -> Result<RepositoryConfig> {
 fn cwd_managed_worktree_root() -> Result<Option<PathBuf>> {
     match git_root() {
         Ok(root) if root.join(".task/task.env").is_file() => Ok(Some(canonical_root(&root)?)),
-        Ok(_) => Ok(None),
-        Err(_) => Ok(None),
+        Ok(_) | Err(_) => Ok(None),
     }
 }
 
@@ -553,7 +552,11 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success());
-        std::fs::write(primary.join("xtask/Cargo.toml"), "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n").unwrap();
+        std::fs::write(
+            primary.join("xtask/Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
         std::fs::write(
             worktree.join(".task/task.env"),
             format!("PRIMARY_REPO_PATH='{}'\n", primary.display()),
