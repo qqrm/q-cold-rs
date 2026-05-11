@@ -864,10 +864,36 @@
       border-top: 1px solid var(--line);
       padding: 10px;
     }
+    .transcript-terminal-block {
+      display: grid;
+      gap: 7px;
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--soft);
+    }
+    .transcript-terminal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-width: 0;
+      color: var(--muted); font-size: 12px;
+      font-weight: 700;
+    }
+    .transcript-terminal-head small {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 500;
+    }
     .transcript-terminal-output {
-      min-height: 100%;
-      max-height: none;
+      min-height: 180px;
+      max-height: min(36vh, 340px);
       border-radius: 6px;
+      white-space: pre-wrap; overflow-wrap: anywhere;
     }
     .transcript-compose {
       display: grid;

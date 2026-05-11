@@ -675,12 +675,22 @@
 
     function transcriptTerminalOutputNode(terminal) {
       if (!terminal?.output) return null;
-      const wrap = document.createElement('div');
-      wrap.className = 'terminal-output transcript-terminal-output';
-      wrap.tabIndex = 0;
-      wrap.addEventListener('keydown', (event) => handleTerminalKeyboard(event, terminal.target));
-      renderAnsi(wrap, terminal.output);
-      return wrap;
+      const block = document.createElement('section');
+      block.className = 'transcript-terminal-block';
+      const head = document.createElement('div');
+      head.className = 'transcript-terminal-head';
+      const title = document.createElement('span');
+      title.textContent = 'Live terminal';
+      const meta = document.createElement('small');
+      meta.textContent = terminal.label || terminal.agent_id || terminal.target || '';
+      head.append(title, meta);
+      const output = document.createElement('div');
+      output.className = 'terminal-output transcript-terminal-output';
+      output.tabIndex = 0;
+      output.addEventListener('keydown', (event) => handleTerminalKeyboard(event, terminal.target));
+      renderAnsi(output, terminal.output);
+      block.append(head, output);
+      return block;
     }
 
     function renderTranscriptComposer() {
