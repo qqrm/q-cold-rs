@@ -115,6 +115,7 @@ fn start_tmux_terminal_agent(
     let env_prefix = terminal_qcold_env_prefix(
         launch.qcold_repo_root.as_deref(),
         launch.qcold_agent_worktree.as_deref(),
+        launch.output_guard.as_ref(),
     );
     let wrapped = format!(
         "{env_prefix}{}; status=$?; printf \
@@ -179,6 +180,7 @@ fn start_zellij_terminal_agent(
     let env_prefix = terminal_qcold_env_prefix(
         launch.qcold_repo_root.as_deref(),
         launch.qcold_agent_worktree.as_deref(),
+        launch.output_guard.as_ref(),
     );
     let wrapped = format!(
         "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \
@@ -276,7 +278,21 @@ fn apply_qcold_launch_env(
     }
 }
 
-fn terminal_qcold_env_prefix(root: Option<&Path>, agent_worktree: Option<&Path>) -> String {
+fn terminal_qcold_env_prefix(
+    root: Option<&Path>,
+    agent_worktree: Option<&Path>,
+    output_guard: Option<&OutputGuardLaunch>,
+) -> String {
+    let path = env::var("PATH").ok();
+    terminal_qcold_env_prefix_with_path(root, agent_worktree, output_guard, path.as_deref())
+}
+
+fn terminal_qcold_env_prefix_with_path(
+    root: Option<&Path>,
+    agent_worktree: Option<&Path>,
+    output_guard: Option<&OutputGuardLaunch>,
+    path: Option<&str>,
+) -> String {
     let mut prefix = String::new();
     if let Some(root) = root {
         let _ = write!(
@@ -291,6 +307,33 @@ fn terminal_qcold_env_prefix(root: Option<&Path>, agent_worktree: Option<&Path>)
             "export QCOLD_AGENT_WORKTREE={}; ",
             shell_quote(&agent_worktree.display().to_string())
         );
+    }
+    if let Some(output_guard) = output_guard {
+        let _ = write!(
+            prefix,
+            "export QCOLD_OUTPUT_GUARD_BIN={}; ",
+            shell_quote(&output_guard.bin_dir.display().to_string())
+        );
+        let _ = write!(
+            prefix,
+            "export QCOLD_GUARD_QCOLD={}; ",
+            shell_quote(&output_guard.qcold_path.display().to_string())
+        );
+        for guarded in &output_guard.real_commands {
+            let _ = write!(
+                prefix,
+                "export {}={}; ",
+                guarded.env_name,
+                shell_quote(&guarded.real_path.display().to_string())
+            );
+        }
+        let path = path.unwrap_or_default();
+        let guarded_path = if path.is_empty() {
+            output_guard.bin_dir.display().to_string()
+        } else {
+            format!("{}:{path}", output_guard.bin_dir.display())
+        };
+        let _ = write!(prefix, "export PATH={}; ", shell_quote(&guarded_path));
     }
     prefix
 }

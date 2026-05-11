@@ -922,7 +922,11 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     );
     let _ = writeln!(
         packet,
-        "  - for risky commands, run qcold guard -- <command> before reading raw output"
+        "  - Q-COLD-started terminal agents automatically guard broad rg, grep, and find output"
+    );
+    let _ = writeln!(
+        packet,
+        "  - when automatic terminal guards do not apply, use qcold guard -- <command>"
     );
     let _ = writeln!(
         packet,
