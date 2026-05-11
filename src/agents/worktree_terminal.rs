@@ -269,12 +269,33 @@ fn apply_qcold_launch_env(
     command: &mut Command,
     root: Option<&Path>,
     agent_worktree: Option<&Path>,
+    output_guard: Option<&OutputGuardLaunch>,
 ) {
     if let Some(root) = root {
         command.env("QCOLD_REPO_ROOT", root);
     }
     if let Some(agent_worktree) = agent_worktree {
         command.env("QCOLD_AGENT_WORKTREE", agent_worktree);
+    }
+    let inherited_guard_bin = env::var_os("QCOLD_OUTPUT_GUARD_BIN").map(PathBuf::from);
+    if inherited_guard_bin.is_some() || output_guard.is_some() {
+        command.env_remove("QCOLD_OUTPUT_GUARD_BIN");
+        command.env_remove("QCOLD_GUARD_QCOLD");
+    }
+    let path = env::var("PATH").unwrap_or_default();
+    let cleaned_path = path_without_output_guard_bin(&path, inherited_guard_bin.as_deref());
+    if let Some(output_guard) = output_guard {
+        command.env("QCOLD_OUTPUT_GUARD_BIN", &output_guard.bin_dir);
+        command.env("QCOLD_GUARD_QCOLD", &output_guard.qcold_path);
+        for guarded in &output_guard.real_commands {
+            command.env(&guarded.env_name, &guarded.real_path);
+        }
+        command.env(
+            "PATH",
+            guarded_path_value(output_guard.bin_dir.as_path(), &cleaned_path),
+        );
+    } else if inherited_guard_bin.is_some() && cleaned_path != path {
+        command.env("PATH", cleaned_path);
     }
 }
 
@@ -333,16 +354,20 @@ fn terminal_qcold_env_prefix_with_path(
                 shell_quote(&guarded.real_path.display().to_string())
             );
         }
-        let guarded_path = if cleaned_path.is_empty() {
-            output_guard.bin_dir.display().to_string()
-        } else {
-            format!("{}:{cleaned_path}", output_guard.bin_dir.display())
-        };
+        let guarded_path = guarded_path_value(output_guard.bin_dir.as_path(), &cleaned_path);
         let _ = write!(prefix, "export PATH={}; ", shell_quote(&guarded_path));
     } else if inherited_guard_bin.is_some() && cleaned_path != path {
         let _ = write!(prefix, "export PATH={}; ", shell_quote(&cleaned_path));
     }
     prefix
+}
+
+fn guarded_path_value(guard_bin: &Path, path: &str) -> String {
+    if path.is_empty() {
+        guard_bin.display().to_string()
+    } else {
+        format!("{}:{path}", guard_bin.display())
+    }
 }
 
 fn path_without_output_guard_bin(path: &str, inherited_guard_bin: Option<&Path>) -> String {

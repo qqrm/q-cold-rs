@@ -459,6 +459,7 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use super::*;
+    use std::ffi::OsStr;
     use tempfile::tempdir;
 
     fn git_ok(cwd: &Path, args: &[&str]) {
@@ -484,6 +485,13 @@ mod tests {
             permissions.set_mode(0o755);
             fs::set_permissions(path, permissions).unwrap();
         }
+    }
+
+    fn command_env_value(command: &Command, key: &str) -> Option<String> {
+        command
+            .get_envs()
+            .find(|(name, _value)| *name == OsStr::new(key))
+            .and_then(|(_name, value)| value.map(|value| value.to_string_lossy().to_string()))
     }
 
     fn seed_git_repo(path: &Path) {
@@ -611,6 +619,62 @@ mod tests {
         assert!(prefix.contains("export QCOLD_GUARD_QCOLD='/opt/qcold/bin/qcold';"));
         assert!(prefix.contains("export QCOLD_GUARD_REAL_0_RG='/usr/bin/rg';"));
         assert!(prefix.contains("export PATH='/tmp/qcold guard/bin:/usr/bin:/bin';"));
+    }
+
+    #[test]
+    fn process_launch_env_prepends_output_guard_bin_to_path() {
+        let _guard = crate::test_support::env_guard();
+        env::set_var("PATH", "/usr/bin:/bin");
+        let output_guard = OutputGuardLaunch {
+            bin_dir: PathBuf::from("/tmp/qcold-guard/bin"),
+            qcold_path: PathBuf::from("/opt/qcold/bin/qcold"),
+            real_commands: vec![GuardedCommand {
+                command: "rg".to_string(),
+                env_name: "QCOLD_GUARD_REAL_0_RG".to_string(),
+                real_path: PathBuf::from("/usr/bin/rg"),
+            }],
+        };
+        let mut command = Command::new("rg");
+        apply_qcold_launch_env(
+            &mut command,
+            Some(Path::new("/workspace/primary")),
+            Some(Path::new("/workspace/WT/repo/agents/c1")),
+            Some(&output_guard),
+        );
+
+        assert_eq!(
+            command_env_value(&command, "QCOLD_REPO_ROOT").as_deref(),
+            Some("/workspace/primary")
+        );
+        assert_eq!(
+            command_env_value(&command, "QCOLD_AGENT_WORKTREE").as_deref(),
+            Some("/workspace/WT/repo/agents/c1")
+        );
+        assert_eq!(
+            command_env_value(&command, "QCOLD_OUTPUT_GUARD_BIN").as_deref(),
+            Some("/tmp/qcold-guard/bin")
+        );
+        assert_eq!(
+            command_env_value(&command, "QCOLD_GUARD_REAL_0_RG").as_deref(),
+            Some("/usr/bin/rg")
+        );
+        assert_eq!(
+            command_env_value(&command, "PATH").as_deref(),
+            Some("/tmp/qcold-guard/bin:/usr/bin:/bin")
+        );
+    }
+
+    #[test]
+    fn process_launch_env_removes_inherited_guard_bin_from_path() {
+        let _guard = crate::test_support::env_guard();
+        env::set_var("QCOLD_OUTPUT_GUARD_BIN", "/old/guard");
+        env::set_var("PATH", "/old/guard:/usr/bin:/bin");
+        let mut command = Command::new("rg");
+        apply_qcold_launch_env(&mut command, None, None, None);
+        assert_eq!(
+            command_env_value(&command, "PATH").as_deref(),
+            Some("/usr/bin:/bin")
+        );
     }
 
     #[test]

@@ -39,7 +39,7 @@ mod queue_prompt_tests {
         assert!(instruction.contains("task_logs: .task/logs/"));
         assert!(instruction.contains("pause_or_blocked_only_for: business decision"));
         assert!(instruction.contains("output_guard:"));
-        assert!(instruction.contains("automatically guard broad rg, grep, and find output"));
+        assert!(instruction.contains("Q-COLD-started agents automatically guard broad"));
         assert!(instruction.contains("when automatic terminal guards do not apply"));
         assert!(instruction.contains("qcold guard -- <command>"));
         assert!(instruction.contains("operator_request_snippet: |\n  do focused work"));

@@ -922,7 +922,7 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     );
     let _ = writeln!(
         packet,
-        "  - Q-COLD-started terminal agents automatically guard broad rg, grep, and find output"
+        "  - Q-COLD-started agents automatically guard broad rg, grep, and find output"
     );
     let _ = writeln!(
         packet,

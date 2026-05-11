@@ -75,6 +75,7 @@ struct Launch {
     cwd: PathBuf,
     qcold_repo_root: Option<PathBuf>,
     qcold_agent_worktree: Option<PathBuf>,
+    output_guard: Option<OutputGuardLaunch>,
 }
 
 struct TerminalLaunch {
@@ -359,6 +360,7 @@ fn start_agent(
         &mut process,
         launch.qcold_repo_root.as_deref(),
         launch.qcold_agent_worktree.as_deref(),
+        launch.output_guard.as_ref(),
     );
     let child = process
         .stdin(Stdio::null())
@@ -454,11 +456,13 @@ fn prepare_launch(
 ) -> Result<Launch> {
     let command_text = shell_join(command);
     let context = prepare_launch_context(id, track, started_at, requested_cwd, &command_text)?;
+    let output_guard = prepare_output_guard_launch(id, started_at)?;
     Ok(Launch {
         command: command.to_vec(),
         cwd: context.cwd,
         qcold_repo_root: context.qcold_repo_root,
         qcold_agent_worktree: context.qcold_agent_worktree,
+        output_guard,
     })
 }
 
