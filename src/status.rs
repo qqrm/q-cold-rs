@@ -115,7 +115,7 @@ fn managed_tasks(managed_root: &Path) -> Result<Vec<ManagedTask>> {
 }
 
 fn task_blocks_terminal(status: &str) -> bool {
-    status.is_empty() || status == "open" || status == "failed-closeout"
+    status.is_empty() || status == "open" || status == "paused" || status == "failed-closeout"
 }
 
 struct ManagedTask {

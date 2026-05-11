@@ -21,6 +21,7 @@ pub trait TaskAdapter {
     fn list(&self) -> Result<u8>;
     fn terminal_check(&self) -> Result<u8>;
     fn iteration_notify(&self, message: &str) -> Result<u8>;
+    fn pause(&self, reason: &str) -> Result<u8>;
     fn closeout(&self, outcome: &str, message: Option<&str>, reason: Option<&str>) -> Result<u8>;
     fn finalize(&self, message: &str) -> Result<u8>;
     fn clean(&self, task_slug: &str) -> Result<u8>;
@@ -195,6 +196,10 @@ impl TaskAdapter for XtaskProcessAdapter {
             "--message",
             message,
         ]))
+    }
+
+    fn pause(&self, reason: &str) -> Result<u8> {
+        self.run(&os_args(&["task", "pause", "--reason", reason]))
     }
 
     fn closeout(&self, outcome: &str, message: Option<&str>, reason: Option<&str>) -> Result<u8> {

@@ -9,6 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
+const DEFAULT_PAUSED_TASK_TTL_HOURS: u64 = 2;
+const DEFAULT_BUNDLE_RETENTION_HOURS: u64 = 24;
+
 fn main() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
@@ -81,6 +84,10 @@ enum TaskCommand {
         #[arg(long)]
         message: String,
     },
+    Pause {
+        #[arg(long)]
+        reason: String,
+    },
     Closeout(CloseoutArgs),
     Bundle {
         task_id: Option<String>,
@@ -118,6 +125,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         TaskCommand::TerminalCheck => terminal_check_command(),
         TaskCommand::IterationNotify { message } => append_event_command("iteration", &message),
         TaskCommand::Finalize { message } => append_event_command("finalize", &message),
+        TaskCommand::Pause { reason } => pause_command(&reason),
         TaskCommand::Closeout(args) => closeout_command(&args),
         TaskCommand::Bundle { task_id } => bundle_command(task_id.as_deref()),
         TaskCommand::Clean { task_slug } => clean_command(&task_slug, false),
@@ -125,8 +133,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         TaskCommand::ClearAll => clear_all_command(),
         TaskCommand::OrphanList => Ok(orphan_list_command()),
         TaskCommand::OrphanClearStale { max_age_hours } => {
-            println!("orphan-clear-stale\tmax_age_hours={max_age_hours}\tremoved=0");
-            Ok(0)
+            orphan_clear_stale_command(max_age_hours)
         }
     }
 }
@@ -146,6 +153,23 @@ fn inspect_command(topic: Option<&str>) -> Result<u8> {
 fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     ensure_slug(task_slug)?;
     let repo = repo_root()?;
+    if let Some(mut task) = find_task(&repo, task_slug)? {
+        if task.status == "paused" || task.status == "failed-closeout" {
+            task.status = "open".to_string();
+            task.updated_at = unix_now().to_string();
+            if let Some(profile) = profile {
+                task.task_profile = profile.to_string();
+            }
+            write_task_env(&task)?;
+            append_event(&task.task_worktree, "task-resume", "resumed task")?;
+            println!(
+                "task-resumed\t{task_slug}\t{}",
+                task.task_worktree.display()
+            );
+            println!("TASK_WORKTREE={}", task.task_worktree.display());
+            return Ok(0);
+        }
+    }
     ensure_clean(&repo, "primary checkout")?;
     let base_head = git_output(&repo, ["rev-parse", "HEAD"])?;
     let base_branch = git_output(&repo, ["branch", "--show-current"])?;
@@ -226,6 +250,20 @@ fn list_command() -> Result<u8> {
 
 fn terminal_check_command() -> Result<u8> {
     let repo = task_inventory_repo_root()?;
+    let cleanup = clear_stale_paused_tasks(&repo, paused_task_ttl_hours()?)?;
+    let bundle_cleanup = clear_stale_bundles(&repo, bundle_retention_hours()?)?;
+    if cleanup.removed > 0 {
+        println!(
+            "paused-task-cleanup\tmax_age_hours={}\tremoved={}",
+            cleanup.max_age_hours, cleanup.removed
+        );
+    }
+    if bundle_cleanup.removed > 0 {
+        println!(
+            "bundle-cleanup\tretention_hours={}\tremoved={}",
+            bundle_cleanup.retention_hours, bundle_cleanup.removed
+        );
+    }
     let tasks = open_tasks(&repo)?
         .into_iter()
         .filter(|task| task_blocks_terminal(&task.status))
@@ -250,10 +288,19 @@ fn terminal_check_command() -> Result<u8> {
                 task.status,
                 task.task_worktree.display()
             );
+        } else if task.status == "paused" {
+            println!(
+                "paused-task\t{}\t{}\t{}",
+                task.task_name,
+                task.status,
+                task.task_worktree.display()
+            );
         }
     }
     if incomplete_closeout {
         eprintln!("terminal-check blocked: incomplete failed-closeout task state remains");
+    } else if tasks.iter().any(|task| task.status == "paused") {
+        eprintln!("terminal-check blocked: paused managed task state remains");
     } else {
         eprintln!("terminal-check blocked: managed task worktrees remain open");
     }
@@ -264,6 +311,18 @@ fn append_event_command(kind: &str, message: &str) -> Result<u8> {
     let task = current_task_env()?;
     append_event(&task.task_worktree, kind, message)?;
     println!("task-event\t{kind}\t{}", task.task_name);
+    Ok(0)
+}
+
+fn pause_command(reason: &str) -> Result<u8> {
+    let mut task = current_task_env()?;
+    task.status = "paused".to_string();
+    task.updated_at = unix_now().to_string();
+    write_task_env(&task)?;
+    append_event(&task.task_worktree, "task-pause", reason)?;
+    println!("task-pause\t{}", task.task_name);
+    println!("REASON={reason}");
+    println!("TASK_WORKTREE={}", task.task_worktree.display());
     Ok(0)
 }
 
@@ -433,6 +492,123 @@ fn orphan_list_command() -> u8 {
     0
 }
 
+fn orphan_clear_stale_command(max_age_hours: u64) -> Result<u8> {
+    let repo = task_inventory_repo_root()?;
+    let cleanup = clear_stale_paused_tasks(&repo, max_age_hours)?;
+    let bundle_cleanup = clear_stale_bundles(&repo, bundle_retention_hours()?)?;
+    println!(
+        "orphan-clear-stale\tmax_age_hours={}\tremoved={}",
+        cleanup.max_age_hours, cleanup.removed
+    );
+    println!(
+        "bundle-clear-stale\tretention_hours={}\tremoved={}",
+        bundle_cleanup.retention_hours, bundle_cleanup.removed
+    );
+    Ok(0)
+}
+
+struct StaleCleanup {
+    max_age_hours: u64,
+    removed: usize,
+}
+
+struct BundleCleanup {
+    retention_hours: u64,
+    removed: usize,
+}
+
+fn clear_stale_paused_tasks(repo: &Path, max_age_hours: u64) -> Result<StaleCleanup> {
+    let now = unix_now();
+    let max_age_seconds = max_age_hours.saturating_mul(60).saturating_mul(60);
+    let mut removed = 0;
+    for task in open_tasks(repo)? {
+        if task.status != "paused" || !task_is_stale(&task, now, max_age_seconds) {
+            continue;
+        }
+        run_git(
+            repo,
+            [
+                "worktree",
+                "remove",
+                "--force",
+                path_arg(&task.task_worktree),
+            ],
+        )?;
+        let _ = run_git(repo, ["branch", "-D", &task.task_branch]);
+        removed += 1;
+    }
+    Ok(StaleCleanup {
+        max_age_hours,
+        removed,
+    })
+}
+
+fn task_is_stale(task: &TaskEnv, now: u64, max_age_seconds: u64) -> bool {
+    let updated_at = task
+        .updated_at
+        .parse::<u64>()
+        .ok()
+        .or_else(|| task.started_at.parse::<u64>().ok())
+        .unwrap_or(0);
+    now.saturating_sub(updated_at) >= max_age_seconds
+}
+
+fn paused_task_ttl_hours() -> Result<u64> {
+    match std::env::var("QCOLD_PAUSED_TASK_TTL_HOURS") {
+        Ok(value) => value
+            .parse::<u64>()
+            .with_context(|| format!("invalid QCOLD_PAUSED_TASK_TTL_HOURS={value}")),
+        Err(_) => Ok(DEFAULT_PAUSED_TASK_TTL_HOURS),
+    }
+}
+
+fn clear_stale_bundles(repo: &Path, retention_hours: u64) -> Result<BundleCleanup> {
+    let bundles = repo.join("bundles");
+    if !bundles.is_dir() {
+        return Ok(BundleCleanup {
+            retention_hours,
+            removed: 0,
+        });
+    }
+    let now = SystemTime::now();
+    let retention_seconds = retention_hours.saturating_mul(60).saturating_mul(60);
+    let mut removed = 0;
+    for entry in
+        fs::read_dir(&bundles).with_context(|| format!("failed to read {}", bundles.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("zip") {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH);
+        let age = now
+            .duration_since(modified)
+            .map_or(u64::MAX, |duration| duration.as_secs());
+        if age < retention_seconds {
+            continue;
+        }
+        fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
+        removed += 1;
+    }
+    Ok(BundleCleanup {
+        retention_hours,
+        removed,
+    })
+}
+
+fn bundle_retention_hours() -> Result<u64> {
+    match std::env::var("QCOLD_BUNDLE_RETENTION_HOURS") {
+        Ok(value) => value
+            .parse::<u64>()
+            .with_context(|| format!("invalid QCOLD_BUNDLE_RETENTION_HOURS={value}")),
+        Err(_) => Ok(DEFAULT_BUNDLE_RETENTION_HOURS),
+    }
+}
+
 fn verify_command(args: &[OsString]) -> Result<u8> {
     if !args.is_empty() {
         println!("verify-profile\t{}", display_args(args));
@@ -598,7 +774,7 @@ fn open_tasks(repo: &Path) -> Result<Vec<TaskEnv>> {
 }
 
 fn task_blocks_terminal(status: &str) -> bool {
-    status.is_empty() || status == "open" || status == "failed-closeout"
+    status.is_empty() || status == "open" || status == "paused" || status == "failed-closeout"
 }
 
 fn find_task(repo: &Path, task_slug: &str) -> Result<Option<TaskEnv>> {
@@ -883,10 +1059,39 @@ mod tests {
     fn terminal_blocking_status_ignores_terminal_closeouts() {
         assert!(task_blocks_terminal(""));
         assert!(task_blocks_terminal("open"));
+        assert!(task_blocks_terminal("paused"));
         assert!(task_blocks_terminal("failed-closeout"));
         assert!(!task_blocks_terminal("closed:success"));
         assert!(!task_blocks_terminal("closed:blocked"));
         assert!(!task_blocks_terminal("closed:failed"));
+    }
+
+    #[test]
+    fn stale_paused_task_uses_updated_at_then_started_at() {
+        let mut task = test_task_env();
+        task.updated_at = "100".into();
+        task.started_at = "1".into();
+        assert!(task_is_stale(&task, 200, 50));
+        assert!(!task_is_stale(&task, 120, 50));
+
+        task.updated_at.clear();
+        assert!(task_is_stale(&task, 200, 50));
+    }
+
+    #[test]
+    fn stale_bundle_cleanup_removes_only_zip_files() {
+        let root = unique_test_dir("qcold-bundle-cleanup");
+        let bundles = root.join("bundles");
+        fs::create_dir_all(&bundles).unwrap();
+        fs::write(bundles.join("old.zip"), "zip").unwrap();
+        fs::write(bundles.join("note.txt"), "note").unwrap();
+
+        let cleanup = clear_stale_bundles(&root, 0).unwrap();
+
+        assert_eq!(cleanup.removed, 1);
+        assert!(!bundles.join("old.zip").exists());
+        assert!(bundles.join("note.txt").exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1000,6 +1205,27 @@ mod tests {
 
     fn run_git_in<const N: usize>(repo: &Path, args: [&str; N]) {
         run_git(repo, args).unwrap();
+    }
+
+    fn test_task_env() -> TaskEnv {
+        TaskEnv {
+            task_id: "task/pause".into(),
+            task_name: "pause".into(),
+            task_branch: "task/pause".into(),
+            task_execution_anchor: "001".into(),
+            task_description: "pause".into(),
+            task_worktree: PathBuf::from("/tmp/pause"),
+            task_profile: "default".into(),
+            primary_repo_path: PathBuf::from("/tmp/repo"),
+            base_branch: "main".into(),
+            base_head: "HEAD".into(),
+            task_head: "HEAD".into(),
+            started_at: "1".into(),
+            status: "paused".into(),
+            updated_at: "1".into(),
+            devcontainer_name: "host-shell".into(),
+            delivery_mode: "self-hosted-qcold".into(),
+        }
     }
 }
 

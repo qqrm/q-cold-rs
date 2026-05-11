@@ -1489,6 +1489,19 @@ fn wait_for_queue_item_closeout(
                 update_successful_queue_item(run_id, item, Some(agent_id), attempts)?;
                 return Ok(QueueItemOutcome::Success);
             }
+            if status == "paused" {
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "paused",
+                    &status,
+                    Some(agent_id),
+                    attempts,
+                    None,
+                )?;
+                state::update_web_queue_run(run_id, "stopped", item.position, &status)?;
+                return Ok(QueueItemOutcome::Stopped);
+            }
             if status.starts_with("closed") {
                 state::update_web_queue_item(
                     run_id,
@@ -1608,6 +1621,19 @@ fn reconcile_stale_web_queue_run() -> Result<()> {
                     )?;
                 }
                 continue;
+            }
+            if status == "paused" {
+                state::update_web_queue_item(
+                    &run.id,
+                    &item.id,
+                    "paused",
+                    &status,
+                    item.agent_id.as_deref(),
+                    item.attempts,
+                    None,
+                )?;
+                state::update_web_queue_run(&run.id, "stopped", item.position, &status)?;
+                return Ok(());
             }
             if status.starts_with("closed") && item.status != "success" {
                 state::update_web_queue_item(
@@ -1748,7 +1774,7 @@ fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
 fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let root = item.repo_root.as_deref().unwrap_or("<repo>");
     format!(
-        "Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task {slug} with cargo qcold task open {slug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: {prompt} Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.",
+        "Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task {slug} with cargo qcold task open {slug}, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: {prompt} Drive the task to terminal closeout unless a business or external blocker requires task pause or blocked closeout. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.",
         slug = item.slug,
         prompt = item.prompt.trim(),
     )
@@ -1905,11 +1931,11 @@ fn ensure_task_chat_target(task_id: &str) -> Result<(String, String)> {
             return Ok((target, agent_id));
         }
     }
-    if record.status != "closed:blocked" {
+    if record.status != "closed:blocked" && record.status != "paused" {
         bail!("task has no live chat target");
     }
     let session_id =
-        codex_resume_session_id(&record).context("blocked task has no Codex session id")?;
+        codex_resume_session_id(&record).context("task has no Codex session id")?;
     let agent_command = queue_item
         .as_ref()
         .map(|item| item.agent_command.clone())
@@ -2054,7 +2080,8 @@ fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
 }
 
 fn task_record_chat_available(record: &state::TaskRecordRow) -> bool {
-    record.status == "closed:blocked" && codex_resume_session_id(record).is_some()
+    matches!(record.status.as_str(), "closed:blocked" | "paused")
+        && codex_resume_session_id(record).is_some()
 }
 
 fn codex_session_path_from_metadata(metadata_json: Option<&str>) -> Option<String> {
@@ -2618,7 +2645,7 @@ fn dashboard_state() -> DashboardState {
 
 fn agent_start_template(root: &str) -> String {
     format!(
-        "/agent_start --cwd {cwd} <track> :: codex exec \"Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless blocked. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\"",
+        "/agent_start --cwd {cwd} <track> :: codex exec \"Use the launched host-side agent workspace as your home base for {root}; do not enter a devcontainer from $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter that managed task worktree and its devcontainer if the task flow provides one, reread AGENTS.md and task logs, then do: <task>. Drive the task to terminal closeout unless a business or external blocker requires task pause or blocked closeout. After closeout, cd back to $QCOLD_AGENT_WORKTREE before starting a new chat or task.\"",
         cwd = shell_quote(root),
     )
 }
@@ -3292,7 +3319,7 @@ impl TaskRecordSnapshot {
         let count = records.len();
         let open = records
             .iter()
-            .filter(|record| record.status == "open")
+            .filter(|record| matches!(record.status.as_str(), "open" | "paused"))
             .count();
         let failed = records
             .iter()
@@ -4146,7 +4173,7 @@ mod tests {
         assert!(instruction.contains("home base for /workspace/repo"));
         assert!(instruction.contains("cargo qcold task open task-run-01"));
         assert!(instruction.contains("then do: do focused work"));
-        assert!(instruction.contains("Drive the task to terminal closeout unless blocked"));
+        assert!(instruction.contains("requires task pause or blocked closeout"));
     }
 
     #[test]

@@ -90,7 +90,7 @@ where
     name = "qcold",
     version = QCOLD_VERSION,
     about = "Q-COLD orchestration facade over adapter-backed task flow",
-    after_help = "Examples:\n  qcold repo list\n  qcold repo add target-repo /path/to/target-repo --xtask-manifest /path/to/target-repo/xtask/Cargo.toml --set-active\n  qcold status\n  qcold task-record create --description \"Add task CRUD and automatic capture\"\n  qcold task-record list\n  qcold agent list\n  qcold agent start --track audit -- codex exec \"inspect repo\"\n  qcold telegram poll\n  qcold bundle\n  qcold task inspect runtime-audit\n  qcold task open my-task\n  qcold task enter\n  qcold task iteration-notify --message \"waiting for direction\"\n  qcold task closeout --outcome success --message \"docs: update truth\"\n  qcold verify fast\n  qcold ci matrix rust-all-on --jobs 4\n\nCargo subcommand compatibility is also supported: cargo qcold <command>."
+    after_help = "Examples:\n  qcold repo list\n  qcold repo add target-repo /path/to/target-repo --xtask-manifest /path/to/target-repo/xtask/Cargo.toml --set-active\n  qcold status\n  qcold task-record create --description \"Add task CRUD and automatic capture\"\n  qcold task-record list\n  qcold agent list\n  qcold agent start --track audit -- codex exec \"inspect repo\"\n  qcold telegram poll\n  qcold bundle\n  qcold task inspect runtime-audit\n  qcold task open my-task\n  qcold task enter\n  qcold task iteration-notify --message \"waiting for direction\"\n  qcold task pause --reason \"waiting for operator decision\"\n  qcold task closeout --outcome success --message \"docs: update truth\"\n  qcold verify fast\n  qcold ci matrix rust-all-on --jobs 4\n\nCargo subcommand compatibility is also supported: cargo qcold <command>."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -211,6 +211,7 @@ enum TaskSubcommand {
     List,
     TerminalCheck,
     IterationNotify(MessageArgs),
+    Pause(PauseArgs),
     Closeout(CloseoutArgs),
     Finalize(MessageArgs),
     #[command(hide = true)]
@@ -227,7 +228,7 @@ enum TaskSubcommand {
     ClearAll,
     OrphanList,
     OrphanClearStale {
-        #[arg(long, default_value_t = 1)]
+        #[arg(long, default_value_t = 2)]
         max_age_hours: u64,
     },
 }
@@ -236,6 +237,12 @@ enum TaskSubcommand {
 struct MessageArgs {
     #[arg(long)]
     message: String,
+}
+
+#[derive(Args)]
+struct PauseArgs {
+    #[arg(long)]
+    reason: String,
 }
 
 #[derive(Args)]
@@ -279,6 +286,17 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         TaskSubcommand::TerminalCheck => adapter_for_active_repo()?.terminal_check(),
         TaskSubcommand::IterationNotify(args) => {
             adapter_for_cwd_sensitive_repo()?.iteration_notify(&args.message)
+        }
+        TaskSubcommand::Pause(args) => {
+            let cwd = std::env::current_dir().ok();
+            let task_record_id = cwd.as_deref().and_then(task_record_id_from_worktree);
+            let code = adapter_for_cwd_sensitive_repo()?.pause(&args.reason)?;
+            if code == 0 {
+                if let Some(id) = task_record_id {
+                    state::update_task_record(&id, None, None, Some("paused"))?;
+                }
+            }
+            Ok(code)
         }
         TaskSubcommand::Closeout(args) => {
             let cwd = std::env::current_dir().ok();
@@ -821,8 +839,10 @@ fn sync_task_flow_record_for_worktree(
         .get("STARTED_AT")
         .and_then(|value| value.parse::<u64>().ok())
         .unwrap_or(record.created_at);
-    let task_is_open = env.get("STATUS").is_none_or(|status| status == "open");
-    let finish = if task_is_open {
+    let task_is_live = env
+        .get("STATUS")
+        .is_none_or(|status| matches!(status.as_str(), "open" | "paused" | "failed-closeout"));
+    let finish = if task_is_live {
         unix_now()
     } else {
         env.get("UPDATED_AT")
@@ -850,7 +870,7 @@ fn sync_task_flow_record_for_worktree(
         Value::String(worktree.display().to_string()),
     );
     metadata.insert("task_started_at".to_string(), Value::from(start));
-    if task_is_open {
+    if task_is_live {
         metadata.remove("task_finished_at");
     } else {
         metadata.insert("task_finished_at".to_string(), Value::from(finish));

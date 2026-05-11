@@ -36,6 +36,7 @@ qcold telegram serve --listen 127.0.0.1:8787 --daemon
 qcold bundle
 qcold task inspect runtime-audit
 qcold task open my-task
+qcold task pause --reason "waiting for operator decision"
 ```
 
 `cargo qcold <command>` remains supported for Cargo subcommand compatibility,
@@ -339,8 +340,17 @@ manifest path is needed. In the Q-COLD checkout itself, `.cargo/config.toml`
 defines `cargo xtask` as the self-hosted adapter in `xtask/`, so normal
 development can start with `QCOLD_REPO_ROOT=$PWD cargo qcold task open <slug>`
 from a clean primary checkout, or with plain `cargo qcold task open <slug>` when
-the Q-COLD repository is the active registered repo. A sibling checkout layout
-is still supported as a local convenience for development:
+the Q-COLD repository is the active registered repo. `cargo qcold task pause --reason "<reason>"`
+records a non-terminal pause for work that needs operator
+input or an external unblock while preserving the managed worktree for direct
+resume. Technical validation blockers that are small, mechanical, and within
+task scope should be fixed by the agent in the same task state instead of being
+paused or closed as blocked. Self-hosted `task terminal-check` and
+`task orphan-clear-stale` clean paused task state older than
+`QCOLD_PAUSED_TASK_TTL_HOURS`, defaulting to 2 hours. ZIP bundles under
+`bundles/` are retained separately for `QCOLD_BUNDLE_RETENTION_HOURS`,
+defaulting to 24 hours. A sibling checkout layout is still supported as a local
+convenience for development:
 
 ```text
 repos/github/
@@ -354,7 +364,9 @@ calls cross the process boundary.
 `qcold bundle` writes one source ZIP archive for the current repository into
 the repository-local `bundles/` directory, which is ignored by git. The command
 requires a clean worktree and prints `BUNDLE_PATH=...` for handoff. Bundle
-metadata is embedded inside the ZIP at `metadata/bundle-manifest.txt`.
+metadata is embedded inside the ZIP at `metadata/bundle-manifest.txt`. The
+self-hosted task cleanup path removes stale ZIP bundles only after the bundle
+retention window, which defaults to 24 hours.
 
 ## Development contract
 

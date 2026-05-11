@@ -49,6 +49,7 @@ repo-local code owns it.
 - `qcold agent start --track <track> -- <command>...`
 - `qcold telegram poll`
 - `qcold bundle`
+- `qcold task pause --reason "<reason>"`
 - `qcold repo list`
 - `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>] [--set-active]`
 - `qcold repo set-active <id>`
@@ -70,6 +71,7 @@ repo-local code owns it.
 - `cargo qcold task list`
 - `cargo qcold task terminal-check`
 - `cargo qcold task iteration-notify --message "<handoff update>"`
+- `cargo qcold task pause --reason "<reason>"`
 - `cargo qcold task finalize --message "<message>"`
 - `cargo qcold task closeout --outcome success --message "<commit message>"`
 - `cargo qcold task closeout --outcome blocked --reason "<reason>"`
@@ -107,6 +109,13 @@ fixture or debugging task explicitly needs them.
 - Update docs in the same task when behavior, command contracts, environment
   variables, or operator expectations change.
 - Do not invent validation, closeout, Telegram delivery, or deployment status.
+- Treat technical validation and closeout blockers as agent-fixable when the
+  fix is small or mechanical and stays within the task's technical scope.
+  Formatting, lint, helper visibility, harness drift, and similarly code-local
+  issues should be repaired and revalidated in the same managed state. Business
+  behavior choices, disputed contracts, missing operator context, credentials,
+  and external resources are honest blockers or pause reasons, not agent
+  guesswork.
 
 ## Iteration Closeout Discipline
 
@@ -125,6 +134,13 @@ fixture or debugging task explicitly needs them.
   already the active registered repo, and close out from the managed worktree.
   If managed task-flow prerequisites are absent or failing, commit after normal
   Cargo validation and report that task-flow closeout was not applicable.
+- `task pause` is non-terminal: it records why the attempt is waiting and keeps
+  the managed worktree/devcontainer for direct resume. `blocked` remains
+  terminal and is reserved for tasks that are being stopped for operator or
+  external resolution. Stale paused self-hosted task state is eligible for
+  automatic cleanup after `QCOLD_PAUSED_TASK_TTL_HOURS` or 2 hours by default;
+  ZIP bundles are retained separately for `QCOLD_BUNDLE_RETENTION_HOURS` or 24
+  hours by default.
 - For Q-COLD self-development, successful managed closeout fetches `origin`,
   fast-forwards the primary checkout to the current remote base, rebases the
   task branch onto that base, fast-forward integrates it into the primary base
