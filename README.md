@@ -77,13 +77,15 @@ cargo xtask verify task-flow
 
 Q-COLD stores lightweight task records in its local SQLite database. Use
 `qcold task-record create`, `list`, `show`, `update`, `close`, and `delete` for
-direct CRUD. When a record has a repository root, `create` assigns a stable
-repo-scoped `sequence` number and returns the existing number on later
-idempotent creates for the same task id. Sequence counters are monotonic per
-repo and are not reused after task-record deletion, so retained closeout
-bundles keep a stable anchor history. Descriptions are normalized before
-storage so operator phrasing is kept as a concise task description instead of a
-raw chat transcript.
+direct CRUD. When a manual or managed task-flow record has a repository root,
+`create` assigns a stable repo-scoped `sequence` number and returns the existing
+number on later idempotent creates for the same task id. Sequence counters are
+monotonic per repo and are not reused after task-record deletion, so retained
+closeout bundles keep a stable anchor history. Ad-hoc `agent` and
+`codex-session` records remain repo-attributed for dashboards and transcript
+lookup, but they do not consume task sequence numbers. Descriptions are
+normalized before storage so operator phrasing is kept as a concise task
+description instead of a raw chat transcript.
 
 Adapter-backed `qcold task open <slug>` automatically creates or updates a
 Q-COLD task record with source `task-flow`. When that record has a repo-scoped

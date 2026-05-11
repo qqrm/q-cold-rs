@@ -8,7 +8,12 @@
 use assert_cmd::Command as AssertCommand;
 use tempfile::tempdir;
 
-fn task_record_create(state_dir: &std::path::Path, id: &str, repo_root: &str) -> String {
+fn task_record_create_with_source(
+    state_dir: &std::path::Path,
+    id: &str,
+    repo_root: &str,
+    source: &str,
+) -> String {
     let output = AssertCommand::cargo_bin("cargo-qcold")
         .unwrap()
         .args([
@@ -20,6 +25,8 @@ fn task_record_create(state_dir: &std::path::Path, id: &str, repo_root: &str) ->
             "sequence task",
             "--repo-root",
             repo_root,
+            "--source",
+            source,
         ])
         .env("QCOLD_STATE_DIR", state_dir)
         .env_remove("QCOLD_REPO_ROOT")
@@ -30,6 +37,10 @@ fn task_record_create(state_dir: &std::path::Path, id: &str, repo_root: &str) ->
         .stdout
         .clone();
     String::from_utf8(output).unwrap()
+}
+
+fn task_record_create(state_dir: &std::path::Path, id: &str, repo_root: &str) -> String {
+    task_record_create_with_source(state_dir, id, repo_root, "manual")
 }
 
 fn task_record_delete(state_dir: &std::path::Path, id: &str) {
@@ -89,4 +100,29 @@ fn task_record_sequence_is_not_reused_after_delete() {
 
     assert!(first.contains("\tsequence=1\t"));
     assert!(second.contains("\tsequence=2\t"));
+}
+
+#[test]
+fn ad_hoc_agent_records_do_not_consume_repo_sequence() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let repo = temp.path().join("repo");
+
+    let agent = task_record_create_with_source(
+        &state_dir,
+        "adhoc/agent-session",
+        &repo.display().to_string(),
+        "agent",
+    );
+    let codex_session = task_record_create_with_source(
+        &state_dir,
+        "adhoc/codex-session",
+        &repo.display().to_string(),
+        "codex-session",
+    );
+    let task = task_record_create(&state_dir, "task/first", &repo.display().to_string());
+
+    assert!(agent.contains("\tsequence=\t"));
+    assert!(codex_session.contains("\tsequence=\t"));
+    assert!(task.contains("\tsequence=1\t"));
 }

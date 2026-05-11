@@ -353,7 +353,7 @@ fn max_task_sequence(connection: &Connection, repo_root: &str) -> Result<u64> {
 fn backfill_task_sequences(connection: &Connection) -> Result<()> {
     let mut statement = connection
         .prepare(
-            "select id, repo_root
+            "select id, source, repo_root
              from tasks
              where repo_root is not null and trim(repo_root) != '' and sequence is null
              order by repo_root, created_at_unix, id",
@@ -361,14 +361,21 @@ fn backfill_task_sequences(connection: &Connection) -> Result<()> {
         .context("failed to prepare task sequence backfill")?;
     let rows = statement
         .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         })
         .context("failed to query task sequence backfill")?
         .collect::<Result<Vec<_>, _>>()
         .context("failed to decode task sequence backfill rows")?;
     drop(statement);
 
-    for (id, repo_root) in rows {
+    for (id, source, repo_root) in rows {
+        if !source_uses_task_sequence(&source) {
+            continue;
+        }
         let sequence = allocate_task_sequence(connection, &repo_root)?;
         connection
             .execute(

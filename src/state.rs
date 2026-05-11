@@ -658,7 +658,9 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
         repo_root.as_deref(),
     ) {
         (Some(sequence), _, _) | (_, Some(sequence), _) => Some(sequence),
-        (None, None, Some(repo_root)) if !repo_root.trim().is_empty() => {
+        (None, None, Some(repo_root))
+            if !repo_root.trim().is_empty() && source_uses_task_sequence(&record.source) =>
+        {
             Some(allocate_task_sequence(&tx, repo_root)?)
         }
         _ => None,
@@ -738,6 +740,10 @@ fn advance_task_sequence_counter_for_record(
         advance_task_sequence_counter(connection, repo_root, sequence)?;
     }
     Ok(())
+}
+
+fn source_uses_task_sequence(source: &str) -> bool {
+    !matches!(source, "agent" | "codex-session")
 }
 
 pub fn load_task_records(status: Option<&str>, limit: usize) -> Result<Vec<TaskRecordRow>> {
