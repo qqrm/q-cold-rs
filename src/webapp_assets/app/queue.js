@@ -51,18 +51,24 @@
       });
       const head = document.createElement('div');
       head.className = 'queue-graph-wave-head';
+      const headTitle = document.createElement('div');
+      headTitle.className = 'queue-graph-wave-title';
       const heading = document.createElement('h3');
       heading.textContent = `Wave ${index + 1}`;
       const meta = document.createElement('span');
       meta.textContent = `${level.items.length} task${level.items.length === 1 ? '' : 's'}`;
+      headTitle.append(heading, meta);
+      const actions = document.createElement('div');
+      actions.className = 'queue-graph-wave-actions';
       const up = queueActionButton('↑', () => moveQueueWave(level.wave.id, -1), 'Move wave up');
       up.disabled = queueRun.running || index === 0;
       const down = queueActionButton('↓', () => moveQueueWave(level.wave.id, 1), 'Move wave down');
       down.disabled = queueRun.running || index === queueWaves.length - 1;
       const remove = queueActionButton('×', () => removeQueueWave(level.wave.id), 'Remove wave');
-      remove.classList.add('danger', 'icon-remove');
+      remove.classList.add('danger', 'icon-remove', 'queue-remove-corner');
       remove.disabled = queueRun.running || queueWaves.length <= 1 || level.items.length > 0;
-      head.append(heading, meta, up, down, remove);
+      actions.append(up, down);
+      head.append(headTitle, actions);
       const lane = document.createElement('div');
       lane.className = 'queue-graph-wave-lane';
       if (!level.items.length) {
@@ -72,7 +78,7 @@
         lane.appendChild(empty);
       }
       level.items.forEach((item) => lane.appendChild(queueGraphCard(item)));
-      column.append(head, lane);
+      column.append(remove, head, lane);
       return column;
     }
 
@@ -196,9 +202,14 @@
         moveQueueItemToWave(sourceId, item.waveId);
       });
 
+      const head = document.createElement('div');
+      head.className = 'queue-graph-card-head';
       const title = document.createElement('div');
       title.className = 'queue-graph-card-title';
       title.append(badge(queueStatusText(item)), document.createTextNode(` #${index + 1}`));
+      const remove = queueRemoveButton(index);
+      remove.classList.add('queue-remove-corner');
+      head.append(title);
       const prompt = document.createElement('p');
       prompt.className = 'queue-graph-prompt-preview';
       prompt.textContent = queuePromptPreview(item.prompt);
@@ -206,30 +217,10 @@
       const direction = document.createElement('p');
       direction.className = 'queue-graph-card-hint';
       direction.textContent = queueRun.running
-        ? 'Dependency chips are locked for this run.'
-        : 'Choose a wave or drag into one.';
-      const waveSelect = queueWaveSelect(item);
+        ? 'Wave order is locked for this run.'
+        : 'Drag into a wave to move this task.';
       const gate = queueGateToggle(item);
-      const deps = document.createElement('div');
-      deps.className = 'queue-graph-deps';
-      if (item.dependsOn?.length) {
-        item.dependsOn.forEach((dependency) => {
-          const depIndex = queueItems.findIndex((candidate) => candidate.id === dependency);
-          const chip = queueActionButton(
-            `waits #${depIndex + 1}`,
-            () => removeQueueDependency(dependency, item.id),
-            `Remove wait for #${depIndex + 1}`,
-          );
-          chip.classList.add('queue-dependency-chip');
-          deps.appendChild(chip);
-        });
-      } else {
-        const chip = document.createElement('span');
-        chip.className = 'badge ready';
-        chip.textContent = 'runs first';
-        deps.appendChild(chip);
-      }
-      const controls = queueItemControls(index);
+      const controls = queueGraphCardControls(index);
       const fullPrompt = queueActionButton(
         'Full prompt',
         () => openQueuePromptModal(item, index),
@@ -237,39 +228,26 @@
       );
       fullPrompt.classList.add('queue-graph-prompt-action');
       controls.prepend(fullPrompt);
-      card.append(title, prompt, direction, waveSelect, gate, deps, controls);
+      card.append(remove, head, prompt, direction, gate, controls);
       return card;
-    }
-
-    function queueWaveSelect(item) {
-      const select = document.createElement('select');
-      select.className = 'queue-graph-wave-select';
-      select.disabled = queueRun.running;
-      queueWaves.forEach((wave, index) => {
-        const option = document.createElement('option');
-        option.value = wave.id;
-        option.textContent = `Wave ${index + 1}`;
-        select.appendChild(option);
-      });
-      select.value = item.waveId || queueWaves[queueWaves.length - 1]?.id || '';
-      select.addEventListener('change', () => moveQueueItemToWave(item.id, select.value));
-      return select;
     }
 
     function queueGateToggle(item) {
       const label = document.createElement('label');
       label.className = 'queue-graph-gate-toggle';
+      label.title = 'When enabled, later waves wait for this task to finish successfully.';
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.checked = item.gatesNext !== false;
       input.disabled = queueRun.running;
+      input.setAttribute('aria-label', 'Blocks next wave');
       input.addEventListener('change', () => {
         item.gatesNext = input.checked;
         syncQueueWaveDependencies();
         saveQueueStorage();
         renderQueue();
       });
-      label.append(input, document.createTextNode('Gate next'));
+      label.append(input, document.createTextNode('Blocks next wave'));
       return label;
     }
 
@@ -326,45 +304,6 @@
       if (queueRun.running) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'link';
-    }
-
-    function addQueueDependency(sourceId, targetId) {
-      if (!sourceId || !targetId || sourceId === targetId || queueRun.running) return;
-      const target = queueItems.find((item) => item.id === targetId);
-      if (!target) return;
-      target.dependsOn = Array.from(new Set([...(target.dependsOn || []), sourceId]));
-      if (queueGraphHasCycle()) {
-        target.dependsOn = target.dependsOn.filter((id) => id !== sourceId);
-        appendLocalMessage('error', 'Dependency would create a cycle');
-        return;
-      }
-      saveQueueStorage();
-      renderQueue();
-    }
-
-    function removeQueueDependency(sourceId, targetId) {
-      const target = queueItems.find((item) => item.id === targetId);
-      if (!target || queueRun.running) return;
-      target.dependsOn = (target.dependsOn || []).filter((id) => id !== sourceId);
-      saveQueueStorage();
-      renderQueue();
-    }
-
-    function queueGraphHasCycle() {
-      const byId = new Map(queueItems.map((item) => [item.id, item]));
-      const visiting = new Set();
-      const visited = new Set();
-      const visit = (id) => {
-        if (visited.has(id)) return false;
-        if (visiting.has(id)) return true;
-        visiting.add(id);
-        const item = byId.get(id);
-        const cyclic = (item?.dependsOn || []).some(visit);
-        visiting.delete(id);
-        visited.add(id);
-        return cyclic;
-      };
-      return queueItems.some((item) => visit(item.id));
     }
 
     function queueRunningText() {
@@ -427,31 +366,47 @@
       }
     }
 
-    function queueItemControls(index) {
+    function queueItemControls(index, options = {}) {
       const controls = document.createElement('div');
       controls.className = 'queue-step-actions';
       const up = queueActionButton('↑', () => moveQueueItem(index, -1), 'Move task up');
       up.disabled = queueRun.running || index === 0;
       const down = queueActionButton('↓', () => moveQueueItem(index, 1), 'Move task down');
       down.disabled = queueRun.running || index === queueItems.length - 1;
-      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task context');
+      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat or transcript');
       open.disabled = !queueItemContextTarget(queueItems[index]);
       const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
       copy.classList.add('icon-copy');
-      const remove = queueActionButton('×', () => removeQueueItem(index), 'Remove');
+      controls.append(up, down, open, copy);
+      if (options.includeRemove !== false) controls.append(queueRemoveButton(index));
+      return controls;
+    }
+
+    function queueRemoveButton(index) {
+      const remove = queueActionButton('×', () => removeQueueItem(index), 'Remove task');
       remove.classList.add('danger', 'icon-remove');
       if (queueItemRemoving(queueItems[index])) {
         remove.textContent = '…';
       }
       remove.disabled = queueItemRemoving(queueItems[index]) || !queueItemRemovable(queueItems[index]);
-      controls.append(up, down, open, copy, remove);
+      return remove;
+    }
+
+    function queueGraphCardControls(index) {
+      const controls = document.createElement('div');
+      controls.className = 'queue-step-actions queue-graph-card-actions';
+      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat or transcript');
+      open.disabled = !queueItemContextTarget(queueItems[index]);
+      const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
+      copy.classList.add('icon-copy');
+      controls.append(open, copy);
       return controls;
     }
 
     function queueActionButton(label, action, title = label) {
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'secondary compact';
+      button.className = 'secondary compact queue-icon-button';
       button.textContent = label;
       button.title = title;
       button.setAttribute('aria-label', title);
@@ -603,16 +558,8 @@
         openTaskTranscript(target.task.id, { terminal: target.terminal });
         return;
       }
-      if (target?.kind === 'task-card') {
-        setActiveView('tasks');
-        window.setTimeout(() => {
-          if (!focusDashboardNode(`.task-record-card[data-task-id="${cssEscape(target.task.id)}"]`)) {
-            item.message = 'task record is not visible yet';
-            item.updatedAt = Math.floor(Date.now() / 1000);
-            saveQueueStorage();
-            renderQueue();
-          }
-        }, 0);
+      if (target?.kind === 'task-modal') {
+        openTaskTranscript(target.taskId, { terminal: target.terminal });
         return;
       }
       if (target?.kind === 'tasks') {
@@ -632,6 +579,7 @@
     function queueItemContextTarget(item) {
       if (!item) return null;
       const task = taskRecordForQueueItem(item);
+      const taskId = task?.id || (item.slug ? `task/${item.slug}` : '');
       if (task?.id && task.session_path) {
         return { kind: 'transcript', task, terminal: terminalForQueueItem(item, task) };
       }
@@ -639,8 +587,8 @@
       if (task?.id && terminal) {
         return { kind: 'terminal-chat', task, terminal };
       }
-      if (task?.id) {
-        return { kind: 'task-card', task };
+      if (taskId) {
+        return { kind: 'task-modal', taskId, task, terminal };
       }
       if (item.slug || item.prompt?.trim()) {
         return { kind: 'tasks' };
@@ -652,17 +600,6 @@
       const agentId = item.agentId || task?.agent_id || '';
       if (!agentId) return null;
       return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
-    }
-
-    function focusDashboardNode(selector) {
-      const node = document.querySelector(selector);
-      if (!node) return false;
-      node.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      node.classList.remove('dashboard-focus');
-      void node.offsetWidth;
-      node.classList.add('dashboard-focus');
-      window.setTimeout(() => node.classList.remove('dashboard-focus'), 2400);
-      return true;
     }
 
     async function openTaskTranscript(taskId, options = {}) {

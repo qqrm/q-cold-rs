@@ -181,11 +181,10 @@ row. Enabling Graph execution changes the draft into explicit waves from top
 to bottom: Wave 1 runs first, Wave 2 waits for Wave 1, and so on. Cards inside
 one wave run in parallel. `Add wave` appends a new wave below the existing
 waves, and new prompts are added to the last wave by default. Task cards can be
-moved by dragging them into a wave or by using the card's wave selector. Waves
-can be moved up or down and removed while empty. Each card has a short prompt
-preview, a dedicated full-prompt action, and a `Gate next` toggle that controls
-whether the card blocks the next wave. Q-COLD rejects cyclic graph
-dependencies. In Graph execution, all queued tasks whose prerequisites have
+moved by dragging them into a wave. Waves can be moved up or down and removed
+while empty. Each card has a short prompt preview, a dedicated full-prompt
+action, and a `Blocks next wave` toggle that controls whether the card blocks
+later waves. In Graph execution, all queued tasks whose prerequisites have
 reached `closed:success` are started in parallel through separate Q-COLD
 terminal agents; downstream tasks wait until their dependency set succeeds.
 Each queued row starts the selected Codex-like command without an argv prompt,
