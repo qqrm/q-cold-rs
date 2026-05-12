@@ -182,6 +182,13 @@ serve the same binary/assets version that was just installed. Without
 `--daemon`, `telegram serve` stays in the foreground for systemd or other
 external supervisors.
 
+The daemon warms and maintains the dashboard state snapshot before accepting
+web requests, then refreshes it in the background. Page reloads and live event
+ticks read the ready snapshot instead of recomputing task records, queue state,
+terminal panes, and Codex telemetry synchronously on every request. Successful
+queue, terminal, and task-chat mutations request an immediate refresh so the
+next live tick catches up without blocking the mutation response.
+
 The dashboard opens to the Queue view and keeps repository/task/agent overview
 state in a compact always-visible status strip. Its Queue view accepts
 one task prompt at a time, appends it to a visible ordered queue, shows a

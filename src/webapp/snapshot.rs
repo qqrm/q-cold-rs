@@ -1,5 +1,105 @@
 const TERMINAL_CAPTURE_LINES: usize = 2_000;
 
+#[derive(Clone)]
+struct DashboardStateCache {
+    state_json: String,
+    event_json: String,
+    refreshed_at_unix: u64,
+}
+
+fn start_dashboard_state_cache_refresher() {
+    DASHBOARD_STATE_REFRESHER.get_or_init(|| {
+        thread::spawn(|| loop {
+            refresh_dashboard_state_cache();
+            thread::sleep(DASHBOARD_STATE_REFRESH_INTERVAL);
+        });
+    });
+}
+
+fn cached_dashboard_state_json() -> String {
+    cached_dashboard_state_cache().state_json
+}
+
+fn cached_event_snapshot_json() -> String {
+    cached_dashboard_state_cache().event_json
+}
+
+fn cached_dashboard_state_cache() -> DashboardStateCache {
+    if dashboard_state_cache_empty() {
+        refresh_dashboard_state_cache();
+    } else if dashboard_state_cache_stale() {
+        refresh_dashboard_state_cache_soon();
+    }
+    let cached = DASHBOARD_STATE_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()
+        .and_then(|cache| cache.clone());
+    cached.unwrap_or_else(|| dashboard_state_cache_from_state(dashboard_state()))
+}
+
+fn dashboard_state_cache_empty() -> bool {
+    DASHBOARD_STATE_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_or(true, |cache| cache.is_none())
+}
+
+fn dashboard_state_cache_stale() -> bool {
+    DASHBOARD_STATE_CACHE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_or(true, |cache| {
+            cache.as_ref().is_none_or(|cache| {
+                unix_now().saturating_sub(cache.refreshed_at_unix) > DASHBOARD_STATE_CACHE_TTL
+            })
+        })
+}
+
+fn refresh_dashboard_state_after_mutation(ok: bool) {
+    if ok {
+        refresh_dashboard_state_cache_soon();
+    }
+}
+
+fn refresh_dashboard_state_cache_soon() {
+    thread::spawn(refresh_dashboard_state_cache);
+}
+
+fn refresh_dashboard_state_cache() {
+    let refresh_lock = DASHBOARD_STATE_REFRESHING.get_or_init(|| Mutex::new(false));
+    {
+        let Ok(mut refreshing) = refresh_lock.lock() else {
+            return;
+        };
+        if *refreshing {
+            return;
+        }
+        *refreshing = true;
+    }
+    let cache = dashboard_state_cache_from_state(dashboard_state());
+    if let Ok(mut stored) = DASHBOARD_STATE_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *stored = Some(cache);
+    }
+    if let Ok(mut refreshing) = refresh_lock.lock() {
+        *refreshing = false;
+    }
+}
+
+fn dashboard_state_cache_from_state(state: DashboardState) -> DashboardStateCache {
+    let refreshed_at_unix = state.generated_at_unix;
+    let state_json =
+        serde_json::to_string(&state).unwrap_or_else(|err| format!(r#"{{"error":"{err}"}}"#));
+    let event = EventSnapshot { state };
+    let event_json = serde_json::to_string(&event)
+        .unwrap_or_else(|err| format!(r#"{{"state":{{"error":"{err}"}}}}"#));
+    DashboardStateCache {
+        state_json,
+        event_json,
+        refreshed_at_unix,
+    }
+}
+
 fn state_dir() -> Result<PathBuf> {
     if let Ok(path) = env::var("QCOLD_STATE_DIR") {
         if !path.trim().is_empty() {
@@ -14,6 +114,9 @@ fn dashboard_state() -> DashboardState {
     let repository = repository_context();
     let root = repository.root.clone();
     let repositories = repository_contexts();
+    let task_record_sync_error = crate::sync_codex_task_records()
+        .err()
+        .map(|err| format!("{err:#}"));
     DashboardState {
         generated_at_unix: unix_now(),
         daemon_cwd: env::current_dir()
@@ -24,8 +127,8 @@ fn dashboard_state() -> DashboardState {
             status::snapshot_for(&PathBuf::from(&root))
         }),
         agents: SnapshotBlock::capture("running managed agents", agents::running_snapshot),
-        task_records: task_record_snapshot(&root),
-        queue_task_records: all_task_record_snapshot(),
+        task_records: task_record_snapshot(&root, task_record_sync_error.clone()),
+        queue_task_records: all_task_record_snapshot(task_record_sync_error),
         queue: queue_snapshot(),
         host_agents: discover_host_agents(),
         terminals: discover_terminal_sessions(),
@@ -50,8 +153,7 @@ fn agent_start_template(root: &str) -> String {
     )
 }
 
-fn task_record_snapshot(repo_root: &str) -> TaskRecordSnapshot {
-    let sync_error = crate::sync_codex_task_records().err().map(|err| format!("{err:#}"));
+fn task_record_snapshot(repo_root: &str, sync_error: Option<String>) -> TaskRecordSnapshot {
     match state::load_task_records_for_repo(repo_root, None, 250) {
         Ok(rows) => TaskRecordSnapshot::from_rows(rows, sync_error),
         Err(err) => TaskRecordSnapshot {
@@ -70,8 +172,7 @@ fn task_record_snapshot(repo_root: &str) -> TaskRecordSnapshot {
     }
 }
 
-fn all_task_record_snapshot() -> TaskRecordSnapshot {
-    let sync_error = crate::sync_codex_task_records().err().map(|err| format!("{err:#}"));
+fn all_task_record_snapshot(sync_error: Option<String>) -> TaskRecordSnapshot {
     match state::load_task_records(None, 500) {
         Ok(rows) => TaskRecordSnapshot::from_rows(rows, sync_error),
         Err(err) => TaskRecordSnapshot {

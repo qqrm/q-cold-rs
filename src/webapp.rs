@@ -38,8 +38,13 @@ const DAEMON_SHUTDOWN_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 const AGENT_LIMIT_CACHE_TTL: u64 = 600;
 const AGENT_LIMIT_STATUS_ATTEMPTS: usize = 2;
 const AGENT_LIMIT_STATUS_TIMEOUT: u64 = 20;
+const DASHBOARD_STATE_CACHE_TTL: u64 = 2;
+const DASHBOARD_STATE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const WEB_QUEUE_RETRY_DELAYS: [u64; 3] = [60, 300, 600];
 static AGENT_LIMIT_CACHE: OnceLock<Mutex<Option<AgentLimitCache>>> = OnceLock::new();
+static DASHBOARD_STATE_CACHE: OnceLock<Mutex<Option<DashboardStateCache>>> = OnceLock::new();
+static DASHBOARD_STATE_REFRESHING: OnceLock<Mutex<bool>> = OnceLock::new();
+static DASHBOARD_STATE_REFRESHER: OnceLock<()> = OnceLock::new();
 static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WEB_QUEUE_ITEM_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
@@ -301,6 +306,8 @@ pub fn context_text() -> String {
 }
 
 async fn serve_async(args: &ServeArgs) -> Result<()> {
+    refresh_dashboard_state_cache();
+    start_dashboard_state_cache_refresher();
     let listener = tokio::net::TcpListener::bind(&args.listen)
         .await
         .with_context(|| format!("failed to bind Mini App server on {}", args.listen))?;
@@ -356,7 +363,10 @@ async fn favicon_svg() -> impl IntoResponse {
 }
 
 async fn api_state() -> impl IntoResponse {
-    no_store(Json(dashboard_state()))
+    no_store((
+        [(CONTENT_TYPE, "application/json; charset=utf-8")],
+        cached_dashboard_state_json(),
+    ))
 }
 
 async fn api_agent_limits(Query(query): Query<AgentLimitQuery>) -> impl IntoResponse {
@@ -376,6 +386,7 @@ async fn api_task_transcript(Query(query): Query<TaskTranscriptQuery>) -> impl I
 
 async fn api_queue_run(headers: HeaderMap, Json(payload): Json<QueueRunRequest>) -> impl IntoResponse {
     let response = handle_queue_run(&headers, payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -389,6 +400,7 @@ async fn api_queue_append(
     Json(payload): Json<QueueAppendRequest>,
 ) -> impl IntoResponse {
     let response = handle_queue_append(&headers, payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -402,6 +414,7 @@ async fn api_queue_update(
     Json(payload): Json<QueueUpdateRequest>,
 ) -> impl IntoResponse {
     let response = handle_queue_update(&headers, payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -415,6 +428,7 @@ async fn api_queue_remove(
     Json(payload): Json<QueueRemoveRequest>,
 ) -> impl IntoResponse {
     let response = handle_queue_remove(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -428,6 +442,7 @@ async fn api_queue_clear(
     Json(payload): Json<QueueClearRequest>,
 ) -> impl IntoResponse {
     let response = handle_queue_clear(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -438,6 +453,7 @@ async fn api_queue_clear(
 
 async fn api_queue_stop(headers: HeaderMap) -> impl IntoResponse {
     let response = handle_queue_stop(&headers);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -451,6 +467,7 @@ async fn api_queue_continue(
     Json(payload): Json<QueueContinueRequest>,
 ) -> impl IntoResponse {
     let response = handle_queue_continue(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -464,6 +481,7 @@ async fn api_task_chat_target(
     Json(payload): Json<TaskChatTargetRequest>,
 ) -> impl IntoResponse {
     let response = handle_task_chat_target(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -477,6 +495,7 @@ async fn api_task_chat_send(
     Json(payload): Json<TaskChatSendRequest>,
 ) -> impl IntoResponse {
     let response = handle_task_chat_send(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -490,10 +509,9 @@ async fn api_events() -> impl IntoResponse {
         if !first {
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
-        let event = serde_json::to_string(&event_snapshot()).map_or_else(
-            |err| Event::default().event("error").data(err.to_string()),
-            |data| Event::default().event("snapshot").data(data),
-        );
+        let event = Event::default()
+            .event("snapshot")
+            .data(cached_event_snapshot_json());
         Some((Ok::<Event, Infallible>(event), false))
     });
     no_store(Sse::new(events).keep_alive(KeepAlive::default()))
@@ -504,6 +522,7 @@ async fn api_terminal_send(
     Json(payload): Json<TerminalSendRequest>,
 ) -> impl IntoResponse {
     let response = handle_terminal_send(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -517,6 +536,7 @@ async fn api_terminal_metadata(
     Json(payload): Json<TerminalMetadataRequest>,
 ) -> impl IntoResponse {
     let response = handle_terminal_metadata(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -535,13 +555,6 @@ where
 {
     ([(CACHE_CONTROL, "no-store")], body)
 }
-
-fn event_snapshot() -> EventSnapshot {
-    EventSnapshot {
-        state: dashboard_state(),
-    }
-}
-
 
 include!("webapp/queue_api.rs");
 include!("webapp/queue_worker.rs");
