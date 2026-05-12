@@ -41,11 +41,29 @@ fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
 }
 
 fn terminal_output_has_pending_paste(output: &str) -> bool {
-    output
+    if output
         .lines()
         .rev()
         .take(12)
         .any(|line| line.contains("[Pasted Content"))
+    {
+        return true;
+    }
+    terminal_output_has_unsubmitted_task_packet(output)
+}
+
+fn terminal_output_has_unsubmitted_task_packet(output: &str) -> bool {
+    let Some((_, after_packet)) = output.rsplit_once("END_Q-COLD_TASK_PACKET") else {
+        return false;
+    };
+    let recent = after_packet.lines().take(12).collect::<Vec<_>>();
+    let has_activity = recent
+        .iter()
+        .any(|line| line.trim_start().starts_with('•'));
+    let has_idle_prompt = recent
+        .iter()
+        .any(|line| line.trim_start().starts_with("gpt-"));
+    has_idle_prompt && !has_activity
 }
 
 fn capture_agent_terminal_output(target: &str) -> Result<String> {
