@@ -348,10 +348,14 @@ context-compaction fallbacks anchored in the agent's isolated workspace instead
 of the primary checkout. The agent-owned worktree is a host-side home base, not
 a task devcontainer; the agent should enter a devcontainer only after opening a
 specific managed task worktree. Task worktrees opened later by the agent remain
-separate and can be closed without deleting the agent workspace. Q-COLD exports
-the primary checkout as `QCOLD_REPO_ROOT` and the agent-owned worktree as
-`QCOLD_AGENT_WORKTREE` for the launched agent, so active inventory commands
-such as `qcold task list` resolve through the task's primary checkout.
+separate and can be closed without deleting the agent workspace. For Codex
+`resume` launches without an explicit `--cwd`, Q-COLD reuses the latest
+compatible same-track agent worktree for the repository so the local Codex
+resume picker sees sessions saved from that workspace instead of starting from
+a fresh empty agent cwd. Q-COLD exports the primary checkout as
+`QCOLD_REPO_ROOT` and the agent-owned worktree as `QCOLD_AGENT_WORKTREE` for
+the launched agent, so active inventory commands such as `qcold task list`
+resolve through the task's primary checkout.
 Worktree-sensitive commands such as `task closeout` still prefer the current
 managed task worktree when the agent has changed into one. In that agent
 context, successful task closeout leaves the closed task worktree detached and

@@ -84,13 +84,16 @@ fn agent_worktree_slug(id: &str, track: &str, started_at: u64) -> String {
 }
 
 fn agent_worktree_path(primary_root: &Path, agent_slug: &str) -> Result<PathBuf> {
+    Ok(agent_worktrees_dir(primary_root)?.join(agent_slug))
+}
+
+fn agent_worktrees_dir(primary_root: &Path) -> Result<PathBuf> {
     Ok(primary_root
         .parent()
         .context("repository root has no parent")?
         .join("WT")
         .join(primary_root.file_name().context("repository root has no name")?)
-        .join("agents")
-        .join(agent_slug))
+        .join("agents"))
 }
 
 fn format_command_output(stdout: &str, stderr: &str) -> String {
