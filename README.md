@@ -196,9 +196,10 @@ mode from the configured repository root, restarts on failure, and replaces an
 older `--daemon` dashboard for the same listen address during install. Use
 `--listen <addr>`, `--service-name <name>`, or `--qcold-bin <path>` when the
 defaults are not right for the local WSL distribution. Use
-`qcold wsl autostart remove` to disable and remove the user service. This
-configures startup inside WSL; Windows still needs to launch the WSL
-distribution after a Windows reboot.
+`qcold wsl autostart remove` to disable and remove the user service. A normal
+install restarts the service; `--no-start` only enables it for the next WSL
+user-manager start. This configures startup inside WSL; Windows still needs to
+launch the WSL distribution after a Windows reboot.
 
 The daemon warms and maintains the dashboard state snapshot before accepting
 web requests, then refreshes it in the background. Page reloads and live event

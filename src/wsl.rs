@@ -117,7 +117,8 @@ fn install_autostart(args: AutostartInstallArgs) -> Result<u8> {
     if args.no_start {
         run_systemctl(&["enable", &unit_name])?;
     } else {
-        run_systemctl(&["enable", "--now", &unit_name])?;
+        run_systemctl(&["enable", &unit_name])?;
+        run_systemctl(&["restart", &unit_name])?;
     }
 
     println!("wsl-autostart\tinstalled");
