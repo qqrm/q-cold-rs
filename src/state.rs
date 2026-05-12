@@ -690,21 +690,8 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
         (record.repo_root.as_deref(), existing_repo_root.as_deref()),
         (Some(new), Some(old)) if new != old
     );
-    let sequence = match (
-        record.sequence,
-        existing
-            .as_ref()
-            .and_then(|row| (!repo_root_changed).then_some(row.sequence).flatten()),
-        repo_root.as_deref(),
-    ) {
-        (Some(sequence), _, _) | (_, Some(sequence), _) => Some(sequence),
-        (None, None, Some(repo_root))
-            if !repo_root.trim().is_empty() && source_uses_task_sequence(&record.source) =>
-        {
-            Some(allocate_task_sequence(&tx, repo_root)?)
-        }
-        _ => None,
-    };
+    let sequence =
+        task_record_sequence_for_upsert(&tx, record, existing.as_ref(), repo_root.as_deref(), repo_root_changed)?;
     advance_task_sequence_counter_for_record(&tx, repo_root.as_deref(), sequence)?;
     let created_at = existing
         .as_ref()

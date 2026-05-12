@@ -64,6 +64,10 @@ fn open_db() -> Result<Connection> {
                  source_message_id integer not null,
                  unique(chat_id, thread_id)
              );
+             create table if not exists schema_migrations (
+                 name text primary key,
+                 applied_at_unix integer not null
+             );
              create table if not exists history (
                  id integer primary key autoincrement,
                  timestamp_unix integer not null,
@@ -183,14 +187,7 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
         "depends_on_json",
         "text not null default '[]'",
     )?;
-    connection
-        .execute(
-            "create unique index if not exists tasks_repo_sequence
-             on tasks(repo_root, sequence)
-             where repo_root is not null and sequence is not null",
-            [],
-        )
-        .context("failed to create task sequence index")?;
+    ensure_schema_migrations(connection)?;
     connection
         .execute(
             "create table if not exists task_sequence_counters (
@@ -200,6 +197,16 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
             [],
         )
         .context("failed to create task sequence counters table")?;
+    repair_legacy_task_sequence_pollution_once(connection)?;
+    scrub_non_task_sequences(connection)?;
+    connection
+        .execute(
+            "create unique index if not exists tasks_repo_sequence
+             on tasks(repo_root, sequence)
+             where repo_root is not null and sequence is not null",
+            [],
+        )
+        .context("failed to create task sequence index")?;
     seed_task_sequence_counters(connection)?;
     backfill_task_sequences(connection)?;
     Ok(())
@@ -263,6 +270,19 @@ fn ensure_column(
     Ok(())
 }
 
+fn ensure_schema_migrations(connection: &Connection) -> Result<()> {
+    connection
+        .execute(
+            "create table if not exists schema_migrations (
+                 name text primary key,
+                 applied_at_unix integer not null
+             )",
+            [],
+        )
+        .context("failed to create schema migrations table")?;
+    Ok(())
+}
+
 fn allocate_task_sequence(connection: &Connection, repo_root: &str) -> Result<u64> {
     let initial_next = max_task_sequence(connection, repo_root)?.saturating_add(1);
     connection
@@ -275,20 +295,36 @@ fn allocate_task_sequence(connection: &Connection, repo_root: &str) -> Result<u6
         .context("failed to initialize task sequence counter")?;
     let next: i64 = connection
         .query_row(
-            "select next_sequence from task_sequence_counters where repo_root = ?1",
-            [repo_root],
+            "update task_sequence_counters
+             set next_sequence = next_sequence + 1
+             where repo_root = ?1
+             returning next_sequence - 1",
+            params![repo_root],
             |row| row.get(0),
         )
         .context("failed to allocate task sequence")?;
-    connection
-        .execute(
-            "update task_sequence_counters
-             set next_sequence = ?2
-             where repo_root = ?1",
-            params![repo_root, next.saturating_add(1)],
-        )
-        .context("failed to advance task sequence counter")?;
     u64::try_from(next).context("task sequence overflow")
+}
+
+fn task_record_sequence_for_upsert(
+    connection: &Connection,
+    record: &TaskRecordRow,
+    existing: Option<&TaskRecordRow>,
+    repo_root: Option<&str>,
+    repo_root_changed: bool,
+) -> Result<Option<u64>> {
+    if !source_uses_task_sequence(&record.source) {
+        return Ok(None);
+    }
+    let existing_sequence =
+        existing.and_then(|row| (!repo_root_changed).then_some(row.sequence).flatten());
+    match (record.sequence, existing_sequence, repo_root) {
+        (Some(sequence), _, _) | (_, Some(sequence), _) => Ok(Some(sequence)),
+        (None, None, Some(repo_root)) if !repo_root.trim().is_empty() => {
+            allocate_task_sequence(connection, repo_root).map(Some)
+        }
+        _ => Ok(None),
+    }
 }
 
 fn advance_task_sequence_counter(
@@ -315,6 +351,7 @@ fn seed_task_sequence_counters(connection: &Connection) -> Result<()> {
             "select repo_root, coalesce(max(sequence), 0) + 1
              from tasks
              where repo_root is not null and trim(repo_root) != ''
+               and source not in ('agent', 'codex-session')
              group by repo_root",
         )
         .context("failed to prepare task sequence counter seed")?;
@@ -342,12 +379,81 @@ fn seed_task_sequence_counters(connection: &Connection) -> Result<()> {
 fn max_task_sequence(connection: &Connection, repo_root: &str) -> Result<u64> {
     let value: i64 = connection
         .query_row(
-            "select coalesce(max(sequence), 0) from tasks where repo_root = ?1",
+            "select coalesce(max(sequence), 0)
+             from tasks
+             where repo_root = ?1 and source not in ('agent', 'codex-session')",
             [repo_root],
             |row| row.get(0),
         )
         .context("failed to inspect task sequence max")?;
     u64::try_from(value).context("task sequence overflow")
+}
+
+fn repair_legacy_task_sequence_pollution_once(connection: &Connection) -> Result<()> {
+    const MIGRATION: &str = "task_sequence_task_sources_only_v1";
+    if schema_migration_applied(connection, MIGRATION)? {
+        return Ok(());
+    }
+    scrub_non_task_sequences(connection)?;
+
+    let mut statement = connection
+        .prepare(
+            "select repo_root
+             from task_sequence_counters
+             where trim(repo_root) != ''",
+        )
+        .context("failed to prepare task sequence counter repair")?;
+    let rows = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .context("failed to query task sequence counter repair")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode task sequence counter repair rows")?;
+    drop(statement);
+
+    for repo_root in rows {
+        let repaired_next = max_task_sequence(connection, &repo_root)?.saturating_add(1);
+        connection
+            .execute(
+                "update task_sequence_counters
+                 set next_sequence = ?2
+                 where repo_root = ?1",
+                params![repo_root, i64::try_from(repaired_next).unwrap_or(i64::MAX)],
+            )
+            .context("failed to repair task sequence counter")?;
+    }
+
+    connection
+        .execute(
+            "insert into schema_migrations (name, applied_at_unix)
+             values (?1, ?2)
+             on conflict(name) do nothing",
+            params![MIGRATION, i64::try_from(unix_now()).unwrap_or(i64::MAX)],
+        )
+        .context("failed to record task sequence repair migration")?;
+    Ok(())
+}
+
+fn schema_migration_applied(connection: &Connection, name: &str) -> Result<bool> {
+    let exists: i64 = connection
+        .query_row(
+            "select exists(select 1 from schema_migrations where name = ?1)",
+            [name],
+            |row| row.get(0),
+        )
+        .context("failed to inspect schema migration state")?;
+    Ok(exists != 0)
+}
+
+fn scrub_non_task_sequences(connection: &Connection) -> Result<()> {
+    connection
+        .execute(
+            "update tasks
+             set sequence = null
+             where source in ('agent', 'codex-session') and sequence is not null",
+            [],
+        )
+        .context("failed to clear non-task sequence values")?;
+    Ok(())
 }
 
 fn backfill_task_sequences(connection: &Connection) -> Result<()> {
