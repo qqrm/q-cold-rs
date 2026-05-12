@@ -32,6 +32,7 @@ qcold agent list
 qcold agent start --track audit -- codex exec "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
 qcold telegram poll
+qcold tui
 qcold telegram serve --listen 127.0.0.1:8787 --daemon
 qcold wsl autostart install
 qcold bundle
@@ -142,6 +143,14 @@ they print a warning instead of failing the read. SQLite lock waits default to
 The local web dashboard server exposes the operator dashboard. It includes
 task-flow status, managed agents, attachable terminal panes, and the backend
 task queue for starting tracked agents.
+
+`qcold tui` opens the same dashboard state in a local terminal UI. It reads the
+same snapshot builder used by the web dashboard and sends queue and terminal
+mutations through the same backend controllers. The MVP supports refresh,
+Queue/Tasks/Agents/Terminals/Status tabs, selection and scrolling, selected
+terminal scrollback, terminal text send, queue stop/continue/clear/remove, and
+`:run <prompt>` or `:append <prompt>` for queue work using the snapshot's active
+repository and first available Codex-like agent command.
 
 `qcold repo add` stores repository connections in the local Q-COLD
 SQLite database. Adapter-backed commands such as `status`, `task`, `verify`,

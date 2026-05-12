@@ -12,6 +12,10 @@ fn cleanup_existing_task_agent_artifacts(
     Ok(())
 }
 
+#[cfg(test)]
+fn spawn_web_queue_worker(_run_id: String) {}
+
+#[cfg(not(test))]
 fn spawn_web_queue_worker(run_id: String) {
     let workers = WEB_QUEUE_WORKERS.get_or_init(|| Mutex::new(HashSet::new()));
     if let Ok(mut active) = workers.lock() {

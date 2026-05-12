@@ -15,7 +15,7 @@ use axum::{
     extract::{Json, Query},
     http::{
         header::{CACHE_CONTROL, CONTENT_TYPE},
-        HeaderMap, StatusCode,
+        HeaderMap, HeaderValue, StatusCode,
     },
     response::{
         sse::{Event, KeepAlive, Sse},
@@ -308,6 +308,71 @@ pub fn context_text() -> String {
         ),
     ]
     .join("\n")
+}
+
+pub(crate) fn dashboard_state_for_tui() -> DashboardState {
+    dashboard_state()
+}
+
+pub(crate) fn queue_run_for_tui(payload: QueueRunRequest) -> TerminalSendResponse {
+    let headers = tui_write_headers();
+    let response = handle_queue_run(&headers, payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    response
+}
+
+pub(crate) fn queue_append_for_tui(payload: QueueAppendRequest) -> TerminalSendResponse {
+    let headers = tui_write_headers();
+    let response = handle_queue_append(&headers, payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    response
+}
+
+pub(crate) fn queue_stop_for_tui() -> TerminalSendResponse {
+    let headers = tui_write_headers();
+    let response = handle_queue_stop(&headers);
+    refresh_dashboard_state_after_mutation(response.ok);
+    response
+}
+
+pub(crate) fn queue_continue_for_tui(run_id: String) -> TerminalSendResponse {
+    let headers = tui_write_headers();
+    let payload = QueueContinueRequest { run_id };
+    let response = handle_queue_continue(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    response
+}
+
+pub(crate) fn queue_remove_for_tui(payload: &QueueRemoveRequest) -> TerminalSendResponse {
+    let headers = tui_write_headers();
+    let response = handle_queue_remove(&headers, payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    response
+}
+
+pub(crate) fn queue_clear_for_tui(run_id: Option<String>) -> TerminalSendResponse {
+    let headers = tui_write_headers();
+    let payload = QueueClearRequest { run_id };
+    let response = handle_queue_clear(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    response
+}
+
+pub(crate) fn terminal_send_for_tui(payload: &TerminalSendRequest) -> TerminalSendResponse {
+    let headers = tui_write_headers();
+    let response = handle_terminal_send(&headers, payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    response
+}
+
+fn tui_write_headers() -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    if let Ok(token) = env::var("QCOLD_WEBAPP_WRITE_TOKEN") {
+        if let Ok(value) = HeaderValue::from_str(token.trim()) {
+            headers.insert("x-qcold-write-token", value);
+        }
+    }
+    headers
 }
 
 async fn serve_async(args: &ServeArgs) -> Result<()> {

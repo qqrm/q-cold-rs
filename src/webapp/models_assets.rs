@@ -1,18 +1,18 @@
 #[derive(Serialize)]
-struct DashboardState {
-    generated_at_unix: u64,
-    daemon_cwd: String,
-    repository: RepositoryContext,
-    repositories: Vec<RepositoryContext>,
-    status: SnapshotBlock,
-    agents: SnapshotBlock,
-    task_records: TaskRecordSnapshot,
-    queue_task_records: TaskRecordSnapshot,
-    queue: QueueSnapshot,
-    host_agents: HostAgentSnapshot,
-    terminals: TerminalSnapshot,
-    available_agents: AvailableAgentSnapshot,
-    commands: CommandTemplates,
+pub(crate) struct DashboardState {
+    pub(crate) generated_at_unix: u64,
+    pub(crate) daemon_cwd: String,
+    pub(crate) repository: RepositoryContext,
+    pub(crate) repositories: Vec<RepositoryContext>,
+    pub(crate) status: SnapshotBlock,
+    pub(crate) agents: SnapshotBlock,
+    pub(crate) task_records: TaskRecordSnapshot,
+    pub(crate) queue_task_records: TaskRecordSnapshot,
+    pub(crate) queue: QueueSnapshot,
+    pub(crate) host_agents: HostAgentSnapshot,
+    pub(crate) terminals: TerminalSnapshot,
+    pub(crate) available_agents: AvailableAgentSnapshot,
+    pub(crate) commands: CommandTemplates,
 }
 
 #[derive(Serialize)]
@@ -21,27 +21,27 @@ struct EventSnapshot {
 }
 
 #[derive(Serialize)]
-struct QueueSnapshot {
-    count: usize,
-    running: bool,
-    run: Option<state::QueueRunRow>,
-    records: Vec<state::QueueItemRow>,
-    error: Option<String>,
+pub(crate) struct QueueSnapshot {
+    pub(crate) count: usize,
+    pub(crate) running: bool,
+    pub(crate) run: Option<state::QueueRunRow>,
+    pub(crate) records: Vec<state::QueueItemRow>,
+    pub(crate) error: Option<String>,
 }
 
 #[derive(Serialize)]
-struct TaskRecordSnapshot {
-    count: usize,
-    open: usize,
-    closed: usize,
-    failed: usize,
-    total_displayed_tokens: u64,
-    total_output_tokens: u64,
-    total_reasoning_tokens: u64,
-    total_tool_output_tokens: u64,
-    total_large_tool_outputs: u64,
-    records: Vec<WebTaskRecord>,
-    error: Option<String>,
+pub(crate) struct TaskRecordSnapshot {
+    pub(crate) count: usize,
+    pub(crate) open: usize,
+    pub(crate) closed: usize,
+    pub(crate) failed: usize,
+    pub(crate) total_displayed_tokens: u64,
+    pub(crate) total_output_tokens: u64,
+    pub(crate) total_reasoning_tokens: u64,
+    pub(crate) total_tool_output_tokens: u64,
+    pub(crate) total_large_tool_outputs: u64,
+    pub(crate) records: Vec<WebTaskRecord>,
+    pub(crate) error: Option<String>,
 }
 
 impl TaskRecordSnapshot {
@@ -106,26 +106,26 @@ impl TaskRecordSnapshot {
 }
 
 #[derive(Serialize)]
-struct WebTaskRecord {
-    id: String,
-    source: String,
-    sequence: Option<u64>,
-    title: String,
-    description: String,
-    status: String,
-    created_at: u64,
-    updated_at: u64,
-    repo_root: Option<String>,
-    cwd: Option<String>,
-    agent_id: Option<String>,
-    agent_label: Option<String>,
-    agent_track: Option<String>,
-    agent_target: Option<String>,
-    kind: Option<String>,
-    codex_thread_id: Option<String>,
-    session_path: Option<String>,
-    token_usage: Option<TaskTokenUsage>,
-    token_efficiency: Option<TaskTokenEfficiency>,
+pub(crate) struct WebTaskRecord {
+    pub(crate) id: String,
+    pub(crate) source: String,
+    pub(crate) sequence: Option<u64>,
+    pub(crate) title: String,
+    pub(crate) description: String,
+    pub(crate) status: String,
+    pub(crate) created_at: u64,
+    pub(crate) updated_at: u64,
+    pub(crate) repo_root: Option<String>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) agent_label: Option<String>,
+    pub(crate) agent_track: Option<String>,
+    pub(crate) agent_target: Option<String>,
+    pub(crate) kind: Option<String>,
+    pub(crate) codex_thread_id: Option<String>,
+    pub(crate) session_path: Option<String>,
+    pub(crate) token_usage: Option<TaskTokenUsage>,
+    pub(crate) token_efficiency: Option<TaskTokenEfficiency>,
 }
 
 impl WebTaskRecord {
@@ -193,7 +193,7 @@ impl WebTaskRecord {
     reason = "serialized token telemetry field names mirror task metadata keys"
 )]
 #[derive(Clone, Serialize)]
-struct TaskTokenUsage {
+pub(crate) struct TaskTokenUsage {
     input_tokens: u64,
     cached_input_tokens: u64,
     non_cached_input_tokens: u64,
@@ -219,7 +219,7 @@ impl TaskTokenUsage {
 }
 
 #[derive(Clone, Serialize)]
-struct TaskTokenEfficiency {
+pub(crate) struct TaskTokenEfficiency {
     session_count: u64,
     tool_output_original_tokens: u64,
     large_tool_output_calls: u64,
@@ -239,21 +239,21 @@ impl TaskTokenEfficiency {
 }
 
 #[derive(Serialize)]
-struct RepositoryContext {
-    id: String,
-    name: String,
-    root: String,
-    adapter: String,
-    active: bool,
-    branch: String,
-    webapp_url: Option<String>,
+pub(crate) struct RepositoryContext {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) root: String,
+    pub(crate) adapter: String,
+    pub(crate) active: bool,
+    pub(crate) branch: String,
+    pub(crate) webapp_url: Option<String>,
 }
 
 #[derive(Serialize)]
-struct SnapshotBlock {
-    label: &'static str,
-    ok: bool,
-    text: String,
+pub(crate) struct SnapshotBlock {
+    pub(crate) label: &'static str,
+    pub(crate) ok: bool,
+    pub(crate) text: String,
 }
 
 impl SnapshotBlock {
@@ -274,8 +274,8 @@ impl SnapshotBlock {
 }
 
 #[derive(Serialize)]
-struct CommandTemplates {
-    agent_start_template: String,
+pub(crate) struct CommandTemplates {
+    pub(crate) agent_start_template: String,
 }
 
 struct AgentStartRequest {
@@ -286,9 +286,9 @@ struct AgentStartRequest {
 }
 
 #[derive(Serialize)]
-struct AvailableAgentSnapshot {
-    count: usize,
-    records: Vec<agents::AvailableAgentCommand>,
+pub(crate) struct AvailableAgentSnapshot {
+    pub(crate) count: usize,
+    pub(crate) records: Vec<agents::AvailableAgentCommand>,
 }
 
 impl AvailableAgentSnapshot {
@@ -581,39 +581,39 @@ fn agent_auth_file(account: &str) -> PathBuf {
 }
 
 #[derive(Serialize)]
-struct HostAgentSnapshot {
-    count: usize,
-    records: Vec<HostAgentRecord>,
+pub(crate) struct HostAgentSnapshot {
+    pub(crate) count: usize,
+    pub(crate) records: Vec<HostAgentRecord>,
 }
 
 #[derive(Serialize)]
-struct HostAgentRecord {
-    pid: u32,
-    kind: String,
-    cwd: String,
-    command: String,
+pub(crate) struct HostAgentRecord {
+    pub(crate) pid: u32,
+    pub(crate) kind: String,
+    pub(crate) cwd: String,
+    pub(crate) command: String,
 }
 
 #[derive(Default, Serialize)]
-struct TerminalSnapshot {
-    count: usize,
-    records: Vec<TerminalPane>,
+pub(crate) struct TerminalSnapshot {
+    pub(crate) count: usize,
+    pub(crate) records: Vec<TerminalPane>,
 }
 
 #[derive(Serialize)]
-struct TerminalPane {
-    target: String,
-    session: String,
-    pane: String,
-    pid: u32,
-    agent_id: String,
-    command: String,
-    cwd: String,
-    label: String,
-    generated_label: String,
-    name: String,
-    scope: String,
-    output: String,
+pub(crate) struct TerminalPane {
+    pub(crate) target: String,
+    pub(crate) session: String,
+    pub(crate) pane: String,
+    pub(crate) pid: u32,
+    pub(crate) agent_id: String,
+    pub(crate) command: String,
+    pub(crate) cwd: String,
+    pub(crate) label: String,
+    pub(crate) generated_label: String,
+    pub(crate) name: String,
+    pub(crate) scope: String,
+    pub(crate) output: String,
 }
 
 impl TerminalPane {
@@ -674,30 +674,30 @@ struct TaskTranscriptMessage {
 }
 
 #[derive(Deserialize)]
-struct QueueRunRequest {
-    run_id: Option<String>,
-    execution_mode: Option<String>,
-    selected_agent_command: String,
-    selected_repo_root: Option<String>,
-    selected_repo_name: Option<String>,
-    items: Vec<QueueRunItemRequest>,
+pub(crate) struct QueueRunRequest {
+    pub(crate) run_id: Option<String>,
+    pub(crate) execution_mode: Option<String>,
+    pub(crate) selected_agent_command: String,
+    pub(crate) selected_repo_root: Option<String>,
+    pub(crate) selected_repo_name: Option<String>,
+    pub(crate) items: Vec<QueueRunItemRequest>,
 }
 
 #[derive(Deserialize)]
-struct QueueRunItemRequest {
-    id: Option<String>,
-    prompt: String,
-    slug: Option<String>,
-    depends_on: Option<Vec<String>>,
-    repo_root: Option<String>,
-    repo_name: Option<String>,
-    agent_command: Option<String>,
+pub(crate) struct QueueRunItemRequest {
+    pub(crate) id: Option<String>,
+    pub(crate) prompt: String,
+    pub(crate) slug: Option<String>,
+    pub(crate) depends_on: Option<Vec<String>>,
+    pub(crate) repo_root: Option<String>,
+    pub(crate) repo_name: Option<String>,
+    pub(crate) agent_command: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct QueueAppendRequest {
-    run_id: String,
-    items: Vec<QueueRunItemRequest>,
+pub(crate) struct QueueAppendRequest {
+    pub(crate) run_id: String,
+    pub(crate) items: Vec<QueueRunItemRequest>,
 }
 
 #[derive(Deserialize)]
@@ -718,8 +718,8 @@ struct QueueUpdateItemRequest {
 }
 
 #[derive(Deserialize)]
-struct QueueContinueRequest {
-    run_id: String,
+pub(crate) struct QueueContinueRequest {
+    pub(crate) run_id: String,
 }
 
 #[allow(
@@ -727,16 +727,16 @@ struct QueueContinueRequest {
     reason = "request payload names match the dashboard API contract"
 )]
 #[derive(Deserialize)]
-struct QueueRemoveRequest {
-    run_id: String,
-    item_id: String,
-    task_id: Option<String>,
-    agent_id: Option<String>,
+pub(crate) struct QueueRemoveRequest {
+    pub(crate) run_id: String,
+    pub(crate) item_id: String,
+    pub(crate) task_id: Option<String>,
+    pub(crate) agent_id: Option<String>,
 }
 
 #[derive(Deserialize)]
-struct QueueClearRequest {
-    run_id: Option<String>,
+pub(crate) struct QueueClearRequest {
+    pub(crate) run_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -752,12 +752,12 @@ struct TaskChatSendRequest {
 }
 
 #[derive(Deserialize)]
-struct TerminalSendRequest {
-    target: String,
-    text: Option<String>,
-    mode: Option<String>,
-    key: Option<String>,
-    submit: Option<bool>,
+pub(crate) struct TerminalSendRequest {
+    pub(crate) target: String,
+    pub(crate) text: Option<String>,
+    pub(crate) mode: Option<String>,
+    pub(crate) key: Option<String>,
+    pub(crate) submit: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -768,9 +768,9 @@ struct TerminalMetadataRequest {
 }
 
 #[derive(Serialize)]
-struct TerminalSendResponse {
-    ok: bool,
-    output: String,
+pub(crate) struct TerminalSendResponse {
+    pub(crate) ok: bool,
+    pub(crate) output: String,
 }
 
 #[derive(Serialize)]
