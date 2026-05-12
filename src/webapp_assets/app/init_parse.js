@@ -514,7 +514,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
             gatesNext: previousItems.get(item.id)?.gatesNext ?? item.gatesNext,
           }))
           .filter((item) => !removingQueueItems.has(queueItemKey(item)));
-        queueWaves = normalizeQueueWaves(preservedWaves, queueItems);
+        queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });
         queueRun = {
           running: Boolean(state.queue.running),
           stopped: state.queue.run?.status === 'stopped',
@@ -534,7 +534,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         changed = true;
       }
       const previousWaves = queueWaves.map((wave) => wave.id).join(',');
-      queueWaves = normalizeQueueWaves(queueWaves, queueItems);
+      queueWaves = normalizeQueueWaves(queueWaves, queueItems, { pruneBackendEmpty: true });
       if (previousWaves !== queueWaves.map((wave) => wave.id).join(',')) {
         changed = true;
       }

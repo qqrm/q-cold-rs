@@ -641,3 +641,4 @@ include!("webapp/tests_queue_live_edit.rs");
 include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_reconcile.rs");
 include!("webapp/tests_queue_taskflow.rs");
+include!("webapp/tests_terminal_send.rs");

@@ -689,7 +689,7 @@ fn send_terminal_key(target: &str, key: TerminalKey) -> Result<()> {
 fn send_tmux_terminal_paste(target: &str, text: &str, submit: bool) -> Result<()> {
     paste_terminal_text(target, text)?;
     if submit {
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(terminal_paste_submit_delay(text));
         send_tmux_terminal_key(target, TerminalKey::Enter)?;
     }
     Ok(())
@@ -729,7 +729,7 @@ fn send_zellij_terminal_paste(session: &str, pane: &str, text: &str, submit: boo
         bail!("zellij action paste failed with {status}");
     }
     if submit {
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(terminal_paste_submit_delay(text));
         send_zellij_terminal_key(session, pane, TerminalKey::Enter)?;
     }
     Ok(())
@@ -814,6 +814,14 @@ fn terminal_paste_buffer_name() -> Result<String> {
         .context("system clock is before UNIX_EPOCH")?
         .as_nanos();
     Ok(format!("qcold-web-send-{}-{nanos}", std::process::id()))
+}
+
+fn terminal_paste_submit_delay(text: &str) -> Duration {
+    if text.contains('\n') || text.len() > 1024 {
+        Duration::from_millis(1500)
+    } else {
+        Duration::from_millis(100)
+    }
 }
 
 fn require_write_token(headers: &HeaderMap) -> Result<()> {

@@ -18,7 +18,7 @@
     }
 
     function renderQueueGraph() {
-      queueWaves = normalizeQueueWaves(queueWaves, queueItems);
+      queueWaves = normalizeQueueWaves(queueWaves, queueItems, { pruneBackendEmpty: true });
       if (queueGraphLayoutEditable()) syncQueueWaveDependencies();
       const board = document.createElement('div');
       board.className = 'queue-graph-board';
@@ -98,7 +98,7 @@
       }));
     }
 
-    function normalizeQueueWaves(waves, items) {
+    function normalizeQueueWaves(waves, items, options = {}) {
       const normalized = (Array.isArray(waves) ? waves : [])
         .map((wave) => (typeof wave === 'string' ? { id: wave } : wave))
         .filter((wave) => wave?.id)
@@ -114,7 +114,16 @@
       for (const item of items) {
         if (!item.waveId || !known.has(item.waveId)) item.waveId = lastWave.id;
       }
-      return normalized;
+      return options.pruneBackendEmpty ? pruneEmptyBackendQueueWaves(normalized, items) : normalized;
+    }
+
+    function pruneEmptyBackendQueueWaves(waves, items) {
+      if (!queueHasBackendRun() || !queueGraphMode || waves.length <= 1) return waves;
+      const wavesWithItems = new Set(items.map((item) => item.waveId).filter(Boolean));
+      const pruned = waves.filter((wave, index) => {
+        return wavesWithItems.has(wave.id) || index === waves.length - 1;
+      });
+      return pruned.length ? pruned : [lastQueueWave(waves)];
     }
 
     function lastQueueWave(waves = queueWaves) {

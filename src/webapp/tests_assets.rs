@@ -20,6 +20,15 @@ mod asset_tests {
         assert!(APP_JS.contains("addWaveButton.disabled = !queueGraphAppendable();"));
         assert!(APP_JS.contains("function queueBackendRunAppendable()"));
         assert!(APP_JS.contains("items: [{ id: item.id, prompt, depends_on: dependsOn }]"));
-        assert!(APP_JS.contains("queueWaves = normalizeQueueWaves(preservedWaves, queueItems);"));
+        assert!(APP_JS.contains(
+            "queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });"
+        ));
+    }
+
+    #[test]
+    fn graph_queue_active_run_prunes_empty_non_final_waves() {
+        assert!(APP_JS.contains("function pruneEmptyBackendQueueWaves(waves, items)"));
+        assert!(APP_JS.contains("{ pruneBackendEmpty: true }"));
+        assert!(APP_JS.contains("wavesWithItems.has(wave.id) || index === waves.length - 1"));
     }
 }

@@ -14,12 +14,38 @@ fn agent_terminal_closeout_failed(agent_id: &str) -> bool {
 }
 
 fn agent_terminal_output(agent_id: &str) -> Option<String> {
-    let target = agents::terminal_contexts()
+    let target = agent_terminal_target(agent_id)?;
+    capture_agent_terminal_output(&target).ok()
+}
+
+fn agent_terminal_target(agent_id: &str) -> Option<String> {
+    let context = agents::terminal_contexts()
         .ok()?
         .into_iter()
-        .find(|context| context.id == agent_id)?
-        .target;
-    capture_agent_terminal_output(&target).ok()
+        .find(|context| context.id == agent_id)?;
+    Some(context.target)
+}
+
+fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
+    let Some(output) = agent_terminal_output(agent_id) else {
+        return Ok(false);
+    };
+    if !terminal_output_has_pending_paste(&output) {
+        return Ok(false);
+    }
+    let Some(target) = agent_terminal_target(agent_id) else {
+        return Ok(false);
+    };
+    send_terminal_key(&target, TerminalKey::Enter)?;
+    Ok(true)
+}
+
+fn terminal_output_has_pending_paste(output: &str) -> bool {
+    output
+        .lines()
+        .rev()
+        .take(12)
+        .any(|line| line.contains("[Pasted Content"))
 }
 
 fn capture_agent_terminal_output(target: &str) -> Result<String> {

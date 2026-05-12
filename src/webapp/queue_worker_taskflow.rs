@@ -189,6 +189,16 @@ fn remember_queue_task_worktree(
     Ok(())
 }
 
+fn remember_queue_task_agent(item: &state::QueueItemRow, agent_id: &str) -> Result<()> {
+    let task_id = format!("task/{}", item.slug);
+    let Some(mut record) = state::get_task_record(&task_id)? else {
+        return Ok(());
+    };
+    record.agent_id = Some(agent_id.to_string());
+    state::upsert_task_record(&record)?;
+    Ok(())
+}
+
 fn compact_process_output(stdout: &str, stderr: &str) -> String {
     let mut output = [stdout.trim(), stderr.trim()]
         .into_iter()

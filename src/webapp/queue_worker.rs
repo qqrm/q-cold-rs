@@ -595,6 +595,7 @@ fn start_web_queue_item(
         attempts,
         None,
     )?;
+    remember_queue_task_agent(item, &agent.id)?;
     let Some(target) = wait_for_agent_terminal_target(&agent.id) else {
         return Ok(retry_after_queue_agent_launch_failure(
             &agent.id,
@@ -656,6 +657,7 @@ fn wait_for_queue_item_closeout(
     agent_id: &str,
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
+    let mut submitted_pending_paste = false;
     loop {
         if state::web_queue_stop_requested(run_id)? {
             pause_web_queue_item(run_id, item, Some(agent_id), attempts)?;
@@ -705,6 +707,13 @@ fn wait_for_queue_item_closeout(
                     None,
                 )?;
                 return Ok(QueueItemOutcome::failed(message));
+            }
+            if status == "open"
+                && !submitted_pending_paste
+                && submit_agent_terminal_pending_paste(agent_id).unwrap_or(false)
+            {
+                submitted_pending_paste = true;
+                continue;
             }
             if status == "open" && agent_terminal_closeout_failed(agent_id) {
                 let message = "agent reached idle prompt after failed Q-COLD closeout".to_string();

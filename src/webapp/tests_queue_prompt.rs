@@ -102,4 +102,41 @@ mod queue_prompt_tests {
         );
         assert_eq!(metadata["prompt_source"].as_str(), Some("web-queue-card"));
     }
+
+    #[test]
+    fn queue_task_record_agent_updates_after_executor_start() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        let worktree = temp.path().join("WT/repo/task-queue-agent");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&worktree).unwrap();
+        let item = state::QueueItemRow {
+            id: "item".to_string(),
+            run_id: "run".to_string(),
+            position: 0,
+            depends_on: Vec::new(),
+            prompt: "do focused work".to_string(),
+            slug: "task-queue-agent".to_string(),
+            repo_root: Some(repo.display().to_string()),
+            repo_name: Some("repo".to_string()),
+            agent_command: "c1".to_string(),
+            agent_id: None,
+            status: "pending".to_string(),
+            message: String::new(),
+            attempts: 0,
+            next_attempt_at: None,
+            started_at: 0,
+            updated_at: 0,
+        };
+
+        remember_queue_task_worktree(&item, &repo, &worktree).unwrap();
+        remember_queue_task_agent(&item, "qa-task-queue-agent").unwrap();
+        let record = state::get_task_record("task/task-queue-agent")
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(record.agent_id.as_deref(), Some("qa-task-queue-agent"));
+    }
 }
