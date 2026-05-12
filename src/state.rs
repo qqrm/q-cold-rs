@@ -301,6 +301,46 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
     Ok(())
 }
 
+pub fn update_web_queue_item_plans(run_id: &str, items: &[QueueItemRow]) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction()
+        .context("failed to start web queue update transaction")?;
+    let now = unix_now();
+    for item in items {
+        tx.execute(
+            "update web_queue_items
+             set position = ?3, depends_on_json = ?4, prompt = ?5, repo_root = ?6,
+                 repo_name = ?7, agent_command = ?8, updated_at_unix = ?9
+             where run_id = ?1 and id = ?2",
+            params![
+                run_id,
+                item.id,
+                item.position,
+                queue_depends_on_json(&item.depends_on)?,
+                item.prompt,
+                item.repo_root,
+                item.repo_name,
+                item.agent_command,
+                now,
+            ],
+        )
+        .context("failed to update web queue item plan")?;
+    }
+    tx.execute(
+        "update web_queue_runs
+         set message = ?2, updated_at_unix = ?3
+         where id = ?1",
+        params![run_id, format!("updated {} queue item(s)", items.len()), now],
+    )
+    .context("failed to update web queue run after item plan update")?;
+    tx.commit().context("failed to commit web queue update transaction")?;
+    Ok(())
+}
+
 pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     let connection = open_db()?;
     let run = connection

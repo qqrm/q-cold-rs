@@ -501,10 +501,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function syncQueueFromSnapshot() {
       if (state?.queue?.run || state?.queue?.records?.length) {
         localStorage.removeItem(queueStorageKey);
+        const previousItems = new Map(queueItems.map((item) => [item.id, item]));
         queueItems = (state.queue.records || [])
           .map(queueItemFromServer)
+          .map((item) => ({
+            ...item,
+            gatesNext: previousItems.get(item.id)?.gatesNext ?? item.gatesNext,
+          }))
           .filter((item) => !removingQueueItems.has(queueItemKey(item)));
-        queueWaves = normalizeQueueWaves([], queueItems);
+        queueWaves = normalizeQueueWaves(queueWaves, queueItems);
         queueRun = {
           running: Boolean(state.queue.running),
           stopped: state.queue.run?.status === 'stopped',
@@ -588,7 +593,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function renderQueue() {
       document.getElementById('nav-queue').textContent = String(queueItems.length);
       queueGraphModeInput.checked = queueGraphMode;
-      queueGraphModeInput.disabled = queueLayoutLocked();
+      queueGraphModeInput.disabled = queueHasBackendRun();
       queueState.textContent = queueRun.running
         ? queueRunningText()
         : queueRun.stopped
@@ -602,7 +607,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('clear-queue').disabled = !queueCanClear();
       const addWaveButton = document.getElementById('add-queue-wave');
       addWaveButton.hidden = !queueGraphMode;
-      addWaveButton.disabled = queueLayoutLocked();
+      addWaveButton.disabled = !queueGraphLayoutEditable();
       document.getElementById('run-queue').disabled = queueRun.running
         || queueRun.stopped
         || !queueItems.length

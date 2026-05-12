@@ -221,6 +221,90 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
     Ok(count)
 }
 
+fn handle_queue_update(headers: &HeaderMap, payload: QueueUpdateRequest) -> TerminalSendResponse {
+    match handle_queue_update_result(headers, payload) {
+        Ok(count) => TerminalSendResponse {
+            ok: true,
+            output: format!("updated {count} queue item(s)"),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) -> Result<usize> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let run_id = clean_queue_run_id(&payload.run_id);
+    let (run, existing_items) = state::load_web_queue_run(&run_id)?;
+    let Some(run) = run else {
+        bail!("unknown queue run: {run_id}");
+    };
+    if !matches!(
+        run.status.as_str(),
+        "running" | "waiting" | "starting" | "stopped"
+    ) {
+        bail!("queue is not editable");
+    }
+    let requested = payload
+        .items
+        .into_iter()
+        .filter(|item| !item.id.trim().is_empty())
+        .map(|item| (item.id.clone(), item))
+        .collect::<HashMap<_, _>>();
+    if requested.is_empty() {
+        bail!("queue update has no items");
+    }
+    let mut all_items = existing_items;
+    let mut updated_ids = HashSet::new();
+    for item in &mut all_items {
+        let Some(request) = requested.get(&item.id) else {
+            continue;
+        };
+        if !queue_item_editable_while_running(&run, item)? {
+            bail!("queue item is already active: {}", item.id);
+        }
+        let prompt = request.prompt.trim();
+        if prompt.is_empty() {
+            bail!("queue item prompt is empty: {}", item.id);
+        }
+        item.prompt = prompt.to_string();
+        item.position = request.position.unwrap_or(item.position);
+        item.depends_on = request.depends_on.clone().unwrap_or_default();
+        item.repo_root = request
+            .repo_root
+            .clone()
+            .or_else(|| run.selected_repo_root.clone())
+            .filter(|value| !value.trim().is_empty());
+        item.repo_name = request
+            .repo_name
+            .clone()
+            .or_else(|| run.selected_repo_name.clone())
+            .filter(|value| !value.trim().is_empty());
+        item.agent_command = request
+            .agent_command
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| run.selected_agent_command.clone());
+        updated_ids.insert(item.id.clone());
+    }
+    if updated_ids.len() != requested.len() {
+        bail!("queue update references unknown item");
+    }
+    normalize_queue_dependencies(&run.execution_mode, &mut all_items)?;
+    let updates = all_items
+        .into_iter()
+        .filter(|item| updated_ids.contains(&item.id))
+        .collect::<Vec<_>>();
+    let count = updates.len();
+    state::update_web_queue_item_plans(&run_id, &updates)?;
+    spawn_web_queue_worker(run_id);
+    Ok(count)
+}
+
 fn handle_queue_stop(headers: &HeaderMap) -> TerminalSendResponse {
     match handle_queue_stop_result(headers) {
         Ok(()) => TerminalSendResponse {
@@ -404,6 +488,24 @@ fn queue_item_removable_while_running(
         return Ok(true);
     }
     Ok(queue_task_status(item)?.is_some_and(|status| status.starts_with("closed")))
+}
+
+fn queue_item_editable_while_running(
+    run: &state::QueueRunRow,
+    item: &state::QueueItemRow,
+) -> Result<bool> {
+    if !matches!(item.status.as_str(), "pending" | "waiting") {
+        return Ok(false);
+    }
+    if item.agent_id.is_some() || queue_item_worker_active(&run.id, &item.id) {
+        return Ok(false);
+    }
+    if item.position <= run.current_index {
+        return Ok(false);
+    }
+    Ok(!queue_task_status(item)?.is_some_and(|status| {
+        status == "paused" || status.starts_with("closed")
+    }))
 }
 
 fn handle_queue_clear(headers: &HeaderMap, payload: &QueueClearRequest) -> TerminalSendResponse {

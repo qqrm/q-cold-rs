@@ -325,6 +325,7 @@ fn router() -> Router {
         .route("/api/task-chat/send", post(api_task_chat_send))
         .route("/api/queue/run", post(api_queue_run))
         .route("/api/queue/append", post(api_queue_append))
+        .route("/api/queue/update", post(api_queue_update))
         .route("/api/queue/remove", post(api_queue_remove))
         .route("/api/queue/clear", post(api_queue_clear))
         .route("/api/queue/stop", post(api_queue_stop))
@@ -388,6 +389,19 @@ async fn api_queue_append(
     Json(payload): Json<QueueAppendRequest>,
 ) -> impl IntoResponse {
     let response = handle_queue_append(&headers, payload);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_update(
+    headers: HeaderMap,
+    Json(payload): Json<QueueUpdateRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_update(&headers, payload);
     let status = if response.ok {
         StatusCode::OK
     } else {
@@ -540,5 +554,6 @@ include!("webapp/models_assets.rs");
 
 include!("webapp/tests.rs");
 include!("webapp/tests_assets.rs");
+include!("webapp/tests_queue_live_edit.rs");
 include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_taskflow.rs");

@@ -19,17 +19,19 @@
 
     function renderQueueGraph() {
       queueWaves = normalizeQueueWaves(queueWaves, queueItems);
-      if (!queueLayoutLocked()) syncQueueWaveDependencies();
+      if (queueGraphLayoutEditable()) syncQueueWaveDependencies();
       const board = document.createElement('div');
       board.className = 'queue-graph-board';
       const levels = queueGraphLevels();
       const toolbar = document.createElement('div');
       toolbar.className = 'queue-graph-toolbar';
       const hint = document.createElement('span');
-      const lockedHint = 'Queue layout is locked for this run. Clear the queue to draft a new graph.';
+      const lockedHint = 'Only pending tasks can be edited in an active run.';
       hint.textContent = queueLayoutLocked()
         ? lockedHint
-        : 'Waves run top to bottom. Drag a wave header to reorder waves.';
+        : queueHasBackendRun()
+          ? 'Pending waves can be edited while earlier waves run.'
+          : 'Waves run top to bottom. Drag a wave header to reorder waves.';
       toolbar.append(hint);
       board.appendChild(toolbar);
 
@@ -47,6 +49,7 @@
       column.addEventListener('drop', (event) => {
         if (queueLayoutLocked()) return;
         event.preventDefault();
+        if (queueHasBackendRun() && !queueWaveEditable(level)) return;
         const sourceWaveId = event.dataTransfer.getData('text/qcold-queue-wave');
         if (sourceWaveId) {
           moveQueueWaveTo(sourceWaveId, level.wave.id);
@@ -57,9 +60,9 @@
       });
       const head = document.createElement('div');
       head.className = 'queue-graph-wave-head';
-      head.draggable = !queueLayoutLocked();
+      head.draggable = queueWaveEditable(level);
       head.addEventListener('dragstart', (event) => {
-        if (queueLayoutLocked()) return;
+        if (!queueWaveEditable(level)) return;
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/qcold-queue-wave', level.wave.id);
       });
@@ -72,8 +75,8 @@
       headTitle.append(heading, meta);
       const remove = queueActionButton('×', () => removeQueueWave(level.wave.id), 'Remove wave');
       remove.classList.add('danger', 'icon-remove', 'queue-remove-corner');
-      remove.hidden = queueLayoutLocked();
-      remove.disabled = queueLayoutLocked() || queueWaves.length <= 1 || level.items.length > 0;
+      remove.hidden = !queueGraphLayoutEditable();
+      remove.disabled = !queueGraphLayoutEditable() || queueWaves.length <= 1 || level.items.length > 0;
       head.append(headTitle);
       const lane = document.createElement('div');
       lane.className = 'queue-graph-wave-lane';
@@ -144,14 +147,14 @@
     }
 
     function createQueueWave() {
-      if (queueLayoutLocked()) return;
+      if (!queueGraphLayoutEditable()) return;
       queueWaves.push({ id: newQueueWaveId() });
       saveQueueStorage();
       renderQueue();
     }
 
     function removeQueueWave(waveId) {
-      if (queueLayoutLocked() || queueWaves.length <= 1) return;
+      if (!queueGraphLayoutEditable() || queueWaves.length <= 1) return;
       if (queueItems.some((item) => item.waveId === waveId)) return;
       queueWaves = queueWaves.filter((wave) => wave.id !== waveId);
       saveQueueStorage();
@@ -165,38 +168,61 @@
       const sourceIndex = queueWaves.findIndex((candidate) => candidate.id === sourceWaveId);
       const targetIndex = queueWaves.findIndex((candidate) => candidate.id === targetWaveId);
       if (sourceIndex < 0 || targetIndex < 0) return;
+      const sourceLevel = queueGraphLevels().find((level) => level.wave.id === sourceWaveId);
+      if (!sourceLevel || !queueWaveEditable(sourceLevel)) return;
       const [wave] = queueWaves.splice(sourceIndex, 1);
       queueWaves.splice(targetIndex, 0, wave);
       syncQueueWaveDependencies();
       saveQueueStorage();
       renderQueue();
+      persistQueuePlan();
     }
 
     function moveQueueItemToWave(itemId, waveId) {
       if (!itemId || !waveId || queueLayoutLocked()) return;
       const item = queueItems.find((candidate) => candidate.id === itemId);
-      if (!item || item.waveId === waveId) return;
+      if (!item || item.waveId === waveId || !queueItemEditable(item)) return;
+      const targetLevel = queueGraphLevels().find((level) => level.wave.id === waveId);
+      if (queueHasBackendRun() && (!targetLevel || !queueWaveEditable(targetLevel))) return;
       item.waveId = waveId;
       syncQueueWaveDependencies();
       saveQueueStorage();
       renderQueue();
+      persistQueuePlan();
     }
 
     function syncQueueWaveDependencies() {
       const waveItems = queueGraphLevels().map((level) => level.items);
       let previousGates = [];
       for (const items of waveItems) {
-        for (const item of items) item.dependsOn = previousGates.map((dependency) => dependency.id);
+        for (const item of items) {
+          if (!queueHasBackendRun() || queueItemEditable(item)) {
+            item.dependsOn = previousGates.map((dependency) => dependency.id);
+          }
+        }
         previousGates = items.filter((item) => item.gatesNext !== false);
       }
     }
 
     function queueLayoutLocked() {
-      return queueRun.running || queueRun.stopped || queueHasBackendRun();
+      return queueHasBackendRun() ? !queueLiveGraphEditable() : false;
+    }
+
+    function queueGraphLayoutEditable() {
+      return !queueHasBackendRun() || queueLiveGraphEditable();
+    }
+
+    function queueLiveGraphEditable() {
+      return Boolean(queueGraphMode && queueHasBackendRun() && (queueRun.running || queueRun.stopped));
     }
 
     function queueHasBackendRun() {
       return Boolean(queueRun.runId || queueItems.some((item) => item.runId));
+    }
+
+    function queueWaveEditable(level) {
+      return queueGraphLayoutEditable()
+        && (!queueHasBackendRun() || level.items.every((item) => queueItemEditable(item)));
     }
 
     function queueHasDraftGraph() {
@@ -216,9 +242,10 @@
       const view = queueItemView(item);
       const card = document.createElement('article');
       card.className = `queue-graph-card ${view.status}`;
-      card.draggable = !queueLayoutLocked();
+      card.draggable = queueItemEditable(item);
       card.dataset.itemId = item.id;
       card.addEventListener('dragstart', (event) => {
+        if (!queueItemEditable(item)) return;
         event.stopPropagation();
         event.dataTransfer.effectAllowed = 'linkMove';
         event.dataTransfer.setData('text/qcold-queue-item', item.id);
@@ -245,8 +272,8 @@
       prompt.title = 'Use Full prompt to inspect the complete text';
       const direction = document.createElement('p');
       direction.className = 'queue-graph-card-hint';
-      direction.textContent = queueLayoutLocked()
-        ? 'Wave order is locked for this run.'
+      direction.textContent = !queueItemEditable(item)
+        ? 'Task is owned by the backend run.'
         : 'Drag into a wave to move this task.';
       const gate = queueGateToggle(item);
       const controls = queueGraphCardControls(index);
@@ -268,13 +295,14 @@
       const input = document.createElement('input');
       input.type = 'checkbox';
       input.checked = item.gatesNext !== false;
-      input.disabled = queueLayoutLocked();
+      input.disabled = !queueItemEditable(item);
       input.setAttribute('aria-label', 'Blocks next wave');
       input.addEventListener('change', () => {
         item.gatesNext = input.checked;
         syncQueueWaveDependencies();
         saveQueueStorage();
         renderQueue();
+        persistQueuePlan();
       });
       label.append(input, document.createTextNode('Blocks next wave'));
       return label;
@@ -292,8 +320,16 @@
       const modal = queuePromptModal();
       const title = modal.querySelector('[data-queue-prompt-title]');
       const prompt = modal.querySelector('[data-queue-prompt-text]');
+      const editor = modal.querySelector('[data-queue-prompt-editor]');
+      const save = modal.querySelector('[data-queue-prompt-save]');
+      const editable = queueItemEditable(item);
       title.textContent = `Task #${index + 1} full prompt`;
       prompt.textContent = item.prompt || '(empty prompt)';
+      editor.value = item.prompt || '';
+      prompt.hidden = editable;
+      editor.hidden = !editable;
+      save.hidden = !editable;
+      save.onclick = () => saveQueuePromptEdit(item.id, editor.value);
       modal.hidden = false;
     }
 
@@ -312,8 +348,10 @@
               <h2 id="queue-prompt-modal-title" data-queue-prompt-title>Full prompt</h2>
               <span class="task-path">Queue graph task prompt</span>
             </div>
+            <button class="secondary" type="button" data-queue-prompt-save>Save</button>
             <button class="secondary" type="button" data-queue-prompt-close>Close</button>
           </div>
+          <textarea class="queue-prompt-editor" data-queue-prompt-editor hidden></textarea>
           <pre class="queue-prompt-full" data-queue-prompt-text></pre>
         </div>
       `;
@@ -333,6 +371,18 @@
       if (queueLayoutLocked()) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = 'link';
+    }
+
+    async function saveQueuePromptEdit(itemId, prompt) {
+      const item = queueItems.find((candidate) => candidate.id === itemId);
+      const text = String(prompt || '').trim();
+      if (!item || !text || !queueItemEditable(item)) return;
+      item.prompt = text;
+      saveQueueStorage();
+      renderQueue();
+      const modal = document.getElementById('queue-prompt-modal');
+      if (modal) modal.hidden = true;
+      await persistQueuePlan();
     }
 
     function queueRunningText() {
@@ -374,14 +424,20 @@
         appendLocalMessage('error', 'No active queue run to append to');
         return;
       }
-      const item = defaultQueueItem();
+      queueWaves = normalizeQueueWaves(queueWaves, queueItems);
+      const item = {
+        ...defaultQueueItem(),
+        prompt,
+        waveId: queueGraphMode ? lastQueueWave(queueWaves).id : '',
+      };
+      const dependsOn = queueGraphMode ? queueDependenciesForWave(item.waveId) : [];
       try {
         const response = await fetch('/api/queue/append', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             run_id: runId,
-            items: [{ id: item.id, prompt }],
+            items: [{ id: item.id, prompt, depends_on: dependsOn }],
           }),
         });
         const payload = await response.json().catch(() => ({}));
@@ -395,6 +451,17 @@
       } catch (err) {
         appendLocalMessage('error', String(err));
       }
+    }
+
+    function queueDependenciesForWave(waveId) {
+      let previousGates = [];
+      for (const level of queueGraphLevels()) {
+        if (level.wave.id === waveId) {
+          return previousGates.map((dependency) => dependency.id);
+        }
+        previousGates = level.items.filter((item) => item.gatesNext !== false);
+      }
+      return previousGates.map((dependency) => dependency.id);
     }
 
     function queueItemControls(index, options = {}) {
@@ -508,6 +575,55 @@
         && ['pending', 'waiting'].includes(view.status)
         && !item.agentId
         && Number(item.position) > activePosition;
+    }
+
+    function queueItemEditable(item) {
+      if (!item) return false;
+      if (!queueHasBackendRun()) return true;
+      const view = queueItemView(item);
+      const activePosition = Number(queueRun.activeIndex);
+      return Boolean(item.runId)
+        && ['pending', 'waiting'].includes(view.status)
+        && !item.agentId
+        && Number(item.position) > activePosition;
+    }
+
+    async function persistQueuePlan() {
+      if (!queueHasBackendRun()) return;
+      const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
+      if (!runId) return;
+      const items = queueItems
+        .map((item, index) => ({ item, index }))
+        .filter(({ item }) => queueItemEditable(item));
+      if (!items.length) return;
+      try {
+        const response = await fetch('/api/queue/update', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            run_id: runId,
+            items: items.map(({ item, index }) => ({
+              id: item.id,
+              prompt: item.prompt,
+              position: index,
+              depends_on: queueGraphMode ? (item.dependsOn || []) : [],
+              repo_root: item.repoRoot,
+              repo_name: item.repoName,
+              agent_command: item.agentCommand,
+            })),
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to update queue plan');
+          await loadSnapshot();
+          return;
+        }
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+        await loadSnapshot();
+      }
     }
 
     async function removeServerQueueItem(item, task, index) {

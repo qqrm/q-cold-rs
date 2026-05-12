@@ -701,6 +701,23 @@ struct QueueAppendRequest {
 }
 
 #[derive(Deserialize)]
+struct QueueUpdateRequest {
+    run_id: String,
+    items: Vec<QueueUpdateItemRequest>,
+}
+
+#[derive(Deserialize)]
+struct QueueUpdateItemRequest {
+    id: String,
+    prompt: String,
+    position: Option<i64>,
+    depends_on: Option<Vec<String>>,
+    repo_root: Option<String>,
+    repo_name: Option<String>,
+    agent_command: Option<String>,
+}
+
+#[derive(Deserialize)]
 struct QueueContinueRequest {
     run_id: String,
 }
