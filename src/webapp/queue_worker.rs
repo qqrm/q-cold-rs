@@ -785,7 +785,7 @@ fn reconcile_stale_web_queue_run() -> Result<()> {
     if web_queue_worker_active(&run.id) {
         return Ok(());
     }
-    if !queue_run_needs_stale_reconcile(&run, &items) {
+    if !queue_run_needs_stale_reconcile(&run, &items)? {
         return Ok(());
     }
 
@@ -800,6 +800,9 @@ fn reconcile_stale_web_queue_run() -> Result<()> {
         };
         run = updated_run;
         items = updated_items;
+    }
+    if let Some((updated_run, updated_items)) = restart_resolved_failed_queue_run(&run, &items)? {
+        return resume_stale_active_queue_run(&updated_run, updated_items);
     }
     if !matches!(
         run.status.as_str(),

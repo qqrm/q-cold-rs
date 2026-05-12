@@ -274,7 +274,10 @@ backend waits and retries the next launch three times after roughly 1, 5, and
 Launch and terminal setup failures before a managed task record exists are
 retryable on the same schedule. Once the matching `task/<slug>` record exists,
 Q-COLD will not start a second executor for that row; non-success closeout or a
-prematurely exited executor stops the row for operator diagnostics.
+prematurely exited executor stops the row for operator diagnostics. If the
+operator later resumes a blocked task chat and that managed task reaches
+`closed:success`, stale queue reconciliation promotes the stopped row to
+success and resumes any now-unblocked later graph waves.
 The Queue Stop action stops the backend worker immediately and marks the
 current row as stopped without deleting it or treating it as complete. The same
 control becomes Continue for a stopped run; continuing clears the stop flag and
@@ -302,7 +305,8 @@ the backend removes the row, removes the matching `task/<slug>` record, and
 terminates the associated executor agent when one is still known. Rows without a
 task record still switch to the Tasks view while recording a row-level
 availability note. Any blocked, failed, unknown, or prematurely exited task stops
-the remaining queue. Queue draft rows may still use browser local storage before
+the remaining queue until a later resumed task-flow record reaches
+`closed:success`. Queue draft rows may still use browser local storage before
 launch, but live queue state, retry counters, agent ids, and generated
 `task/<slug>` values come from the backend snapshot after launch, so refreshing
 the tab does not stop the active run. Queue rows, task cards, agent cards, and

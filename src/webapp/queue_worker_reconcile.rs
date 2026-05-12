@@ -1,8 +1,8 @@
 fn queue_run_needs_stale_reconcile(
     run: &state::QueueRunRow,
     items: &[state::QueueItemRow],
-) -> bool {
-    matches!(
+) -> Result<bool> {
+    if matches!(
         run.status.as_str(),
         "running" | "waiting" | "starting" | "stopping"
     ) || items.iter().any(|item| {
@@ -12,7 +12,34 @@ fn queue_run_needs_stale_reconcile(
                     .agent_id
                     .as_deref()
                     .is_some_and(agent_running))
-    })
+    }) {
+        return Ok(true);
+    }
+    failed_queue_run_may_be_resolved(run, items)
+}
+
+fn failed_queue_run_may_be_resolved(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+) -> Result<bool> {
+    if run.status != "failed" || items.is_empty() {
+        return Ok(false);
+    }
+    if !items
+        .iter()
+        .any(|item| matches!(item.status.as_str(), "failed" | "blocked"))
+    {
+        return Ok(true);
+    }
+    for item in items {
+        if !matches!(item.status.as_str(), "failed" | "blocked") {
+            continue;
+        }
+        if queue_task_status(item)?.as_deref() == Some("closed:success") {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn queue_agent_failure_message(item: &state::QueueItemRow, agent_id: &str) -> Option<&'static str> {
@@ -77,6 +104,36 @@ fn resume_stale_active_queue_run(
 
     state::update_web_queue_run(&run.id, "success", -1, "closed successfully")?;
     Ok(())
+}
+
+fn restart_resolved_failed_queue_run(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+) -> Result<Option<(state::QueueRunRow, Vec<state::QueueItemRow>)>> {
+    if run.status != "failed" {
+        return Ok(None);
+    }
+    if items
+        .iter()
+        .any(|item| matches!(item.status.as_str(), "failed" | "blocked"))
+    {
+        return Ok(None);
+    }
+    if items.iter().all(|item| item.status == "success") {
+        state::update_web_queue_run(&run.id, "success", -1, "closed successfully")?;
+        return Ok(None);
+    }
+    state::update_web_queue_run(
+        &run.id,
+        "running",
+        -1,
+        "resuming after resolved blocked task",
+    )?;
+    let (updated_run, updated_items) = state::load_web_queue_run(&run.id)?;
+    let Some(updated_run) = updated_run else {
+        return Ok(None);
+    };
+    Ok(Some((updated_run, updated_items)))
 }
 
 fn stale_queue_task_record_handled(
