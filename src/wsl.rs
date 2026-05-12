@@ -320,7 +320,7 @@ fn render_unit(spec: &UnitSpec) -> String {
         "Type=simple".to_string(),
         format!(
             "WorkingDirectory={}",
-            systemd_quote(&path_text(&spec.repo_root))
+            systemd_path(&path_text(&spec.repo_root))
         ),
     ];
     if let Some(path) = spec.path.as_deref() {
@@ -372,6 +372,22 @@ fn systemd_quote(value: &str) -> String {
     }
     quoted.push('"');
     quoted
+}
+
+fn systemd_path(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '%' => escaped.push_str("%%"),
+            ' ' => escaped.push_str("\\x20"),
+            '\t' => escaped.push_str("\\x09"),
+            '\n' => escaped.push_str("\\x0a"),
+            '"' => escaped.push_str("\\x22"),
+            _ => escaped.push(ch),
+        }
+    }
+    escaped
 }
 
 fn path_text(path: &Path) -> String {
@@ -445,7 +461,7 @@ mod tests {
 
         let unit = render_unit(&spec);
 
-        assert!(unit.contains("WorkingDirectory=\"/home/me/repos/qcold\""));
+        assert!(unit.contains("WorkingDirectory=/home/me/repos/qcold"));
         assert!(unit.contains("Environment=\"PATH=/home/me/.cargo/bin:/usr/bin\""));
         assert!(unit.contains("Environment=\"QCOLD_STATE_DIR=/home/me/.local/state/qcold\""));
         assert!(
@@ -462,5 +478,13 @@ mod tests {
     #[test]
     fn systemd_quote_escapes_unit_special_characters() {
         assert_eq!(systemd_quote(r#"/tmp/a "b" 100%\x"#), r#""/tmp/a \"b\" 100%%\\x""#);
+    }
+
+    #[test]
+    fn systemd_path_is_unquoted_and_escaped_for_path_directives() {
+        assert_eq!(
+            systemd_path(r#"/tmp/a "b" 100%\x"#),
+            r#"/tmp/a\x20\x22b\x22\x20100%%\\x"#
+        );
     }
 }

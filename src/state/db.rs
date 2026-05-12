@@ -11,6 +11,9 @@ fn open_db() -> Result<Connection> {
     let connection =
         Connection::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
     connection
+        .busy_timeout(Duration::from_secs(5))
+        .context("failed to set state database busy timeout")?;
+    connection
         .execute_batch(
             "pragma journal_mode = wal;
              pragma foreign_keys = on;
