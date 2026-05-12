@@ -646,10 +646,9 @@ fn classify_host_agent(args: &[String]) -> Option<String> {
     if command_name(executable) == "codex" {
         return Some("codex".to_string());
     }
-    if command_name(executable) == "qcold"
+    if matches!(command_name(executable), "qcold" | "cargo-qcold")
         && args.iter().any(|arg| arg == "telegram")
         && args.iter().any(|arg| arg == "serve")
-        && args.iter().any(|arg| arg == "--daemon-child")
     {
         return Some("web-daemon".to_string());
     }

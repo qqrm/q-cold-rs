@@ -148,6 +148,11 @@ fn replace_existing_daemon(paths: &WebappDaemonPaths, listen: &str) -> Result<()
     bail!("existing Mini App daemon pid {pid} did not stop");
 }
 
+pub(crate) fn stop_daemon_for_listen(listen: &str) -> Result<()> {
+    let paths = WebappDaemonPaths::new(listen)?;
+    replace_existing_daemon(&paths, listen)
+}
+
 fn read_pid_file(path: &Path) -> Result<Option<u32>> {
     if !path.is_file() {
         return Ok(None);

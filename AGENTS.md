@@ -70,6 +70,9 @@ repo-local code owns it.
 - `qcold agent attach <agent-id|terminal-target|session|name>`
 - `qcold agent start --track <track> -- <command>...`
 - `qcold telegram poll`
+- `qcold wsl autostart install [--listen <addr>] [--repo-root <path>] [--qcold-bin <path>]`
+- `qcold wsl autostart status`
+- `qcold wsl autostart remove`
 - `qcold bundle`
 - `qcold guard -- <command>...`
 - `qcold task pause --reason "<reason>"`
@@ -89,6 +92,9 @@ repo-local code owns it.
 - `cargo qcold agent attach <agent-id|terminal-target|session|name>`
 - `cargo qcold agent start --track <track> -- <command>...`
 - `cargo qcold telegram poll`
+- `cargo qcold wsl autostart install [--listen <addr>] [--repo-root <path>] [--qcold-bin <path>]`
+- `cargo qcold wsl autostart status`
+- `cargo qcold wsl autostart remove`
 - `cargo qcold guard -- <command>...`
 - `cargo qcold task inspect [topic]`
 - `cargo qcold task open <task-slug> [profile]`

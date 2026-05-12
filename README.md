@@ -33,6 +33,7 @@ qcold agent start --track audit -- codex exec "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
 qcold telegram poll
 qcold telegram serve --listen 127.0.0.1:8787 --daemon
+qcold wsl autostart install
 qcold bundle
 qcold guard -- rg -n "needle" src
 qcold task inspect runtime-audit
@@ -181,6 +182,23 @@ command after `cargo install --path . --locked` or another Q-COLD rebuild to
 serve the same binary/assets version that was just installed. Without
 `--daemon`, `telegram serve` stays in the foreground for systemd or other
 external supervisors.
+
+On WSL 2 with user systemd available, install a user service that starts the
+dashboard automatically when the WSL user manager starts:
+
+```bash
+qcold wsl autostart install --repo-root /path/to/qcold
+qcold wsl autostart status
+```
+
+The service runs `qcold telegram serve --listen 127.0.0.1:8787` in foreground
+mode from the configured repository root, restarts on failure, and replaces an
+older `--daemon` dashboard for the same listen address during install. Use
+`--listen <addr>`, `--service-name <name>`, or `--qcold-bin <path>` when the
+defaults are not right for the local WSL distribution. Use
+`qcold wsl autostart remove` to disable and remove the user service. This
+configures startup inside WSL; Windows still needs to launch the WSL
+distribution after a Windows reboot.
 
 The daemon warms and maintains the dashboard state snapshot before accepting
 web requests, then refreshes it in the background. Page reloads and live event

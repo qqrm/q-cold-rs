@@ -79,6 +79,18 @@ mod tests {
     }
 
     #[test]
+    fn host_agent_classifier_detects_qcold_foreground_server() {
+        let args = vec![
+            "/opt/qcold-demo/bin/qcold".to_string(),
+            "telegram".to_string(),
+            "serve".to_string(),
+            "--listen".to_string(),
+            "127.0.0.1:8787".to_string(),
+        ];
+        assert_eq!(classify_host_agent(&args).as_deref(), Some("web-daemon"));
+    }
+
+    #[test]
     fn terminal_key_mapping_supports_history_navigation() {
         let key = clean_terminal_key("ArrowUp").unwrap();
 

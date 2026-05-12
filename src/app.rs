@@ -9,6 +9,7 @@ mod telegram;
 #[cfg(test)]
 mod test_support;
 mod webapp;
+mod wsl;
 
 use std::ffi::OsString;
 use std::fs;
@@ -31,6 +32,7 @@ use anyhow::{Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde_json::Value;
 use telegram::TelegramArgs;
+use wsl::WslArgs;
 
 use crate::adapter::{BundleAdapter, ProofAdapter, TaskAdapter};
 use crate::repository::{AdapterContext, RepositoryArgs, RepositoryConfig};
@@ -53,6 +55,7 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold agent list\n",
     "  qcold agent start --track audit -- codex exec \"inspect repo\"\n",
     "  qcold telegram poll\n",
+    "  qcold wsl autostart install\n",
     "  qcold bundle\n",
     "  qcold guard -- rg -n \"needle\" src\n",
     "  qcold task inspect runtime-audit\n",
@@ -91,6 +94,7 @@ fn run() -> Result<u8> {
         TopLevel::Repo(args) => repository::run(args),
         TopLevel::Agent(args) => agents::run(args),
         TopLevel::Telegram(args) => telegram::run(args),
+        TopLevel::Wsl(args) => wsl::run(args),
         TopLevel::Ci(args) => adapter_for_cwd_sensitive_repo()?.ci(&args.args),
         TopLevel::Verify(args) => adapter_for_cwd_sensitive_repo()?.verify(&args.args),
         TopLevel::Compat(args) => adapter_for_cwd_sensitive_repo()?.compat(&args.args),
@@ -149,6 +153,8 @@ enum TopLevel {
     Agent(AgentArgs),
     #[command(about = "Run Telegram command/reply control-plane adapters")]
     Telegram(TelegramArgs),
+    #[command(about = "Manage WSL integration helpers")]
+    Wsl(WslArgs),
     Ci(PassthroughArgs),
     Verify(PassthroughArgs),
     Compat(PassthroughArgs),
