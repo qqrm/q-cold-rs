@@ -14,4 +14,12 @@ mod asset_tests {
         assert!(!APP_JS.contains("['/q'"));
         assert!(!APP_JS.contains("Help menu"));
     }
+
+    #[test]
+    fn graph_queue_active_run_keeps_wave_append_controls() {
+        assert!(APP_JS.contains("addWaveButton.disabled = !queueGraphAppendable();"));
+        assert!(APP_JS.contains("function queueBackendRunAppendable()"));
+        assert!(APP_JS.contains("items: [{ id: item.id, prompt, depends_on: dependsOn }]"));
+        assert!(APP_JS.contains("queueWaves = normalizeQueueWaves(preservedWaves, queueItems);"));
+    }
 }

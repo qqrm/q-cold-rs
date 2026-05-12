@@ -147,9 +147,9 @@
     }
 
     function createQueueWave() {
-      if (!queueGraphLayoutEditable()) return;
+      if (!queueGraphAppendable()) return;
       queueWaves.push({ id: newQueueWaveId() });
-      saveQueueStorage();
+      if (!queueHasBackendRun()) saveQueueStorage();
       renderQueue();
     }
 
@@ -213,6 +213,15 @@
     }
 
     function queueBackendRunEditable() {
+      if (!queueHasBackendRun()) return false;
+      return ['running', 'waiting', 'starting', 'stopped'].includes(queueRun.status);
+    }
+
+    function queueGraphAppendable() {
+      return queueGraphMode && (!queueHasBackendRun() || queueBackendRunAppendable());
+    }
+
+    function queueBackendRunAppendable() {
       if (!queueHasBackendRun()) return false;
       return ['running', 'waiting', 'starting', 'stopped'].includes(queueRun.status);
     }
@@ -406,7 +415,7 @@
     async function addQueueTask() {
       const prompt = queueInput.value.trim();
       if (!prompt) return;
-      if (queueBackendRunEditable()) {
+      if (queueBackendRunAppendable()) {
         await appendQueueTask(prompt);
         return;
       }

@@ -45,6 +45,42 @@ mod queue_live_edit_tests {
     }
 
     #[test]
+    fn running_graph_queue_append_preserves_future_wave_dependencies() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("graph-append", "running", -1);
+        run.execution_mode = "graph".to_string();
+        let current_wave =
+            queue_item_fixture("graph-append", "current-wave", 0, "running", Some("agent-1"));
+        state::replace_web_queue(&run, &[current_wave]).unwrap();
+
+        let response = handle_queue_append(
+            &HeaderMap::new(),
+            QueueAppendRequest {
+                run_id: run.id.clone(),
+                items: vec![QueueRunItemRequest {
+                    id: Some("later-wave".to_string()),
+                    prompt: "future wave prompt".to_string(),
+                    slug: None,
+                    depends_on: Some(vec!["current-wave".to_string(), "missing".to_string()]),
+                    repo_root: None,
+                    repo_name: None,
+                    agent_command: None,
+                }],
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let appended = stored_items
+            .iter()
+            .find(|item| item.id == "later-wave")
+            .unwrap();
+        assert_eq!(appended.depends_on, vec!["current-wave".to_string()]);
+    }
+
+    #[test]
     fn running_graph_queue_rejects_active_item_plan_update() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

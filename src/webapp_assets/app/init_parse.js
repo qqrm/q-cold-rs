@@ -500,6 +500,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function syncQueueFromSnapshot() {
       if (state?.queue?.run || state?.queue?.records?.length) {
+        const nextRunId = state.queue.run?.id || existingQueueRunId();
+        const nextExecutionMode = state.queue.run?.execution_mode || '';
+        const preservedWaves = queueRun.runId && queueRun.runId === nextRunId && nextExecutionMode === 'graph'
+          ? queueWaves
+          : [];
         localStorage.removeItem(queueStorageKey);
         const previousItems = new Map(queueItems.map((item) => [item.id, item]));
         queueItems = (state.queue.records || [])
@@ -509,16 +514,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
             gatesNext: previousItems.get(item.id)?.gatesNext ?? item.gatesNext,
           }))
           .filter((item) => !removingQueueItems.has(queueItemKey(item)));
-        queueWaves = normalizeQueueWaves(queueWaves, queueItems);
+        queueWaves = normalizeQueueWaves(preservedWaves, queueItems);
         queueRun = {
           running: Boolean(state.queue.running),
           stopped: state.queue.run?.status === 'stopped',
           stop: false,
           activeIndex: Number(state.queue.run?.current_index ?? -1),
-          runId: state.queue.run?.id || existingQueueRunId(),
+          runId: nextRunId,
           status: state.queue.run?.status || '',
         };
-        queueGraphMode = state.queue.run?.execution_mode === 'graph';
+        queueGraphMode = nextExecutionMode === 'graph';
         return;
       }
       queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
@@ -607,7 +612,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       document.getElementById('clear-queue').disabled = !queueCanClear();
       const addWaveButton = document.getElementById('add-queue-wave');
       addWaveButton.hidden = !queueGraphMode;
-      addWaveButton.disabled = !queueGraphLayoutEditable();
+      addWaveButton.disabled = !queueGraphAppendable();
       document.getElementById('run-queue').disabled = queueRun.running
         || queueRun.stopped
         || !queueItems.length
