@@ -7,7 +7,7 @@ mod tests {
         codex_import_matches_existing, find_codex_session_summary_in_root, is_queue_agent_track,
         guard_command, parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
         prompt_from_agent_command, repo_root_for_agent_cwd_from_repositories,
-        render_token_efficiency, render_token_usage, slug_from_title,
+        render_token_efficiency, render_token_usage, render_top_tool_outputs, slug_from_title,
         task_flow_metadata_equivalent, unix_now, GuardArgs,
     };
     use crate::repository::RepositoryConfig;
@@ -536,6 +536,35 @@ mod tests {
                 "\tlarge_tool_output_tokens=6001\tretention_hours=48",
                 "\tsource=codex-session-window",
             ))
+        );
+    }
+
+    #[test]
+    fn top_tool_output_renderer_prints_each_sample() {
+        let efficiency = serde_json::json!([
+            {
+                "original_tokens": 6001,
+                "session": "rollout.jsonl",
+                "command": "rg -n broad pattern",
+            },
+            {
+                "original_tokens": 42,
+                "session": "next.jsonl",
+                "command": "sed -n 1,20p file",
+            },
+        ]);
+        assert_eq!(
+            render_top_tool_outputs(Some(&efficiency)),
+            vec![
+                concat!(
+                    "token-efficiency-top\toriginal_tokens=6001",
+                    "\tsession=rollout.jsonl\tcommand=rg -n broad pattern",
+                ),
+                concat!(
+                    "token-efficiency-top\toriginal_tokens=42",
+                    "\tsession=next.jsonl\tcommand=sed -n 1,20p file",
+                ),
+            ]
         );
     }
 

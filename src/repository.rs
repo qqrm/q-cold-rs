@@ -1,12 +1,14 @@
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+
+const DEFAULT_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Clone, Copy)]
 pub enum AdapterContext {
@@ -530,6 +532,9 @@ fn open_db() -> Result<Connection> {
     let connection =
         Connection::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
     connection
+        .busy_timeout(sqlite_busy_timeout())
+        .context("failed to set repository database busy timeout")?;
+    connection
         .execute_batch(
             "pragma journal_mode = wal;
              create table if not exists repositories (
@@ -552,6 +557,16 @@ fn open_db() -> Result<Connection> {
 
 fn db_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("qcold.sqlite3"))
+}
+
+fn sqlite_busy_timeout() -> Duration {
+    Duration::from_millis(
+        env::var("QCOLD_SQLITE_BUSY_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_SQLITE_BUSY_TIMEOUT_MS),
+    )
 }
 
 fn state_dir() -> Result<PathBuf> {

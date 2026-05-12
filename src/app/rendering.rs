@@ -29,6 +29,21 @@ fn render_task_record_token_efficiency(record: &state::TaskRecordRow) -> Option<
     render_token_efficiency(metadata.get("token_efficiency")?)
 }
 
+fn render_task_record_top_tool_outputs(record: &state::TaskRecordRow) -> Vec<String> {
+    let Some(metadata) = record
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+    else {
+        return Vec::new();
+    };
+    render_top_tool_outputs(
+        metadata
+            .get("token_efficiency")
+            .and_then(|efficiency| efficiency.get("top_tool_outputs")),
+    )
+}
+
 fn render_token_usage(usage: &Value) -> Option<String> {
     let object = usage.as_object()?;
     let field = |name: &str| {
@@ -86,6 +101,27 @@ fn render_token_efficiency(efficiency: &Value) -> Option<String> {
             .and_then(Value::as_str)
             .unwrap_or_default()
     ))
+}
+
+fn render_top_tool_outputs(samples: Option<&Value>) -> Vec<String> {
+    let Some(samples) = samples.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    samples
+        .iter()
+        .filter_map(|sample| {
+            let object = sample.as_object()?;
+            Some(format!(
+                "token-efficiency-top\toriginal_tokens={}\tsession={}\tcommand={}",
+                object
+                    .get("original_tokens")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+                object.get("session").and_then(Value::as_str).unwrap_or(""),
+                object.get("command").and_then(Value::as_str).unwrap_or("")
+            ))
+        })
+        .collect()
 }
 
 fn agent_command_payload(command: &[String]) -> String {

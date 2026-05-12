@@ -11,7 +11,7 @@ fn open_db() -> Result<Connection> {
     let connection =
         Connection::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
     connection
-        .busy_timeout(Duration::from_secs(5))
+        .busy_timeout(sqlite_busy_timeout())
         .context("failed to set state database busy timeout")?;
     connection
         .execute_batch(
@@ -756,6 +756,16 @@ pub fn state_dir() -> Result<PathBuf> {
     }
     let home = env::var("HOME").context("HOME is required when QCOLD_STATE_DIR is unset")?;
     Ok(PathBuf::from(home).join(".local/state/qcold"))
+}
+
+fn sqlite_busy_timeout() -> Duration {
+    Duration::from_millis(
+        env::var("QCOLD_SQLITE_BUSY_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_SQLITE_BUSY_TIMEOUT_MS),
+    )
 }
 
 fn unix_now() -> u64 {

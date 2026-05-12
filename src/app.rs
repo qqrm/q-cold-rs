@@ -370,12 +370,17 @@ fn task_command(args: TaskArgs) -> Result<u8> {
             )?;
             if terminal_closeout_code(args.outcome.as_str(), code) {
                 if let Some(id) = task_record_id {
-                    state::update_task_record(
+                    if let Err(err) = state::update_task_record(
                         &id,
                         None,
                         None,
                         Some(&format!("closed:{}", args.outcome.as_str())),
-                    )?;
+                    ) {
+                        eprintln!(
+                            "warning: failed to mark task record terminal after adapter \
+                             closeout: {err:#}"
+                        );
+                    }
                 }
             }
             Ok(code)
@@ -399,7 +404,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
 fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
     match args.command {
         TaskRecordSubcommand::List { status, limit } => {
-            sync_codex_task_records()?;
+            sync_codex_task_records_best_effort();
             let records = state::load_task_records(status.as_deref(), limit)?;
             if records.is_empty() {
                 println!("task-records\tcount=0");
@@ -411,7 +416,7 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
             }
         }
         TaskRecordSubcommand::Show { id } => {
-            sync_codex_task_records()?;
+            sync_codex_task_records_best_effort();
             let record = state::get_task_record(&id)?
                 .ok_or_else(|| anyhow::anyhow!("unknown task record: {id}"))?;
             println!("{}", render_task_record(&record));
@@ -422,6 +427,9 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
                 println!("{line}");
             }
             if let Some(line) = render_task_record_token_efficiency(&record) {
+                println!("{line}");
+            }
+            for line in render_task_record_top_tool_outputs(&record) {
                 println!("{line}");
             }
         }
@@ -456,6 +464,12 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
         }
     }
     Ok(0)
+}
+
+fn sync_codex_task_records_best_effort() {
+    if let Err(err) = sync_codex_task_records() {
+        eprintln!("warning: failed to refresh Codex task token telemetry: {err:#}");
+    }
 }
 
 fn task_record_from_create_args(args: TaskRecordCreateArgs) -> state::TaskRecordRow {

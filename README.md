@@ -129,8 +129,13 @@ process. The metadata is refreshed before terminal `task closeout` updates the
 record status. `qcold status` also triggers the refresh and prints compact
 `task-record-tokens` and `task-record-efficiency` aggregates when task records
 contain imported telemetry. `qcold task-record show <task-id>` prints
-`token-usage` and `token-efficiency` lines for the selected record when that
-per-task telemetry is available.
+`token-usage`, `token-efficiency`, and top `token-efficiency-top` tool-output
+samples for the selected record when that per-task telemetry is available.
+Read-only task-record commands keep serving the last stored records if a
+concurrent dashboard or agent process temporarily blocks the telemetry refresh;
+they print a warning instead of failing the read. SQLite lock waits default to
+30 seconds and can be overridden for one process with
+`QCOLD_SQLITE_BUSY_TIMEOUT_MS`.
 
 ## Web interface
 
