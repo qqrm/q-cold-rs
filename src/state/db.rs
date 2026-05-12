@@ -670,6 +670,39 @@ fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow
     })
 }
 
+fn remove_web_queue_dependency_references(
+    connection: &Connection,
+    run_id: &str,
+    deleted_item_id: &str,
+) -> Result<()> {
+    let mut statement = connection
+        .prepare("select id, depends_on_json from web_queue_items where run_id = ?1")
+        .context("failed to prepare queue dependency cleanup query")?;
+    let rows = statement
+        .query_map([run_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .context("failed to query queue dependencies for cleanup")?;
+    let mut updates = Vec::new();
+    for row in rows {
+        let (id, depends_on_json) = row.context("failed to read queue dependency row")?;
+        let mut depends_on = serde_json::from_str::<Vec<String>>(&depends_on_json)
+            .context("failed to decode queue dependency row")?;
+        let old_len = depends_on.len();
+        depends_on.retain(|dependency| dependency != deleted_item_id);
+        if depends_on.len() != old_len {
+            updates.push((id, queue_depends_on_json(&depends_on)?));
+        }
+    }
+    drop(statement);
+    let now = unix_now();
+    for (id, depends_on_json) in updates {
+        connection.execute(
+            "update web_queue_items set depends_on_json = ?3, updated_at_unix = ?4 where run_id = ?1 and id = ?2",
+            params![run_id, id, depends_on_json, now],
+        )?;
+    }
+    Ok(())
+}
+
 fn queue_depends_on_json(depends_on: &[String]) -> Result<String> {
     serde_json::to_string(depends_on).context("failed to encode queue dependencies")
 }

@@ -139,6 +139,7 @@
         if (stack.has(item.id)) return 0;
         stack.add(item.id);
         const value = Math.max(0, ...(item.dependsOn || [])
+          .filter((dependency) => byId.has(dependency))
           .map((dependency) => depth(byId.get(dependency), stack) + 1));
         stack.delete(item.id);
         memo.set(item.id, value);

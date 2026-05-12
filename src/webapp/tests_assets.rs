@@ -30,5 +30,6 @@ mod asset_tests {
         assert!(APP_JS.contains("function pruneEmptyBackendQueueWaves(waves, items)"));
         assert!(APP_JS.contains("{ pruneBackendEmpty: true }"));
         assert!(APP_JS.contains("wavesWithItems.has(wave.id) || index === waves.length - 1"));
+        assert!(APP_JS.contains(".filter((dependency) => byId.has(dependency))"));
     }
 }

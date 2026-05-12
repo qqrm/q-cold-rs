@@ -334,6 +334,9 @@ mod tests {
         assert_eq!(remaining.len(), 2);
 
         state::delete_web_queue_item("run-contract", "first").unwrap();
+        let (_, remaining) = state::load_web_queue_run("run-contract").unwrap();
+        assert_eq!(remaining[0].id, "third");
+        assert!(remaining[0].depends_on.is_empty());
         state::delete_web_queue_item("run-contract", "third").unwrap();
         let (empty_run, empty_items) = state::load_web_queue_run("run-contract").unwrap();
         assert!(empty_run.is_none());

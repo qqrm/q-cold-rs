@@ -553,6 +553,7 @@ pub fn delete_web_queue_item_if_exists(
         params![run_id, item_id],
     )
     .context("failed to delete web queue item")?;
+    remove_web_queue_dependency_references(&tx, run_id, item_id)?;
     delete_web_queue_run_if_empty(&tx, run_id)?;
     tx.commit().context("failed to commit web queue item delete")?;
     Ok(Some(item))
