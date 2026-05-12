@@ -267,6 +267,9 @@ fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) 
         if !queue_item_editable_while_running(&run, item)? {
             bail!("queue item is already active: {}", item.id);
         }
+        if request.position.is_some_and(|position| position <= run.current_index) {
+            bail!("queue item cannot move before the active cursor: {}", item.id);
+        }
         let prompt = request.prompt.trim();
         if prompt.is_empty() {
             bail!("queue item prompt is empty: {}", item.id);

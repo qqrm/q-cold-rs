@@ -30,7 +30,7 @@
       hint.textContent = queueLayoutLocked()
         ? lockedHint
         : queueHasBackendRun()
-          ? 'Pending waves can be edited while earlier waves run.'
+          ? 'Unclaimed waves can be edited while the queue runs.'
           : 'Waves run top to bottom. Drag a wave header to reorder waves.';
       toolbar.append(hint);
       board.appendChild(toolbar);
@@ -205,15 +205,16 @@
     }
 
     function queueLayoutLocked() {
-      return queueHasBackendRun() ? !queueLiveGraphEditable() : false;
+      return queueHasBackendRun() ? !queueBackendRunEditable() : false;
     }
 
     function queueGraphLayoutEditable() {
-      return !queueHasBackendRun() || queueLiveGraphEditable();
+      return !queueHasBackendRun() || (queueGraphMode && queueBackendRunEditable());
     }
 
-    function queueLiveGraphEditable() {
-      return Boolean(queueGraphMode && queueHasBackendRun() && (queueRun.running || queueRun.stopped));
+    function queueBackendRunEditable() {
+      if (!queueHasBackendRun()) return false;
+      return ['running', 'waiting', 'starting', 'stopped'].includes(queueRun.status);
     }
 
     function queueHasBackendRun() {
@@ -405,7 +406,7 @@
     async function addQueueTask() {
       const prompt = queueInput.value.trim();
       if (!prompt) return;
-      if (queueRun.running || queueRun.stopped) {
+      if (queueBackendRunEditable()) {
         await appendQueueTask(prompt);
         return;
       }
@@ -468,9 +469,9 @@
       const controls = document.createElement('div');
       controls.className = 'queue-step-actions';
       const up = queueActionButton('↑', () => moveQueueItem(index, -1), 'Move task up');
-      up.disabled = queueLayoutLocked() || index === 0;
+      up.disabled = !queueItemCanMove(index, -1);
       const down = queueActionButton('↓', () => moveQueueItem(index, 1), 'Move task down');
-      down.disabled = queueLayoutLocked() || index === queueItems.length - 1;
+      down.disabled = !queueItemCanMove(index, 1);
       const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat or transcript');
       open.disabled = !queueItemContextTarget(queueItems[index]);
       const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
@@ -514,11 +515,22 @@
 
     function moveQueueItem(index, delta) {
       const next = index + delta;
-      if (next < 0 || next >= queueItems.length || queueLayoutLocked()) return;
+      if (!queueItemCanMove(index, delta)) return;
       const [item] = queueItems.splice(index, 1);
       queueItems.splice(next, 0, item);
       saveQueueStorage();
       renderQueue();
+      persistQueuePlan();
+    }
+
+    function queueItemCanMove(index, delta) {
+      const next = index + delta;
+      if (next < 0 || next >= queueItems.length || queueLayoutLocked()) return false;
+      const item = queueItems[index];
+      const target = queueItems[next];
+      if (!queueItemEditable(item)) return false;
+      if (queueHasBackendRun() && target && !queueItemEditable(target)) return false;
+      return true;
     }
 
     function removeQueueItem(index) {
@@ -574,6 +586,7 @@
       return Boolean(item.runId)
         && ['pending', 'waiting'].includes(view.status)
         && !item.agentId
+        && queueBackendRunEditable()
         && Number(item.position) > activePosition;
     }
 

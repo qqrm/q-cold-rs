@@ -201,12 +201,13 @@ one wave run in parallel. `Add wave` appends a new wave below the existing
 waves, and new prompts are added to the last wave by default. Task cards can be
 moved by dragging them into a wave. Waves can be reordered by dragging the wave
 header and removed while empty. Once a queue has been started, rows already
-claimed by an executor are locked, while pending rows and later waves remain
-editable. `Add wave` can append a later wave during an active graph run, and
-new prompts added to that wave are persisted with the correct backend
-dependencies. Each card has a short prompt preview, a dedicated full-prompt
-action, and a `Blocks next wave` toggle that controls whether the card blocks
-later waves. In Graph execution, all queued tasks whose prerequisites have
+claimed by an executor are locked because their task packet has already been
+sent, while unclaimed pending rows and later waves remain editable for the
+whole non-terminal run. `Add wave` can append a later wave during an active
+graph run, and new prompts added to that wave are persisted with the correct
+backend dependencies. Each card has a short prompt preview, a dedicated
+full-prompt action, and a `Blocks next wave` toggle that controls whether the
+card blocks later waves. In Graph execution, all queued tasks whose prerequisites have
 reached `closed:success` are started in parallel through separate Q-COLD
 terminal agents; downstream tasks wait until their dependency set succeeds.
 Each queued row starts the selected Codex-like command without an argv prompt,
@@ -252,7 +253,9 @@ Draft queue rows can be reordered, removed, copied, cleared in bulk, or opened
 to an interactive task chat. Once a queue has been started, row order is owned
 by the backend run for active rows; completed rows and not-yet-started pending
 rows remain removable while the queue is running, and pending graph rows can
-still update their prompt text, wave placement, and dependency gates.
+still update their prompt text, wave placement, and dependency gates. Pending
+ordered rows can also be moved among other pending rows after the active
+cursor.
 Bulk clearing removes persisted queue rows, removes the
 matching task records, and terminates any associated executor agents. When the
 related terminal agent is still running, that chat can send

@@ -75,6 +75,73 @@ mod queue_live_edit_tests {
         assert!(response.output.contains("already active"));
     }
 
+    #[test]
+    fn waiting_sequence_queue_updates_future_item_plan() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("sequence-update", "waiting", 0);
+        let active = queue_item_fixture("sequence-update", "active", 0, "running", Some("agent-1"));
+        let pending = queue_item_fixture("sequence-update", "pending", 1, "pending", None);
+        state::replace_web_queue(&run, &[active, pending]).unwrap();
+
+        let response = handle_queue_update(
+            &HeaderMap::new(),
+            QueueUpdateRequest {
+                run_id: run.id.clone(),
+                items: vec![QueueUpdateItemRequest {
+                    id: "pending".to_string(),
+                    prompt: "sequence prompt".to_string(),
+                    position: Some(2),
+                    depends_on: Some(vec!["active".to_string()]),
+                    repo_root: None,
+                    repo_name: None,
+                    agent_command: None,
+                }],
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let pending = stored_items
+            .iter()
+            .find(|item| item.id == "pending")
+            .unwrap();
+        assert_eq!(pending.prompt, "sequence prompt");
+        assert_eq!(pending.position, 2);
+        assert!(pending.depends_on.is_empty());
+    }
+
+    #[test]
+    fn running_queue_rejects_future_item_move_before_active_cursor() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("sequence-cursor", "running", 1);
+        let active = queue_item_fixture("sequence-cursor", "active", 1, "running", Some("agent-1"));
+        let pending = queue_item_fixture("sequence-cursor", "pending", 2, "pending", None);
+        state::replace_web_queue(&run, &[active, pending]).unwrap();
+
+        let response = handle_queue_update(
+            &HeaderMap::new(),
+            QueueUpdateRequest {
+                run_id: run.id.clone(),
+                items: vec![QueueUpdateItemRequest {
+                    id: "pending".to_string(),
+                    prompt: "updated prompt".to_string(),
+                    position: Some(1),
+                    depends_on: Some(Vec::new()),
+                    repo_root: None,
+                    repo_name: None,
+                    agent_command: None,
+                }],
+            },
+        );
+
+        assert!(!response.ok);
+        assert!(response.output.contains("active cursor"));
+    }
+
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
