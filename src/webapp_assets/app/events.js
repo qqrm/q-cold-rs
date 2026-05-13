@@ -142,7 +142,7 @@
       ['review', 'review my current changes and find issues'],
       ['rename', 'rename the current thread'],
       ['new', 'start a new chat during a conversation'],
-      ['resume', 'resume a saved chat'],
+      ['resume', 'resume a saved chat across Q-COLD worktrees', false, 'resume --all'],
       ['fork', 'fork the current chat'],
       ['init', 'create an AGENTS.md file with instructions for Codex'],
       ['compact', 'summarize conversation to prevent hitting the context limit'],
@@ -251,10 +251,14 @@
       const state = terminalSlashMenus.get(input);
       const match = state?.matches[index];
       if (!state || !match) return;
-      input.value = `/${match[0]}`;
+      input.value = `/${terminalSlashCommandInsert(match)}`;
       state.onSelect(input.value);
       closeTerminalSlashMenu(input);
       input.focus();
+    }
+
+    function terminalSlashCommandInsert(command) {
+      return command[3] || command[0];
     }
 
     function handleTerminalSlashMenuKey(input, event) {

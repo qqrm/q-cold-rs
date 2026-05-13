@@ -152,6 +152,9 @@ terminal scrollback, terminal text send, queue stop/continue/clear/remove, and
 `:run <prompt>` or `:append <prompt>` for queue work using the snapshot's active
 repository and first available Codex-like agent command.
 
+The web dashboard terminal slash menu sends Codex Resume as `/resume --all` so
+`c1`/`cc1` and `c2`/`cc2` history remains visible across Q-COLD agent worktrees.
+
 `qcold repo add` stores repository connections in the local Q-COLD
 SQLite database. Adapter-backed commands such as `status`, `task`, `verify`,
 `ci`, `build`, `install`, `compat`, and `ffi` use the active repository when

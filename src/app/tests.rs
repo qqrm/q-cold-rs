@@ -2,7 +2,7 @@
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::{
-        cargo_subcommand_args, codex_account_from_agent_command,
+        cargo_subcommand_args, codex_account_from_agent_command, codex_record_cwd,
         codex_task_telemetry_for_worktree_in_roots,
         codex_import_matches_existing, find_codex_session_summary_in_root, is_queue_agent_track,
         guard_command, parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
@@ -15,7 +15,7 @@ mod tests {
     use std::collections::HashSet;
     use std::ffi::OsString;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn os_args(args: &[&str]) -> Vec<OsString> {
         args.iter().map(OsString::from).collect()
@@ -647,6 +647,20 @@ mod tests {
         let root = repo_root_for_agent_cwd_from_repositories(Some(&agent_cwd), &[repo]).unwrap();
 
         assert_eq!(root, primary.canonicalize().unwrap().display().to_string());
+    }
+
+    #[test]
+    fn codex_session_import_uses_session_meta_cwd_when_agent_cwd_is_missing() {
+        assert_eq!(
+            codex_record_cwd(None, Some("/workspace/agent")).as_deref(),
+            Some(Path::new("/workspace/agent"))
+        );
+        assert_eq!(
+            codex_record_cwd(Some(PathBuf::from("/stored/agent")), Some("/workspace/agent"))
+                .as_deref(),
+            Some(Path::new("/stored/agent"))
+        );
+        assert_eq!(codex_record_cwd(None, Some("")).as_deref(), None);
     }
 
     #[test]

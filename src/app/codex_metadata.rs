@@ -63,7 +63,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
         let record_description = existing_record
             .map(|record| record.description.clone())
             .unwrap_or(description);
-        let cwd = agent.cwd.clone().or_else(|| std::env::current_dir().ok());
+        let cwd = codex_record_cwd(agent.cwd.clone(), summary.cwd.as_deref());
         let repo_root = repo_root_for_agent_cwd(cwd.as_deref())
             .or_else(|| existing_record.and_then(|record| record.repo_root.clone()))
             .or_else(|| {
@@ -112,6 +112,14 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
     }
 
     Ok(synced)
+}
+
+fn codex_record_cwd(agent_cwd: Option<PathBuf>, summary_cwd: Option<&str>) -> Option<PathBuf> {
+    agent_cwd.or_else(|| {
+        summary_cwd
+            .filter(|cwd| !cwd.trim().is_empty())
+            .map(PathBuf::from)
+    })
 }
 
 fn codex_import_matches_existing(

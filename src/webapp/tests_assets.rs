@@ -7,8 +7,12 @@ mod asset_tests {
     #[test]
     fn web_terminal_slash_menu_uses_codex_command_prefixes() {
         assert!(APP_JS.contains("['model', 'choose what model and reasoning effort to use']"));
+        assert!(APP_JS.contains(
+            "['resume', 'resume a saved chat across Q-COLD worktrees', false, 'resume --all']"
+        ));
         assert!(APP_JS.contains("['quit', 'exit Codex', true]"));
-        assert!(APP_JS.contains("input.value = `/${match[0]}`;"));
+        assert!(APP_JS.contains("input.value = `/${terminalSlashCommandInsert(match)}`;"));
+        assert!(APP_JS.contains("function terminalSlashCommandInsert(command)"));
         assert!(APP_JS.contains("function terminalSlashCommandMatches(query)"));
         assert!(APP_JS.contains("else if (name.startsWith(needle)) prefix.push(command);"));
         assert!(!APP_JS.contains("['/q'"));
