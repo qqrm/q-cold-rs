@@ -506,7 +506,7 @@ fn prepare_launch_context(
             cwd,
         });
     }
-    if let Some(context) = reusable_codex_resume_context(track, command, requested_cwd, &cwd)? {
+    if let Some(context) = reusable_codex_agent_context(track, command, requested_cwd, &cwd)? {
         return Ok(context);
     }
 
@@ -532,19 +532,23 @@ fn resolve_codex_launch_cwd() -> Result<PathBuf> {
     }
 }
 
-fn reusable_codex_resume_context(
+fn reusable_codex_agent_context(
     track: &str,
     command: &str,
     requested_cwd: Option<&Path>,
     base_cwd: &Path,
 ) -> Result<Option<LaunchContext>> {
-    if requested_cwd.is_some() || !command_is_codex_resume(command) {
+    if requested_cwd.is_some() {
         return Ok(None);
     }
     let Some(primary_root) = git_root_for(base_cwd).ok() else {
         return Ok(None);
     };
-    let Some(cwd) = latest_agent_cwd_for_resume(track, command, &primary_root)? else {
+    let include_running = command_is_codex_resume(command);
+    if !include_running && !command_is_interactive_codex_launch(command) {
+        return Ok(None);
+    }
+    let Some(cwd) = latest_agent_cwd_for_launch(track, command, &primary_root, include_running)? else {
         return Ok(None);
     };
     let qcold_agent_worktree = git_root_for(&cwd).ok();
@@ -555,10 +559,22 @@ fn reusable_codex_resume_context(
     }))
 }
 
-fn latest_agent_cwd_for_resume(
+fn command_is_interactive_codex_launch(command: &str) -> bool {
+    let words = shell_words(command);
+    words.iter().enumerate().any(|(index, word)| {
+        Path::new(word)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_codex_agent_command)
+            && words.get(index + 1).is_none_or(|next| next != "exec")
+    })
+}
+
+fn latest_agent_cwd_for_launch(
     track: &str,
     command: &str,
     primary_root: &Path,
+    include_running: bool,
 ) -> Result<Option<PathBuf>> {
     let Some(account) = codex_account_from_command(command) else {
         return Ok(None);
@@ -569,6 +585,9 @@ fn latest_agent_cwd_for_resume(
     Ok(records.into_iter().find_map(|record| {
         let cwd = record.cwd?;
         if record.track != track || !cwd.is_dir() || !cwd.starts_with(&agents_dir) {
+            return None;
+        }
+        if !include_running && process_state(record.pid) == "running" {
             return None;
         }
         (codex_account_from_command(&terminal_command_from_record(&record.command)).as_deref()
