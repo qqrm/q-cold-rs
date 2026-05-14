@@ -603,20 +603,29 @@ fn start_web_queue_item(
         ));
     };
     set_queue_terminal_scope(&target, item)?;
-    thread::sleep(Duration::from_secs(1));
-    if let Err(err) = send_terminal_text_to_target(&target, "/new") {
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "starting",
+        "waiting for agent prompt",
+        Some(&agent.id),
+        attempts,
+        None,
+    )?;
+    if !wait_for_agent_terminal_ready(&agent.id) {
         return Ok(retry_after_queue_agent_launch_failure(
             &agent.id,
-            &format!("{err:#}"),
+            "agent terminal did not become ready for input",
         ));
     }
-    thread::sleep(Duration::from_millis(500));
     if let Err(err) = send_terminal_text_to_target(&target, &queue_task_instruction(item)) {
         return Ok(retry_after_queue_agent_launch_failure(
             &agent.id,
             &format!("{err:#}"),
         ));
     }
+    thread::sleep(Duration::from_millis(500));
+    let _ = submit_agent_terminal_pending_paste(&agent.id);
     state::update_web_queue_item(
         run_id,
         &item.id,
@@ -959,42 +968,4 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let _ = writeln!(packet, "after_closeout: stop; the queue backend owns the executor lifecycle");
     let _ = writeln!(packet, "END_Q-COLD_TASK_PACKET");
     packet
-}
-
-fn clean_queue_run_id(value: &str) -> String {
-    sanitize_daemon_id(value)
-}
-
-fn clean_queue_slug(
-    value: &str,
-    run_id: &str,
-    index: usize,
-    used_slugs: &mut HashSet<String>,
-) -> String {
-    let mut slug = sanitize_daemon_id(value);
-    if slug.is_empty() {
-        slug = queue_slug(run_id, index);
-    }
-    while !used_slugs.insert(slug.clone()) {
-        slug = queue_slug(run_id, used_slugs.len());
-    }
-    slug
-}
-
-fn queue_track(run_id: &str) -> String {
-    format!("queue-{}", sanitize_daemon_id(run_id))
-}
-
-fn queue_agent_id(item: &state::QueueItemRow) -> String {
-    let slug = sanitize_daemon_id(&item.slug);
-    if slug.len() <= 36 {
-        format!("qa-{slug}")
-    } else {
-        let prefix = slug.chars().take(24).collect::<String>();
-        format!("qa-{prefix}-{}", stable_short_hash(&item.id))
-    }
-}
-
-fn queue_slug(run_id: &str, index: usize) -> String {
-    format!("task-{}-{:02}", sanitize_daemon_id(run_id), index + 1)
 }

@@ -40,6 +40,48 @@ fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
     Ok(true)
 }
 
+fn wait_for_agent_terminal_ready(agent_id: &str) -> bool {
+    for _ in 0..60 {
+        if let Some(output) = agent_terminal_output(agent_id) {
+            if terminal_output_ready_for_queue_input(&output) {
+                return true;
+            }
+        }
+        if !agent_running(agent_id) {
+            return false;
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+    false
+}
+
+fn terminal_output_ready_for_queue_input(output: &str) -> bool {
+    if terminal_output_has_pending_paste(output) {
+        return false;
+    }
+    let recent = output.lines().rev().take(16).map(str::trim).collect::<Vec<_>>();
+    let has_prompt = recent
+        .iter()
+        .any(|line| terminal_line_has_idle_prompt(line));
+    let has_busy_indicator = recent
+        .iter()
+        .any(|line| terminal_line_has_busy_indicator(line));
+    has_prompt && !has_busy_indicator
+}
+
+fn terminal_line_has_idle_prompt(line: &str) -> bool {
+    line.starts_with('›')
+        || line.starts_with('>')
+        || line.starts_with("gpt-")
+        || line.contains(" gpt-")
+}
+
+fn terminal_line_has_busy_indicator(line: &str) -> bool {
+    line.contains("Booting MCP server")
+        || line.contains("Working (")
+        || line.contains("esc to interrupt")
+}
+
 fn terminal_output_has_pending_paste(output: &str) -> bool {
     if output
         .lines()

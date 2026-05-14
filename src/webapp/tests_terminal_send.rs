@@ -28,4 +28,20 @@ mod terminal_send_tests {
         assert!(!terminal_output_has_pending_paste(accepted));
         assert!(!terminal_output_has_pending_paste("* Ran cargo test\n"));
     }
+
+    #[test]
+    fn queue_input_waits_for_idle_codex_prompt() {
+        let booting = "\n• Booting MCP server: codex_apps (0s • esc to interrupt)\n\
+                       › Find and fix a bug in @filename\n\
+                       gpt-5.5 high · ~/repo\n";
+        assert!(!terminal_output_ready_for_queue_input(booting));
+
+        let idle = "\n› Find and fix a bug in @filename\n\
+                    gpt-5.5 high · ~/repo\n";
+        assert!(terminal_output_ready_for_queue_input(idle));
+
+        let pending_paste = "\n› [Pasted Content 2048 chars][Pasted Content 1024 chars]\n\
+                             gpt-5.5 high · ~/repo\n";
+        assert!(!terminal_output_ready_for_queue_input(pending_paste));
+    }
 }

@@ -632,6 +632,7 @@ include!("webapp/queue_worker_reconcile.rs");
 include!("webapp/queue_worker_taskflow.rs");
 include!("webapp/terminal_chat.rs");
 include!("webapp/queue_worker_terminal.rs");
+include!("webapp/queue_worker_ids.rs");
 include!("webapp/snapshot.rs");
 include!("webapp/models_assets.rs");
 
