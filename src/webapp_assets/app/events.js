@@ -310,8 +310,36 @@
 
     function appendLocalMessage(role, text, source = 'web') {
       const label = String(text || '').trim() || 'No output';
+      liveStateHoldUntil = Date.now() + 4200;
       setLiveState(label.length > 80 ? `${label.slice(0, 77)}...` : label, role === 'error' ? 'failed' : 'ready');
+      appendQueueToast(role, label, source);
       if (role === 'error') console.error(`[${source}] ${label}`);
+    }
+
+    function appendQueueToast(role, text, source) {
+      const host = queueToastHost();
+      const toast = document.createElement('div');
+      toast.className = `queue-toast ${role === 'error' ? 'failed' : 'ready'}`;
+      const title = document.createElement('strong');
+      title.textContent = source || 'web';
+      const body = document.createElement('span');
+      body.textContent = text;
+      toast.append(title, body);
+      host.appendChild(toast);
+      while (host.children.length > 4) host.firstElementChild.remove();
+      window.setTimeout(() => toast.classList.add('leaving'), 3600);
+      window.setTimeout(() => toast.remove(), 4300);
+    }
+
+    function queueToastHost() {
+      let host = document.getElementById('queue-toast-host');
+      if (host) return host;
+      host = document.createElement('div');
+      host.id = 'queue-toast-host';
+      host.className = 'queue-toast-host';
+      host.setAttribute('aria-live', 'polite');
+      document.body.appendChild(host);
+      return host;
     }
 
     function renderSystemStrip() {
@@ -381,6 +409,7 @@
     }
 
     function setLiveState(label, tone = 'ready') {
+      if (label === 'Live' && Date.now() < liveStateHoldUntil) return;
       liveState.textContent = label;
       liveState.className = `badge ${tone} live-indicator`;
     }
@@ -579,6 +608,7 @@
       if (queueRun.running || !queueItems.length) return;
       const selectedAgent = selectedQueueAgentRecord();
       if (!selectedAgent) return;
+      appendLocalMessage('status', 'Starting queue run');
       if (queueGraphMode) syncQueueWaveDependencies();
       const now = Math.floor(Date.now() / 1000);
       const selectedRepo = selectedQueueRepository();
@@ -615,35 +645,47 @@
       });
       saveQueueStorage();
       renderQueue();
-      const response = await fetch('/api/queue/run', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          run_id: queueRun.runId,
-          execution_mode: queueGraphMode ? 'graph' : 'sequence',
-          selected_agent_command: selectedAgent.command,
-          selected_repo_root: selectedRepo.root || '',
-          selected_repo_name: selectedRepo.name || '',
-          items: queueItems.map((item) => ({
-            id: item.id,
-            prompt: item.prompt,
-            slug: item.slug,
-            depends_on: queueGraphMode ? (item.dependsOn || []) : [],
-            repo_root: item.repoRoot,
-            repo_name: item.repoName,
-            agent_command: item.agentCommand || selectedAgent.command,
-          })),
-        }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok || payload.ok === false) {
+      try {
+        const response = await fetch('/api/queue/run', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            run_id: queueRun.runId,
+            execution_mode: queueGraphMode ? 'graph' : 'sequence',
+            selected_agent_command: selectedAgent.command,
+            selected_repo_root: selectedRepo.root || '',
+            selected_repo_name: selectedRepo.name || '',
+            items: queueItems.map((item) => ({
+              id: item.id,
+              prompt: item.prompt,
+              slug: item.slug,
+              depends_on: queueGraphMode ? (item.dependsOn || []) : [],
+              repo_root: item.repoRoot,
+              repo_name: item.repoName,
+              agent_command: item.agentCommand || selectedAgent.command,
+            })),
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+          queueItems[0].status = 'failed';
+          queueItems[0].message = payload.output || 'failed to start backend queue';
+          appendLocalMessage('error', queueItems[0].message);
+          saveQueueStorage();
+          renderQueue();
+          return;
+        }
+      } catch (err) {
         queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
         queueItems[0].status = 'failed';
-        queueItems[0].message = payload.output || 'failed to start backend queue';
+        queueItems[0].message = String(err);
+        appendLocalMessage('error', queueItems[0].message);
         saveQueueStorage();
         renderQueue();
         return;
       }
+      appendLocalMessage('status', 'Queue run accepted');
       await loadSnapshot();
     }
 
@@ -673,6 +715,7 @@
         return;
       }
       queueRun.stop = true;
+      appendLocalMessage('status', 'Stop requested');
       try {
         await fetch('/api/queue/stop', { method: 'POST' });
         await loadSnapshot();
@@ -699,6 +742,7 @@
         if (!['stopped', 'paused'].includes(item.status)) return item;
         return { ...item, status: 'starting', message: 'continuing queue' };
       });
+      appendLocalMessage('status', 'Continuing queue');
       saveQueueStorage();
       renderQueue();
       try {

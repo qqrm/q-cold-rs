@@ -394,6 +394,7 @@ fn router() -> Router {
         .route("/favicon.ico", get(favicon_svg))
         .route("/favicon.svg", get(favicon_svg))
         .route("/assets/app.css", get(app_css))
+        .route("/assets/queue.css", get(queue_css))
         .route("/assets/app.js", get(app_js))
         .route("/api/state", get(api_state))
         .route("/api/agent-limits", get(api_agent_limits))
@@ -419,6 +420,10 @@ async fn index() -> impl IntoResponse {
 
 async fn app_css() -> impl IntoResponse {
     no_store(([(CONTENT_TYPE, "text/css; charset=utf-8")], APP_CSS))
+}
+
+async fn queue_css() -> impl IntoResponse {
+    no_store(([(CONTENT_TYPE, "text/css; charset=utf-8")], QUEUE_CSS))
 }
 
 async fn app_js() -> impl IntoResponse {

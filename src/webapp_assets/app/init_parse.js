@@ -49,7 +49,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let transcriptContext = { taskId: '', terminalTarget: '', chatAvailable: false };
     let agentLimits = null;
     let agentLimitsLoading = false;
-    const removingQueueItems = new Set();
+    const removingQueueItems = new Map();
+    const removedQueueItemTtlMs = 30000;
+    let liveStateHoldUntil = 0;
 
     function applyTheme(choice) {
       const value = choice || localStorage.getItem('qcold-theme') || 'auto';
@@ -507,13 +509,14 @@ const tg = window.Telegram && window.Telegram.WebApp;
           : [];
         localStorage.removeItem(queueStorageKey);
         const previousItems = new Map(queueItems.map((item) => [item.id, item]));
+        pruneQueueRemovalTombstones();
         queueItems = (state.queue.records || [])
           .map(queueItemFromServer)
           .map((item) => ({
             ...item,
             gatesNext: previousItems.get(item.id)?.gatesNext ?? item.gatesNext,
           }))
-          .filter((item) => !removingQueueItems.has(queueItemKey(item)));
+          .filter((item) => !queueItemRemovedOrRemoving(item));
         queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });
         queueRun = {
           running: Boolean(state.queue.running),

@@ -436,6 +436,7 @@
       saveQueueStorage();
       renderQueue();
       queueInput.focus();
+      appendLocalMessage('status', 'Added draft queue item');
     }
 
     async function appendQueueTask(prompt) {
@@ -451,6 +452,7 @@
         waveId: queueGraphMode ? lastQueueWave(queueWaves).id : '',
       };
       const dependsOn = queueGraphMode ? queueDependenciesForWave(item.waveId) : [];
+      appendLocalMessage('status', 'Adding queue item to backend');
       try {
         const response = await fetch('/api/queue/append', {
           method: 'POST',
@@ -465,6 +467,7 @@
           appendLocalMessage('error', payload.output || 'failed to append queue item');
           return;
         }
+        appendLocalMessage('status', 'Appended queue item');
         queueInput.value = '';
         await loadSnapshot();
         queueInput.focus();
@@ -582,6 +585,7 @@
       }
       saveQueueStorage();
       renderQueue();
+      if (!removed?.runId) appendLocalMessage('status', 'Removed draft queue item');
     }
 
     function queueItemTerminal(item) {
@@ -593,7 +597,36 @@
     }
 
     function queueItemRemoving(item) {
-      return removingQueueItems.has(queueItemKey(item));
+      return queueItemRemovedOrRemoving(item);
+    }
+
+    function queueItemRemovedOrRemoving(item) {
+      pruneQueueRemovalTombstones();
+      return queueItemKeyVariants(item).some((key) => removingQueueItems.has(key));
+    }
+
+    function rememberQueueItemRemoval(item, ttlMs = removedQueueItemTtlMs) {
+      const expiresAt = Date.now() + ttlMs;
+      queueItemKeyVariants(item).forEach((key) => removingQueueItems.set(key, expiresAt));
+    }
+
+    function forgetQueueItemRemoval(item) {
+      queueItemKeyVariants(item).forEach((key) => removingQueueItems.delete(key));
+    }
+
+    function pruneQueueRemovalTombstones() {
+      const now = Date.now();
+      for (const [key, expiresAt] of removingQueueItems.entries()) {
+        if (expiresAt <= now) removingQueueItems.delete(key);
+      }
+    }
+
+    function queueItemKeyVariants(item) {
+      const keys = [];
+      const runItemKey = queueItemKey(item);
+      if (runItemKey !== ':') keys.push(runItemKey);
+      if (item?.slug) keys.push(`slug:${item.slug}`);
+      return keys;
     }
 
     function queueItemRemovable(item) {
@@ -659,8 +692,8 @@
     }
 
     async function removeServerQueueItem(item, task, index) {
-      const key = queueItemKey(item);
-      removingQueueItems.add(key);
+      rememberQueueItemRemoval(item);
+      appendLocalMessage('status', 'Removing queue item');
       removeQueueItemLocally(index, item);
       try {
         const response = await fetch('/api/queue/remove', {
@@ -675,18 +708,18 @@
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload.ok === false) {
-          removingQueueItems.delete(key);
+          forgetQueueItemRemoval(item);
           appendLocalMessage('error', payload.output || 'failed to remove queue item');
           await loadSnapshot();
           return;
         }
+        rememberQueueItemRemoval(item);
+        appendLocalMessage('status', 'Removed queue item');
         await loadSnapshot();
       } catch (err) {
-        removingQueueItems.delete(key);
+        forgetQueueItemRemoval(item);
         appendLocalMessage('error', String(err));
         await loadSnapshot();
-      } finally {
-        removingQueueItems.delete(key);
       }
     }
 
@@ -694,6 +727,7 @@
       const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
       if (!queueCanClear() && !runId) return;
       if (runId) {
+        appendLocalMessage('status', 'Clearing queue');
         try {
           const response = await fetch('/api/queue/clear', {
             method: 'POST',
@@ -716,12 +750,14 @@
       saveQueueStorage();
       if (runId) await loadSnapshot();
       renderQueue();
+      appendLocalMessage('status', 'Queue cleared');
     }
 
     async function copyQueuePrompt(index) {
       const text = queueItems[index]?.prompt || '';
       if (!text) return;
       await navigator.clipboard.writeText(text);
+      appendLocalMessage('status', 'Prompt copied');
       if (tg) tg.showAlert('Prompt copied');
     }
 

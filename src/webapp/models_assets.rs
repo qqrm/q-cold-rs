@@ -783,6 +783,7 @@ struct TaskChatResponse {
 
 const INDEX_HTML: &str = include_str!("../webapp_assets/index.html");
 const APP_CSS: &str = include_str!("../webapp_assets/app.css");
+const QUEUE_CSS: &str = include_str!("../webapp_assets/queue.css");
 const APP_JS: &str = concat!(
     include_str!("../webapp_assets/app/init_parse.js"),
     include_str!("../webapp_assets/app/queue.js"),

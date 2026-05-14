@@ -178,6 +178,32 @@ mod queue_live_edit_tests {
         assert!(response.output.contains("active cursor"));
     }
 
+    #[test]
+    fn running_queue_removes_future_pending_item() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("remove-future", "running", 0);
+        let active = queue_item_fixture("remove-future", "active", 0, "running", Some("agent-1"));
+        let pending = queue_item_fixture("remove-future", "pending", 1, "pending", None);
+        state::replace_web_queue(&run, &[active, pending]).unwrap();
+
+        let response = handle_queue_remove(
+            &HeaderMap::new(),
+            &QueueRemoveRequest {
+                run_id: run.id.clone(),
+                item_id: "pending".to_string(),
+                task_id: None,
+                agent_id: None,
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(stored_items.len(), 1);
+        assert_eq!(stored_items[0].id, "active");
+    }
+
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),

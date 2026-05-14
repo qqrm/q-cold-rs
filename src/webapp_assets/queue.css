@@ -1,0 +1,100 @@
+.queue-toast-host {
+  position: fixed;
+  right: max(12px, calc((100vw - 1120px) / 2 + 16px));
+  bottom: 74px;
+  z-index: 20;
+  display: grid;
+  gap: 8px;
+  width: min(320px, calc(100vw - 24px));
+  pointer-events: none;
+}
+
+.queue-toast {
+  display: grid;
+  gap: 2px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--ok);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: 0 8px 24px var(--shadow);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.queue-toast.failed { border-left-color: var(--bad); }
+.queue-toast.leaving { opacity: 0; transform: translateY(4px); transition: opacity .18s, transform .18s; }
+.queue-toast strong { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0; }
+.queue-toast span { overflow-wrap: anywhere; }
+
+.queue-agent-row select,
+.queue-step,
+.queue-graph-card,
+.queue-graph-wave {
+  min-width: 0;
+}
+
+.queue-run-actions button,
+.queue-add-actions button {
+  min-height: 32px;
+}
+
+button.queue-icon-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+@media (max-width: 900px) {
+  .queue-agent-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .queue-agent-row #queue-agent-state {
+    justify-self: start;
+  }
+
+  .queue-graph-wave {
+    padding-right: 34px;
+  }
+
+  .queue-graph-wave-lane {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+    overflow-x: visible;
+  }
+
+  .queue-graph-card {
+    flex-basis: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .queue-agent-row {
+    grid-template-columns: 1fr;
+  }
+
+  .queue-run-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .queue-run-actions .queue-run-spacer {
+    display: none;
+  }
+
+  .queue-run-actions button,
+  .queue-add-actions button {
+    width: 100%;
+  }
+
+  .queue-step-actions {
+    justify-content: flex-start;
+  }
+
+  .queue-toast-host {
+    right: 10px;
+    bottom: 164px;
+    width: calc(100vw - 20px);
+  }
+}

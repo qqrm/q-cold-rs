@@ -36,4 +36,13 @@ mod asset_tests {
         assert!(APP_JS.contains("wavesWithItems.has(wave.id) || index === waves.length - 1"));
         assert!(APP_JS.contains(".filter((dependency) => byId.has(dependency))"));
     }
+
+    #[test]
+    fn queue_feedback_assets_are_embedded() {
+        assert!(INDEX_HTML.contains("/assets/queue.css"));
+        assert!(QUEUE_CSS.contains(".queue-toast-host"));
+        assert!(APP_JS.contains("const removingQueueItems = new Map();"));
+        assert!(APP_JS.contains("function queueItemRemovedOrRemoving(item)"));
+        assert!(APP_JS.contains("let liveStateHoldUntil = 0;"));
+    }
 }
