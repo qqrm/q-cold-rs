@@ -6,7 +6,6 @@ mod repository;
 mod state;
 mod status;
 mod telegram;
-mod tui;
 #[cfg(test)]
 mod test_support;
 mod webapp;
@@ -56,7 +55,6 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold agent list\n",
     "  qcold agent start --track audit -- codex exec \"inspect repo\"\n",
     "  qcold telegram poll\n",
-    "  qcold tui\n",
     "  qcold wsl autostart install\n",
     "  qcold bundle\n",
     "  qcold guard -- rg -n \"needle\" src\n",
@@ -96,7 +94,6 @@ fn run() -> Result<u8> {
         TopLevel::Repo(args) => repository::run(args),
         TopLevel::Agent(args) => agents::run(args),
         TopLevel::Telegram(args) => telegram::run(args),
-        TopLevel::Tui => tui::run(),
         TopLevel::Wsl(args) => wsl::run(args),
         TopLevel::Ci(args) => adapter_for_cwd_sensitive_repo()?.ci(&args.args),
         TopLevel::Verify(args) => adapter_for_cwd_sensitive_repo()?.verify(&args.args),
@@ -156,8 +153,6 @@ enum TopLevel {
     Agent(AgentArgs),
     #[command(about = "Run Telegram command/reply control-plane adapters")]
     Telegram(TelegramArgs),
-    #[command(about = "Open the local terminal dashboard")]
-    Tui,
     #[command(about = "Manage WSL integration helpers")]
     Wsl(WslArgs),
     Ci(PassthroughArgs),
