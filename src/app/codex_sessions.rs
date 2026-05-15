@@ -18,6 +18,8 @@ fn codex_task_telemetry_for_worktree(
     task_slug: Option<&str>,
     started_at: u64,
     finished_at: u64,
+    explicit_rollout_paths: &[PathBuf],
+    explicit_thread_id: Option<&str>,
 ) -> Result<Option<CodexTaskTelemetry>> {
     codex_task_telemetry_for_worktree_in_roots(
         worktree,
@@ -26,9 +28,15 @@ fn codex_task_telemetry_for_worktree(
         finished_at,
         &codex_session_roots()?,
         Some(codex_telemetry_retention_cutoff(unix_now())),
+        explicit_rollout_paths,
+        explicit_thread_id,
     )
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "testable telemetry helper keeps scan inputs explicit"
+)]
 fn codex_task_telemetry_for_worktree_in_roots(
     worktree: &Path,
     task_slug: Option<&str>,
@@ -36,6 +44,8 @@ fn codex_task_telemetry_for_worktree_in_roots(
     finished_at: u64,
     roots: &[PathBuf],
     retention_cutoff: Option<u64>,
+    explicit_rollout_paths: &[PathBuf],
+    explicit_thread_id: Option<&str>,
 ) -> Result<Option<CodexTaskTelemetry>> {
     let mut files = Vec::new();
     for root in roots {
@@ -56,7 +66,51 @@ fn codex_task_telemetry_for_worktree_in_roots(
     let scan_started_at = retention_cutoff
         .unwrap_or(0)
         .max(started_at.saturating_sub(300));
+    let mut explicit_path_texts = HashSet::new();
+    let mut explicit_paths = explicit_rollout_paths.to_vec();
+    if let Some(thread_id) = explicit_thread_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let existing = explicit_paths
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<HashSet<_>>();
+        explicit_paths.extend(files.iter().filter_map(|path| {
+            let path_text = path.display().to_string();
+            let name_matches = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.contains(thread_id));
+            (name_matches && !existing.contains(&path_text)).then(|| path.clone())
+        }));
+    }
+    for path in explicit_paths.iter().filter(|path| path.is_file()) {
+        let content = fs::read_to_string(path)?;
+        let Some(session_id) = codex_session_match_for_explicit_rollout(
+            path,
+            &content,
+            explicit_thread_id,
+        ) else {
+            continue;
+        };
+        explicit_path_texts.insert(path.display().to_string());
+        collect_codex_task_telemetry_session(
+            path,
+            &content,
+            session_id,
+            CodexTaskSessionMatch::Explicit,
+            &task_terms,
+            started_at,
+            finished_at,
+            &mut usage,
+            &mut telemetry,
+        );
+    }
     for path in files {
+        if explicit_path_texts.contains(&path.display().to_string()) {
+            continue;
+        }
         let Some(modified) = modified_unix(&path) else {
             continue;
         };
@@ -67,64 +121,130 @@ fn codex_task_telemetry_for_worktree_in_roots(
         let Some(session_id) = codex_session_match_for_worktree(&content, &worktree_text) else {
             continue;
         };
-        let task_match = task_terms.iter().any(|term| content.contains(term));
-        telemetry.session_count += 1;
-        let session_path = path.display().to_string();
-        if !telemetry.session_ids.contains(&session_id) {
-            telemetry.session_ids.push(session_id);
-        }
-        if !telemetry.session_paths.contains(&session_path) {
-            telemetry.session_paths.push(session_path);
-        }
-        telemetry.matched_by_worktree += 1;
-        if task_match {
-            telemetry.matched_by_task += 1;
-        }
-        let session_name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("session.jsonl")
-            .to_string();
-        let mut calls = HashMap::new();
-        for line in content.lines() {
-            let Ok(value) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let timestamp = value
-                .get("timestamp")
-                .and_then(Value::as_str)
-                .and_then(parse_rfc3339_unix);
-            let within_window = timestamp.is_some_and(|timestamp| {
-                timestamp >= started_at && timestamp <= finished_at
-            });
-            if value.get("type").and_then(Value::as_str) == Some("response_item") {
-                if let Some(payload) = value.get("payload") {
-                    collect_tool_output_stats(
-                        payload,
-                        &session_name,
-                        &mut calls,
-                        &mut telemetry,
-                        within_window,
-                    );
-                }
-            }
-            if !within_window {
-                continue;
-            }
-            let Some(payload) = value.get("payload") else {
-                continue;
-            };
-            if value.get("type").and_then(Value::as_str) == Some("event_msg")
-                && payload.get("type").and_then(Value::as_str) == Some("token_count")
-            {
-                if let Some(info) = payload.get("info") {
-                    usage.add_last_usage(info);
-                }
-            }
-        }
+        collect_codex_task_telemetry_session(
+            &path,
+            &content,
+            session_id,
+            CodexTaskSessionMatch::Worktree,
+            &task_terms,
+            started_at,
+            finished_at,
+            &mut usage,
+            &mut telemetry,
+        );
     }
     telemetry.usage = usage;
     Ok((telemetry.usage.model_calls > 0 || telemetry.tool_outputs.calls > 0).then_some(telemetry))
+}
+
+#[derive(Clone, Copy)]
+enum CodexTaskSessionMatch {
+    Explicit,
+    Worktree,
+}
+
+#[allow(clippy::too_many_arguments, reason = "session telemetry aggregation carries a compact state tuple")]
+fn collect_codex_task_telemetry_session(
+    path: &Path,
+    content: &str,
+    session_id: String,
+    match_kind: CodexTaskSessionMatch,
+    task_terms: &[String],
+    started_at: u64,
+    finished_at: u64,
+    usage: &mut CodexTokenUsage,
+    telemetry: &mut CodexTaskTelemetry,
+) {
+    let task_match = task_terms.iter().any(|term| content.contains(term));
+    telemetry.session_count += 1;
+    let session_path = path.display().to_string();
+    if !telemetry.session_ids.contains(&session_id) {
+        telemetry.session_ids.push(session_id);
+    }
+    if !telemetry.session_paths.contains(&session_path) {
+        telemetry.session_paths.push(session_path);
+    }
+    match match_kind {
+        CodexTaskSessionMatch::Explicit => telemetry.matched_by_explicit += 1,
+        CodexTaskSessionMatch::Worktree => telemetry.matched_by_worktree += 1,
+    }
+    if task_match {
+        telemetry.matched_by_task += 1;
+    }
+    let session_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("session.jsonl")
+        .to_string();
+    let mut calls = HashMap::new();
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let timestamp = value
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .and_then(parse_rfc3339_unix);
+        let within_window =
+            timestamp.is_some_and(|timestamp| timestamp >= started_at && timestamp <= finished_at);
+        if value.get("type").and_then(Value::as_str) == Some("response_item") {
+            if let Some(payload) = value.get("payload") {
+                collect_tool_output_stats(
+                    payload,
+                    &session_name,
+                    &mut calls,
+                    telemetry,
+                    within_window,
+                );
+            }
+        }
+        if !within_window {
+            continue;
+        }
+        let Some(payload) = value.get("payload") else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("event_msg")
+            && payload.get("type").and_then(Value::as_str) == Some("token_count")
+        {
+            if let Some(info) = payload.get("info") {
+                usage.add_last_usage(info);
+            }
+        }
+    }
+}
+
+fn codex_session_match_for_explicit_rollout(
+    path: &Path,
+    content: &str,
+    explicit_thread_id: Option<&str>,
+) -> Option<String> {
+    let session_id = codex_session_id_from_content(content)
+        .or_else(|| codex_thread_id_from_path(path))?;
+    if explicit_thread_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some_and(|thread_id| thread_id != session_id)
+    {
+        return None;
+    }
+    Some(session_id)
+}
+
+fn codex_session_id_from_content(content: &str) -> Option<String> {
+    for line in content.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("session_meta") {
+            return value
+                .get("payload")
+                .and_then(|payload| payload.get("id"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+    }
+    None
 }
 
 fn codex_session_match_for_worktree(content: &str, worktree_text: &str) -> Option<String> {
@@ -153,29 +273,65 @@ fn codex_session_match_for_worktree(content: &str, worktree_text: &str) -> Optio
         let Some(payload) = value.get("payload") else {
             continue;
         };
-        if payload.get("type").and_then(Value::as_str) != Some("function_call") {
-            continue;
+        match payload.get("type").and_then(Value::as_str) {
+            Some("function_call") => {
+                let Some(arguments) = payload.get("arguments").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Ok(arguments) = serde_json::from_str::<Value>(arguments) else {
+                    continue;
+                };
+                matches_worktree |= function_call_matches_worktree(&arguments, worktree_text);
+            }
+            Some("function_call_output") => {
+                matches_worktree |= payload
+                    .get("output")
+                    .and_then(Value::as_str)
+                    .is_some_and(|output| output_mentions_worktree_marker(output, worktree_text));
+            }
+            _ => {}
         }
-        let Some(arguments) = payload.get("arguments").and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(arguments) = serde_json::from_str::<Value>(arguments) else {
-            continue;
-        };
-        matches_worktree |= function_call_cwd_matches_worktree(&arguments, worktree_text);
     }
     matches_worktree
         .then_some(session_id?)
         .filter(|id| !id.is_empty())
 }
 
-fn function_call_cwd_matches_worktree(arguments: &Value, worktree_text: &str) -> bool {
+fn function_call_matches_worktree(arguments: &Value, worktree_text: &str) -> bool {
     ["workdir", "cwd"].iter().any(|key| {
         arguments
             .get(*key)
             .and_then(Value::as_str)
             .is_some_and(|path| path_text_is_in_worktree(path, worktree_text))
-    })
+    }) || value_mentions_managed_path(arguments, worktree_text)
+}
+
+fn value_mentions_managed_path(value: &Value, worktree_text: &str) -> bool {
+    match value {
+        Value::String(text) => text.contains(worktree_text)
+            || output_mentions_worktree_marker(text, worktree_text),
+        Value::Array(items) => items
+            .iter()
+            .any(|item| value_mentions_managed_path(item, worktree_text)),
+        Value::Object(items) => items
+            .values()
+            .any(|item| value_mentions_managed_path(item, worktree_text)),
+        _ => false,
+    }
+}
+
+fn output_mentions_worktree_marker(output: &str, worktree_text: &str) -> bool {
+    ["TASK_WORKTREE", "QCOLD_REPO_ROOT", "VITASTOR_TASKFLOW_TASK_WORKTREE"]
+        .iter()
+        .any(|key| {
+            [
+                format!("{key}={worktree_text}"),
+                format!("{key}='{worktree_text}'"),
+                format!("{key}=\"{worktree_text}\""),
+            ]
+            .iter()
+            .any(|needle| output.contains(needle))
+        })
 }
 
 fn path_text_is_in_worktree(path: &str, worktree_text: &str) -> bool {

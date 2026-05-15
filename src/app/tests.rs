@@ -296,6 +296,8 @@ mod tests {
             u64::MAX,
             &[temp.path().join("sessions")],
             Some(0),
+            &[],
+            None,
         )
         .unwrap()
         .unwrap();
@@ -361,6 +363,8 @@ mod tests {
             u64::MAX,
             &[temp.path().join("sessions")],
             Some(0),
+            &[],
+            None,
         )
         .unwrap()
         .unwrap();
@@ -381,6 +385,90 @@ mod tests {
                 .command
                 .contains("rg -n token src")
         );
+    }
+
+    #[test]
+    fn codex_task_telemetry_uses_explicit_rollout_path_before_worktree_match() {
+        let temp = tempfile::tempdir().unwrap();
+        let session_dir = temp.path().join("sessions/2026/05/06");
+        let worktree = temp.path().join("WT/qcold/anchor-token-task");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        let session_path = session_dir.join(
+            "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+        );
+        fs::write(
+            &session_path,
+            [
+                jsonl(session_meta_event("/workspace/agent")),
+                jsonl(token_count_event(4, 10, 4, 2, 1, 12)),
+            ]
+            .concat(),
+        )
+        .unwrap();
+
+        let telemetry = codex_task_telemetry_for_worktree_in_roots(
+            &worktree,
+            Some("token-task"),
+            0,
+            u64::MAX,
+            &[temp.path().join("sessions")],
+            Some(0),
+            std::slice::from_ref(&session_path),
+            Some("019df1ab-7579-7e41-ad71-701b63175455"),
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(telemetry.session_count, 1);
+        assert_eq!(telemetry.matched_by_explicit, 1);
+        assert_eq!(telemetry.matched_by_worktree, 0);
+        assert_eq!(telemetry.usage.model_calls, 1);
+    }
+
+    #[test]
+    fn codex_task_telemetry_accepts_task_worktree_marker_in_output() {
+        let temp = tempfile::tempdir().unwrap();
+        let session_dir = temp.path().join("sessions/2026/05/06");
+        let worktree = temp.path().join("WT/qcold/anchor-token-task");
+        fs::create_dir_all(&worktree).unwrap();
+        fs::create_dir_all(&session_dir).unwrap();
+        fs::write(
+            session_dir.join(
+                "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
+            ),
+            [
+                jsonl(session_meta_event("/workspace/agent")),
+                jsonl(serde_json::json!({
+                    "timestamp": "1970-01-01T00:00:02.000Z",
+                    "type": "response_item",
+                    "payload": {
+                        "type": "function_call_output",
+                        "output": format!("TASK_WORKTREE={}\n", worktree.display()),
+                    },
+                })),
+                jsonl(token_count_event(4, 10, 4, 2, 1, 12)),
+            ]
+            .concat(),
+        )
+        .unwrap();
+
+        let telemetry = codex_task_telemetry_for_worktree_in_roots(
+            &worktree,
+            None,
+            0,
+            u64::MAX,
+            &[temp.path().join("sessions")],
+            Some(0),
+            &[],
+            None,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(telemetry.session_count, 1);
+        assert_eq!(telemetry.matched_by_worktree, 1);
+        assert_eq!(telemetry.usage.model_calls, 1);
     }
 
     #[test]
@@ -435,6 +523,8 @@ mod tests {
             u64::MAX,
             &[temp.path().join("sessions")],
             Some(0),
+            &[],
+            None,
         )
         .unwrap();
         assert_eq!(telemetry, None);
@@ -487,6 +577,8 @@ mod tests {
             u64::MAX,
             &[temp.path().join("sessions")],
             Some(unix_now().saturating_add(1)),
+            &[],
+            None,
         )
         .unwrap();
         assert!(telemetry.is_none());
@@ -521,6 +613,7 @@ mod tests {
         let efficiency = serde_json::json!({
             "source": "codex-session-window",
             "session_count": 2,
+            "matched_by_explicit": 1,
             "matched_by_worktree": 1,
             "matched_by_task": 1,
             "tool_output_original_tokens": 7000,
@@ -531,7 +624,8 @@ mod tests {
         assert_eq!(
             render_token_efficiency(&efficiency).as_deref(),
             Some(concat!(
-                "token-efficiency\tsessions=2\tmatched_worktree=1\tmatched_task=1",
+                "token-efficiency\tsessions=2\tmatched_explicit=1",
+                "\tmatched_worktree=1\tmatched_task=1",
                 "\ttool_output_tokens=7000\tlarge_tool_outputs=1",
                 "\tlarge_tool_output_tokens=6001\tretention_hours=48",
                 "\tsource=codex-session-window",

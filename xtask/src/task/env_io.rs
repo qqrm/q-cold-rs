@@ -16,6 +16,8 @@ struct TaskEnv {
     updated_at: String,
     devcontainer_name: String,
     delivery_mode: String,
+    codex_thread_id: String,
+    codex_rollout_path: String,
 }
 
 fn current_task_env() -> Result<TaskEnv> {
@@ -87,6 +89,8 @@ fn parse_task_env(path: &Path) -> Result<TaskEnv> {
         updated_at: value("UPDATED_AT"),
         devcontainer_name: value("DEVCONTAINER_NAME"),
         delivery_mode: value("DELIVERY_MODE"),
+        codex_thread_id: value("CODEX_THREAD_ID"),
+        codex_rollout_path: value("CODEX_ROLLOUT_PATH"),
     })
 }
 
@@ -122,8 +126,36 @@ fn write_task_env(task: &TaskEnv) -> Result<()> {
         output.push_str(&shell_quote(value));
         output.push('\n');
     }
+    for (key, value) in [
+        ("CODEX_THREAD_ID", task.codex_thread_id.as_str()),
+        ("CODEX_ROLLOUT_PATH", task.codex_rollout_path.as_str()),
+    ] {
+        if value.is_empty() {
+            continue;
+        }
+        output.push_str(key);
+        output.push('=');
+        output.push_str(&shell_quote(value));
+        output.push('\n');
+    }
     fs::write(env_path, output)?;
     Ok(())
+}
+
+fn refresh_task_codex_env(task: &mut TaskEnv) {
+    if let Some(thread_id) = nonempty_env("CODEX_THREAD_ID") {
+        task.codex_thread_id = thread_id;
+    }
+    if let Some(rollout_path) = nonempty_env("CODEX_ROLLOUT_PATH") {
+        task.codex_rollout_path = rollout_path;
+    }
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn append_event(worktree: &Path, kind: &str, message: &str) -> Result<()> {

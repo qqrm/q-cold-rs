@@ -86,10 +86,12 @@ fn render_token_efficiency(efficiency: &Value) -> Option<String> {
             .unwrap_or_default()
     };
     Some(format!(
-        "token-efficiency\tsessions={}\tmatched_worktree={}\tmatched_task={}\
+        "token-efficiency\tsessions={}\tmatched_explicit={}\tmatched_worktree={}\
+         \tmatched_task={}\
          \ttool_output_tokens={}\tlarge_tool_outputs={}\tlarge_tool_output_tokens={}\
          \tretention_hours={}\tsource={}",
         field("session_count"),
+        field("matched_by_explicit"),
         field("matched_by_worktree"),
         field("matched_by_task"),
         field("tool_output_original_tokens"),

@@ -162,6 +162,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         if task.status == "paused" || task.status == "failed-closeout" {
             task.status = "open".to_string();
             task.updated_at = unix_now().to_string();
+            refresh_task_codex_env(&mut task);
             if let Some(profile) = profile {
                 task.task_profile = profile.to_string();
             }
@@ -221,6 +222,8 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         updated_at: unix_now().to_string(),
         devcontainer_name: "host-shell".to_string(),
         delivery_mode: "self-hosted-qcold".to_string(),
+        codex_thread_id: nonempty_env("CODEX_THREAD_ID").unwrap_or_default(),
+        codex_rollout_path: nonempty_env("CODEX_ROLLOUT_PATH").unwrap_or_default(),
     };
     write_task_env(&task)?;
     append_event(&worktree, "task-open", &format!("opened {branch}"))?;

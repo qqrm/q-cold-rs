@@ -56,16 +56,22 @@ mod tests {
         let mut task = test_task_env();
         task.task_description = "first line\nsecond line with 'quote'\nthird\\line".into();
         task.task_worktree = worktree.clone();
+        task.codex_thread_id = "019e2a5a-96d5-72d0-9eaa-530232011047".into();
+        task.codex_rollout_path = "/tmp/rollout.jsonl".into();
 
         write_task_env(&task).unwrap();
 
         let content = fs::read_to_string(worktree.join(".task/task.env")).unwrap();
         assert!(content.contains("TASK_DESCRIPTION=$'first line\\n"));
-        assert_eq!(content.lines().count(), 16);
+        assert!(content.contains("CODEX_THREAD_ID=019e2a5a-96d5-72d0-9eaa-530232011047"));
+        assert!(content.contains("CODEX_ROLLOUT_PATH=/tmp/rollout.jsonl"));
+        assert_eq!(content.lines().count(), 18);
 
         let parsed = parse_task_env(&worktree.join(".task/task.env")).unwrap();
 
         assert_eq!(parsed.task_description, task.task_description);
+        assert_eq!(parsed.codex_thread_id, task.codex_thread_id);
+        assert_eq!(parsed.codex_rollout_path, task.codex_rollout_path);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -162,6 +168,8 @@ mod tests {
             updated_at: "1".into(),
             devcontainer_name: "host-shell".into(),
             delivery_mode: "self-hosted-qcold".into(),
+            codex_thread_id: String::new(),
+            codex_rollout_path: String::new(),
         };
 
         deliver_task_branch_to_primary(&task).unwrap();
@@ -216,6 +224,8 @@ mod tests {
             updated_at: "1".into(),
             devcontainer_name: "host-shell".into(),
             delivery_mode: "self-hosted-qcold".into(),
+            codex_thread_id: String::new(),
+            codex_rollout_path: String::new(),
         }
     }
 }

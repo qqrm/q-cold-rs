@@ -75,7 +75,20 @@ fn sync_task_flow_record_for_worktree(
             .unwrap_or_else(unix_now)
     };
     let task_slug = record_id.strip_prefix("task/").map(str::to_string);
-    let telemetry = codex_task_telemetry_for_worktree(worktree, task_slug.as_deref(), start, finish)?;
+    let explicit_rollout_paths = explicit_codex_rollout_paths_from_env(&env);
+    let explicit_thread_id = env
+        .get("CODEX_THREAD_ID")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let telemetry = codex_task_telemetry_for_worktree(
+        worktree,
+        task_slug.as_deref(),
+        start,
+        finish,
+        &explicit_rollout_paths,
+        explicit_thread_id,
+    )?;
 
     let mut metadata = record
         .metadata_json
@@ -162,6 +175,18 @@ fn sync_task_flow_record_for_worktree(
     record.updated_at = unix_now();
     state::upsert_task_record(&record)?;
     Ok(true)
+}
+
+fn explicit_codex_rollout_paths_from_env(
+    env: &std::collections::BTreeMap<String, String>,
+) -> Vec<PathBuf> {
+    env.get("CODEX_ROLLOUT_PATH")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .into_iter()
+        .collect()
 }
 
 fn task_flow_metadata_equivalent(left: &Value, right: &Value) -> bool {

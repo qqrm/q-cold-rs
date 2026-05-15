@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -317,6 +318,24 @@ fn apply_task_open_env(
     task_sequence: Option<u64>,
     task_prompt: Option<&str>,
 ) {
+    let codex_thread_id = nonempty_env("CODEX_THREAD_ID");
+    let codex_rollout_path = current_codex_rollout_path(codex_thread_id.as_deref());
+    apply_task_open_env_values(
+        command,
+        task_sequence,
+        task_prompt,
+        codex_thread_id.as_deref(),
+        codex_rollout_path.as_deref(),
+    );
+}
+
+fn apply_task_open_env_values(
+    command: &mut Command,
+    task_sequence: Option<u64>,
+    task_prompt: Option<&str>,
+    codex_thread_id: Option<&str>,
+    codex_rollout_path: Option<&Path>,
+) {
     if let Some(sequence) = task_sequence {
         command.env("QCOLD_TASK_SEQUENCE", sequence.to_string());
     }
@@ -324,6 +343,77 @@ fn apply_task_open_env(
         command.env("QCOLD_TASKFLOW_PROMPT", prompt);
         command.env("QCOLD_TASK_PROMPT_SNIPPET", crate::prompt::prompt_snippet(prompt));
     }
+    if let Some(thread_id) = codex_thread_id.map(str::trim).filter(|value| !value.is_empty()) {
+        command.env("CODEX_THREAD_ID", thread_id);
+    }
+    if let Some(path) = codex_rollout_path {
+        command.env("CODEX_ROLLOUT_PATH", path);
+    }
+}
+
+fn current_codex_rollout_path(codex_thread_id: Option<&str>) -> Option<PathBuf> {
+    if let Some(path) = nonempty_env("CODEX_ROLLOUT_PATH").map(PathBuf::from) {
+        return Some(path);
+    }
+    let thread_id = codex_thread_id?;
+    let mut matches = Vec::new();
+    for root in codex_session_roots_from_env() {
+        matches.extend(find_rollout_paths_for_thread(&root, thread_id));
+    }
+    matches.sort();
+    matches.pop()
+}
+
+fn codex_session_roots_from_env() -> Vec<PathBuf> {
+    if let Some(home) = nonempty_env("CODEX_HOME") {
+        return vec![PathBuf::from(home).join("sessions")];
+    }
+    let Some(home) = env::var("HOME").ok() else {
+        return Vec::new();
+    };
+    let accounts = PathBuf::from(home).join(".codex-accounts");
+    let Ok(entries) = fs::read_dir(accounts) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .map(|entry| entry.path().join("sessions"))
+        .filter(|path| path.is_dir())
+        .collect()
+}
+
+fn find_rollout_paths_for_thread(root: &Path, thread_id: &str) -> Vec<PathBuf> {
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    let mut stack = vec![root.to_path_buf()];
+    let mut matches = Vec::new();
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl")
+                && path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|name| name.contains(thread_id))
+            {
+                matches.push(path);
+            }
+        }
+    }
+    matches
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]
@@ -338,7 +428,13 @@ mod tests {
     #[test]
     fn task_open_passes_qcold_sequence_and_prompt_to_adapter_process() {
         let mut command = Command::new("cargo");
-        apply_task_open_env(&mut command, Some(42), Some("first line\nsecond line"));
+        apply_task_open_env_values(
+            &mut command,
+            Some(42),
+            Some("first line\nsecond line"),
+            Some("019e2a5a-96d5-72d0-9eaa-530232011047"),
+            Some(Path::new("/tmp/rollout.jsonl")),
+        );
 
         let sequence = command
             .get_envs()
@@ -373,10 +469,34 @@ mod tests {
                 })
             })
             .unwrap();
+        let thread_id = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "CODEX_THREAD_ID").then(|| {
+                    value
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+            })
+            .unwrap();
+        let rollout_path = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "CODEX_ROLLOUT_PATH").then(|| {
+                    value
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+            })
+            .unwrap();
 
         assert_eq!(sequence, "42");
         assert_eq!(prompt, "first line\nsecond line");
         assert_eq!(snippet, "first line\nsecond line");
+        assert_eq!(thread_id, "019e2a5a-96d5-72d0-9eaa-530232011047");
+        assert_eq!(rollout_path, "/tmp/rollout.jsonl");
     }
 }
 
