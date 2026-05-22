@@ -6,6 +6,7 @@
 )]
 
 use std::fs;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use assert_cmd::Command as AssertCommand;
 use predicates::str::contains;
@@ -42,6 +43,10 @@ fn task_record_list_warns_and_continues_when_codex_refresh_fails() {
     fs::create_dir_all(&sessions_parent).unwrap();
     fs::write(sessions_parent.join("sessions"), "not a directory").unwrap();
 
+    let started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
     let connection = Connection::open(state_dir.join("qcold.sqlite3")).unwrap();
     connection
         .execute(
@@ -52,7 +57,7 @@ fn task_record_list_warns_and_continues_when_codex_refresh_fails() {
                 "agent-refresh-fails",
                 "manual",
                 9_999_999_i64,
-                1_i64,
+                started_at,
                 r#"["/home/qqrm/.local/bin/c2","inspect"]"#,
                 repo.to_str().unwrap(),
             ],

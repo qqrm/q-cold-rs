@@ -167,6 +167,7 @@ pub(crate) struct Fixture {
     docker_images: PathBuf,
     devcontainer_log: PathBuf,
     glab_state: PathBuf,
+    state_dir: PathBuf,
     pub(crate) validation_log: PathBuf,
     notification_env_file: PathBuf,
     telegram: TelegramStub,
@@ -183,6 +184,7 @@ impl Fixture {
         let docker_images = temp.path().join("docker-images");
         let devcontainer_log = temp.path().join("devcontainer.log");
         let glab_state = temp.path().join("glab-state");
+        let state_dir = temp.path().join("qcold-state");
         let validation_log = temp.path().join("validation.log");
         let notification_env_file = temp.path().join("fixture-notify.env");
 
@@ -192,6 +194,7 @@ impl Fixture {
         fs::write(&docker_images, "").unwrap();
         fs::write(&devcontainer_log, "").unwrap();
         fs::write(&glab_state, "").unwrap();
+        fs::create_dir_all(&state_dir).unwrap();
         fs::write(&validation_log, "").unwrap();
         fs::write(&glab_state, "").unwrap();
         fs::write(&notification_env_file, "").unwrap();
@@ -289,6 +292,7 @@ impl Fixture {
             docker_images,
             devcontainer_log,
             glab_state,
+            state_dir,
             validation_log,
             notification_env_file,
             telegram: TelegramStub::start(),
@@ -326,6 +330,7 @@ impl Fixture {
             .env_remove("QCOLD_TASKFLOW_TASK_BRANCH")
             .env_remove("QCOLD_TASKFLOW_DEVCONTAINER_ID")
             .env("QCOLD_REPO_ROOT", repo)
+            .env("QCOLD_STATE_DIR", &self.state_dir)
             .env("QCOLD_XTASK_MANIFEST", xtask_process_manifest())
             .env(
                 "QCOLD_TASKFLOW_TEST_ASSUME_CONTAINER_RUNTIME",

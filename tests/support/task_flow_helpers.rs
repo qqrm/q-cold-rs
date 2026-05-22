@@ -56,16 +56,27 @@ pub(crate) fn seed_required_control_plane_files(repo: &Path) {
 }
 
 pub(crate) fn xtask_process_manifest() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("repository/xtask/Cargo.toml");
+    let manifest = xtask_process_manifest_path();
     assert!(
         manifest.is_file(),
         "missing xtask process fixture adapter at {}",
         manifest.display()
     );
     manifest
+}
+
+pub(crate) fn xtask_process_manifest_available() -> bool {
+    xtask_process_manifest_path().is_file()
+}
+
+fn xtask_process_manifest_path() -> PathBuf {
+    if let Some(path) = std::env::var_os("QCOLD_TASK_FLOW_REGRESSION_XTASK_MANIFEST") {
+        return PathBuf::from(path);
+    }
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("repository/xtask/Cargo.toml")
 }
 
 pub(crate) fn parse_value(key: &str, text: &str) -> Option<String> {

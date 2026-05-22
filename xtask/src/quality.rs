@@ -96,7 +96,11 @@ fn tracked_text(repo: &Path, relative: &Path) -> Result<Option<String>> {
     if ignored_tracked_path(relative) {
         return Ok(None);
     }
-    let bytes = match fs::read(repo.join(relative)) {
+    let path = repo.join(relative);
+    if path.is_dir() {
+        return Ok(None);
+    }
+    let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => {

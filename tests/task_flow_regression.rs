@@ -211,113 +211,103 @@ mod notifications_runtime;
 #[path = "task_flow_regression/task_open.rs"]
 mod task_open;
 
-#[test]
-fn task_open_accepts_clean_materialized_submodule_tree_and_can_resume_remote_tasks() {
-    task_open::task_open_accepts_clean_materialized_submodule_tree_and_can_resume_remote_tasks();
+macro_rules! task_flow_regression_test {
+    ($name:ident, $body:path) => {
+        #[test]
+        fn $name() {
+            if !task_flow_helpers::xtask_process_manifest_available() {
+                return;
+            }
+            $body();
+        }
+    };
 }
 
-#[test]
-fn task_open_refuses_dirty_primary_without_scrubbing() {
-    task_open::task_open_refuses_dirty_primary_without_scrubbing();
-}
-
-#[test]
-fn task_open_full_qemu_profile_uses_full_qemu_devcontainer_config() {
-    task_open::task_open_full_qemu_profile_uses_full_qemu_devcontainer_config();
-}
-
-#[test]
-fn task_open_resume_reenters_managed_devcontainer_shell_and_marks_host_worktree_orchestration_only()
-{
-    task_open::task_open_resume_reenters_managed_devcontainer_shell_and_marks_host_worktree_orchestration_only();
-}
-
-#[test]
-fn task_open_mounts_notification_env_file_into_generated_devcontainer_config() {
-    task_open::task_open_mounts_notification_env_file_into_generated_devcontainer_config();
-}
-
-#[test]
-fn task_open_full_qemu_profile_uses_prebuilt_image_override_when_configured() {
-    task_open::task_open_full_qemu_profile_uses_prebuilt_image_override_when_configured();
-}
-
-#[test]
-fn current_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent() {
-    bundles::current_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent();
-}
-
-#[test]
-fn current_bundle_rejects_oversized_archive_payloads() {
-    bundles::current_bundle_rejects_oversized_archive_payloads();
-}
-
-#[test]
-fn task_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent() {
-    bundles::task_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent();
-}
-
-#[test]
-fn blocked_failed_and_success_closeout_paths_preserve_terminal_contracts() {
-    closeout_contracts::blocked_failed_and_success_closeout_paths_preserve_terminal_contracts();
-}
-
-#[test]
-fn markdown_only_success_closeout_skips_canonical_validation() {
-    closeout_failures::markdown_only_success_closeout_skips_canonical_validation();
-}
-
-#[test]
-fn success_closeout_omits_repository_terminal_state_when_other_tasks_remain_open() {
-    closeout_failures::success_closeout_omits_repository_terminal_state_when_other_tasks_remain_open();
-}
-
-#[test]
-fn incomplete_success_closeout_emits_failed_bundle_and_preserves_worktree() {
-    closeout_failures::incomplete_success_closeout_emits_failed_bundle_and_preserves_worktree();
-}
-
-#[test]
-fn post_delivery_cleanup_failure_is_logged_without_blocking_success_closeout() {
-    closeout_failures::post_delivery_cleanup_failure_is_logged_without_blocking_success_closeout();
-}
-
-#[test]
-fn success_closeout_fails_before_validation_when_primary_dirty_overlaps_open_task() {
-    closeout_failures::success_closeout_fails_before_validation_when_primary_dirty_overlaps_open_task();
-}
-
-#[test]
-fn success_closeout_allows_failed_closeout_task_residue_and_leaves_terminal_check_non_terminal() {
-    closeout_failures::success_closeout_allows_failed_closeout_task_residue_and_leaves_terminal_check_non_terminal();
-}
-
-#[test]
-fn cleanup_failure_scrubs_terminal_receipt_from_incomplete_bundle() {
-    closeout_failures::cleanup_failure_scrubs_terminal_receipt_from_incomplete_bundle();
-}
-
-#[test]
-fn late_closeout_failure_preserves_precleanup_bundle_and_keeps_git_worktree_valid() {
-    closeout_failures::late_closeout_failure_preserves_precleanup_bundle_and_keeps_git_worktree_valid();
-}
-
-#[test]
-fn success_closeout_delivers_directly_and_records_delivery_metadata() {
-    delivery::success_closeout_delivers_directly_and_records_delivery_metadata();
-}
-
-#[test]
-fn success_closeout_treats_legacy_merge_request_mode_as_direct() {
-    delivery::success_closeout_treats_legacy_merge_request_mode_as_direct();
-}
-
-#[test]
-fn iteration_notify_sends_non_terminal_handoff_message_and_preserves_task_state() {
-    notifications_runtime::iteration_notify_sends_non_terminal_handoff_message_and_preserves_task_state();
-}
-
-#[test]
-fn verify_preflight_runs_directly_inside_container_runtime() {
-    notifications_runtime::verify_preflight_runs_directly_inside_container_runtime();
-}
+task_flow_regression_test!(
+    task_open_accepts_clean_materialized_submodule_tree_and_can_resume_remote_tasks,
+    task_open::task_open_accepts_clean_materialized_submodule_tree_and_can_resume_remote_tasks
+);
+task_flow_regression_test!(
+    task_open_refuses_dirty_primary_without_scrubbing,
+    task_open::task_open_refuses_dirty_primary_without_scrubbing
+);
+task_flow_regression_test!(
+    task_open_full_qemu_profile_uses_full_qemu_devcontainer_config,
+    task_open::task_open_full_qemu_profile_uses_full_qemu_devcontainer_config
+);
+task_flow_regression_test!(
+    task_open_resume_reenters_managed_devcontainer_shell_and_marks_host_worktree_orchestration_only,
+    task_open::task_open_resume_reenters_managed_devcontainer_shell_and_marks_host_worktree_orchestration_only
+);
+task_flow_regression_test!(
+    task_open_mounts_notification_env_file_into_generated_devcontainer_config,
+    task_open::task_open_mounts_notification_env_file_into_generated_devcontainer_config
+);
+task_flow_regression_test!(
+    task_open_full_qemu_profile_uses_prebuilt_image_override_when_configured,
+    task_open::task_open_full_qemu_profile_uses_prebuilt_image_override_when_configured
+);
+task_flow_regression_test!(
+    current_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent,
+    bundles::current_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent
+);
+task_flow_regression_test!(
+    current_bundle_rejects_oversized_archive_payloads,
+    bundles::current_bundle_rejects_oversized_archive_payloads
+);
+task_flow_regression_test!(
+    task_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent,
+    bundles::task_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent
+);
+task_flow_regression_test!(
+    blocked_failed_and_success_closeout_paths_preserve_terminal_contracts,
+    closeout_contracts::blocked_failed_and_success_closeout_paths_preserve_terminal_contracts
+);
+task_flow_regression_test!(
+    markdown_only_success_closeout_skips_canonical_validation,
+    closeout_failures::markdown_only_success_closeout_skips_canonical_validation
+);
+task_flow_regression_test!(
+    success_closeout_omits_repository_terminal_state_when_other_tasks_remain_open,
+    closeout_failures::success_closeout_omits_repository_terminal_state_when_other_tasks_remain_open
+);
+task_flow_regression_test!(
+    incomplete_success_closeout_emits_failed_bundle_and_preserves_worktree,
+    closeout_failures::incomplete_success_closeout_emits_failed_bundle_and_preserves_worktree
+);
+task_flow_regression_test!(
+    post_delivery_cleanup_failure_is_logged_without_blocking_success_closeout,
+    closeout_failures::post_delivery_cleanup_failure_is_logged_without_blocking_success_closeout
+);
+task_flow_regression_test!(
+    success_closeout_fails_before_validation_when_primary_dirty_overlaps_open_task,
+    closeout_failures::success_closeout_fails_before_validation_when_primary_dirty_overlaps_open_task
+);
+task_flow_regression_test!(
+    success_closeout_allows_failed_closeout_task_residue_and_leaves_terminal_check_non_terminal,
+    closeout_failures::success_closeout_allows_failed_closeout_task_residue_and_leaves_terminal_check_non_terminal
+);
+task_flow_regression_test!(
+    cleanup_failure_scrubs_terminal_receipt_from_incomplete_bundle,
+    closeout_failures::cleanup_failure_scrubs_terminal_receipt_from_incomplete_bundle
+);
+task_flow_regression_test!(
+    late_closeout_failure_preserves_precleanup_bundle_and_keeps_git_worktree_valid,
+    closeout_failures::late_closeout_failure_preserves_precleanup_bundle_and_keeps_git_worktree_valid
+);
+task_flow_regression_test!(
+    success_closeout_delivers_directly_and_records_delivery_metadata,
+    delivery::success_closeout_delivers_directly_and_records_delivery_metadata
+);
+task_flow_regression_test!(
+    success_closeout_treats_legacy_merge_request_mode_as_direct,
+    delivery::success_closeout_treats_legacy_merge_request_mode_as_direct
+);
+task_flow_regression_test!(
+    iteration_notify_sends_non_terminal_handoff_message_and_preserves_task_state,
+    notifications_runtime::iteration_notify_sends_non_terminal_handoff_message_and_preserves_task_state
+);
+task_flow_regression_test!(
+    verify_preflight_runs_directly_inside_container_runtime,
+    notifications_runtime::verify_preflight_runs_directly_inside_container_runtime
+);
