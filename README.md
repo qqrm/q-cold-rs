@@ -128,8 +128,8 @@ the matching `session_path` for transcript viewing, and stores bounded
 `token_efficiency` metadata for session counts plus the largest tool outputs by
 reported `Original token count`.
 Q-COLD keeps only metadata, not raw tool output, and limits task-flow session
-import to the recent Codex telemetry window. The default retention window is
-48 hours; set
+import plus new ad-hoc Codex-session imports to the recent Codex telemetry
+window. The default retention window is 48 hours; set
 `QCOLD_CODEX_TELEMETRY_RETENTION_HOURS` to another positive hour count for one
 process. The metadata is refreshed before terminal `task closeout` updates the
 record status. `qcold status` also triggers the refresh and prints compact

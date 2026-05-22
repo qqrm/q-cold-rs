@@ -7,8 +7,9 @@ mod tests {
         codex_import_matches_existing, find_codex_session_summary_in_root, is_queue_agent_track,
         guard_command, parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
         prompt_from_agent_command, repo_root_for_agent_cwd_from_repositories,
-        render_token_efficiency, render_token_usage, render_top_tool_outputs, slug_from_title,
-        task_flow_metadata_equivalent, unix_now, GuardArgs,
+        render_token_efficiency, render_token_usage, render_top_tool_outputs,
+        should_skip_stale_codex_agent_import, slug_from_title, task_flow_metadata_equivalent,
+        unix_now, GuardArgs,
     };
     use crate::repository::RepositoryConfig;
     use crate::state;
@@ -789,6 +790,29 @@ mod tests {
         );
 
         assert!(!codex_import_matches_existing(&existing, &candidate));
+    }
+
+    #[test]
+    fn stale_codex_agent_import_skips_only_new_stale_records() {
+        let existing = state::new_task_record(
+            "adhoc/1-status".to_string(),
+            "codex-session".to_string(),
+            "status".to_string(),
+            "status".to_string(),
+            "closed:unknown".to_string(),
+            None,
+            None,
+            Some("c1-1".to_string()),
+            None,
+        );
+
+        assert!(should_skip_stale_codex_agent_import(None, 10, 20));
+        assert!(!should_skip_stale_codex_agent_import(None, 20, 20));
+        assert!(!should_skip_stale_codex_agent_import(
+            Some(&existing),
+            10,
+            20
+        ));
     }
 
     #[test]

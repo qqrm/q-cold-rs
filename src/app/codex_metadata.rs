@@ -10,6 +10,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
     synced += sync_task_flow_records(&existing)?;
     existing = state::load_task_records(None, 1000)?;
     let mut claimed_session_paths = claimed_codex_session_paths(&existing);
+    let import_cutoff = codex_telemetry_retention_cutoff(unix_now());
 
     for agent in agent_rows {
         if is_queue_agent_track(&agent.track) {
@@ -22,6 +23,14 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
         let existing_record = existing
             .iter()
             .find(|record| record.agent_id.as_deref() == Some(agent.id.as_str()));
+        let agent_running = process_running(agent.pid);
+        if should_skip_stale_codex_agent_import(
+            existing_record,
+            agent.started_at,
+            import_cutoff,
+        ) {
+            continue;
+        }
         let mut available_session_paths = claimed_session_paths.clone();
         if let Some(path) = existing_record.and_then(codex_session_path_from_task_record) {
             available_session_paths.remove(&path);
@@ -53,7 +62,7 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
             |record| record.id.clone(),
         );
         let status = existing_record.map_or_else(|| {
-                if summary.task_complete || !process_running(agent.pid) {
+                if summary.task_complete || !agent_running {
                     "closed:unknown".to_string()
                 } else {
                     "open".to_string()
@@ -112,6 +121,14 @@ pub(crate) fn sync_codex_task_records() -> Result<usize> {
     }
 
     Ok(synced)
+}
+
+fn should_skip_stale_codex_agent_import(
+    existing_record: Option<&state::TaskRecordRow>,
+    agent_started_at: u64,
+    import_cutoff: u64,
+) -> bool {
+    existing_record.is_none() && agent_started_at < import_cutoff
 }
 
 fn codex_record_cwd(agent_cwd: Option<PathBuf>, summary_cwd: Option<&str>) -> Option<PathBuf> {
