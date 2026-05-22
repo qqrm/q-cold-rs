@@ -14,6 +14,12 @@ repo-local code owns it.
   slice: this file, `README.md`, and directly touched code or tests.
 - Keep the primary checkout clean unless the current task is actively changing
   tracked files.
+- Once an agent is running from an agent-owned or managed worktree, keep repo
+  reads, searches, edits, and validation in that worktree, even for read-only
+  investigation. Do not silently switch to the primary checkout for context.
+  The narrow exception is a public task-flow control command whose contract
+  explicitly requires the primary checkout; announce that reason before using
+  it and keep the primary-checkout access limited to that control action.
 - When a managed task-flow environment is available for this checkout, start
   tracked work from a clean primary checkout on `main` with
   `cargo qcold task open <task-slug> [profile]` and complete it through the
