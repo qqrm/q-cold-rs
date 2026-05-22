@@ -1,6 +1,5 @@
 use std::env;
 use std::ffi::OsString;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -319,7 +318,7 @@ fn apply_task_open_env(
     task_prompt: Option<&str>,
 ) {
     let codex_thread_id = nonempty_env("CODEX_THREAD_ID");
-    let codex_rollout_path = current_codex_rollout_path(codex_thread_id.as_deref());
+    let codex_rollout_path = crate::rollout::current_codex_rollout_path(codex_thread_id.as_deref());
     apply_task_open_env_values(
         command,
         task_sequence,
@@ -349,64 +348,6 @@ fn apply_task_open_env_values(
     if let Some(path) = codex_rollout_path {
         command.env("CODEX_ROLLOUT_PATH", path);
     }
-}
-
-fn current_codex_rollout_path(codex_thread_id: Option<&str>) -> Option<PathBuf> {
-    if let Some(path) = nonempty_env("CODEX_ROLLOUT_PATH").map(PathBuf::from) {
-        return Some(path);
-    }
-    let thread_id = codex_thread_id?;
-    let mut matches = Vec::new();
-    for root in codex_session_roots_from_env() {
-        matches.extend(find_rollout_paths_for_thread(&root, thread_id));
-    }
-    matches.sort();
-    matches.pop()
-}
-
-fn codex_session_roots_from_env() -> Vec<PathBuf> {
-    if let Some(home) = nonempty_env("CODEX_HOME") {
-        return vec![PathBuf::from(home).join("sessions")];
-    }
-    let Some(home) = env::var("HOME").ok() else {
-        return Vec::new();
-    };
-    let accounts = PathBuf::from(home).join(".codex-accounts");
-    let Ok(entries) = fs::read_dir(accounts) else {
-        return Vec::new();
-    };
-    entries
-        .flatten()
-        .map(|entry| entry.path().join("sessions"))
-        .filter(|path| path.is_dir())
-        .collect()
-}
-
-fn find_rollout_paths_for_thread(root: &Path, thread_id: &str) -> Vec<PathBuf> {
-    if !root.is_dir() {
-        return Vec::new();
-    }
-    let mut stack = vec![root.to_path_buf()];
-    let mut matches = Vec::new();
-    while let Some(dir) = stack.pop() {
-        let Ok(entries) = fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                stack.push(path);
-            } else if path.extension().and_then(|value| value.to_str()) == Some("jsonl")
-                && path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|name| name.contains(thread_id))
-            {
-                matches.push(path);
-            }
-        }
-    }
-    matches
 }
 
 fn nonempty_env(name: &str) -> Option<String> {

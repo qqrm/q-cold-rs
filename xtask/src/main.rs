@@ -13,6 +13,8 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
 mod quality;
+#[path = "../../src/rollout.rs"]
+mod rollout;
 
 const DEFAULT_PAUSED_TASK_TTL_HOURS: u64 = 2;
 const DEFAULT_BUNDLE_RETENTION_HOURS: u64 = 24;
@@ -206,9 +208,10 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     )?;
 
     let codex_thread_id = nonempty_env("CODEX_THREAD_ID").unwrap_or_default();
-    let codex_rollout_path = current_codex_rollout_path(nonempty_str(&codex_thread_id))
-        .map(|path| path.display().to_string())
-        .unwrap_or_default();
+    let codex_rollout_path =
+        crate::rollout::current_codex_rollout_path(nonempty_str(&codex_thread_id))
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
     let task = TaskEnv {
         task_id: branch.clone(),
         task_name: task_slug.to_string(),
@@ -399,29 +402,36 @@ fn closeout_command(args: &CloseoutArgs) -> Result<u8> {
 fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     let message = message.context("--message is required for success closeout")?;
     let agent_worktree = agent_return_worktree();
-    append_event(
-        &task.task_worktree,
-        "task-closeout-phase",
-        "ensure-primary-clean",
-    )?;
+    let mut phase = "start";
+    match closeout_success_inner(task, message, agent_worktree.as_deref(), &mut phase) {
+        Ok(code) => Ok(code),
+        Err(err) => {
+            let error = format!("{err:#}");
+            record_success_closeout_failure(task, phase, &error)?;
+            bail!("{error}");
+        }
+    }
+}
+
+fn closeout_success_inner(
+    task: &mut TaskEnv,
+    message: &str,
+    agent_worktree: Option<&Path>,
+    phase: &mut &'static str,
+) -> Result<u8> {
+    record_closeout_phase(task, phase, "ensure-primary-clean")?;
     ensure_clean(&task.primary_repo_path, "primary checkout")
         .context("closeout phase ensure-primary-clean failed")?;
-    append_event(&task.task_worktree, "task-closeout-phase", "preflight")?;
+    record_closeout_phase(task, phase, "preflight")?;
     run_preflight(PreflightProfile::default()).context("closeout phase preflight failed")?;
     if !git_output(&task.task_worktree, ["status", "--porcelain"])?.is_empty() {
-        append_event(
-            &task.task_worktree,
-            "task-closeout-phase",
-            "commit-task-worktree",
-        )?;
-        run_git(&task.task_worktree, ["add", "-A"])?;
-        run_git(&task.task_worktree, ["commit", "-m", message])?;
+        record_closeout_phase(task, phase, "commit-task-worktree")?;
+        run_git(&task.task_worktree, ["add", "-A"])
+            .context("closeout phase commit-task-worktree failed")?;
+        run_git(&task.task_worktree, ["commit", "-m", message])
+            .context("closeout phase commit-task-worktree failed")?;
     }
-    append_event(
-        &task.task_worktree,
-        "task-closeout-phase",
-        "deliver-to-primary",
-    )?;
+    record_closeout_phase(task, phase, "deliver-to-primary")?;
     deliver_task_branch_to_primary(task).context("closeout phase deliver-to-primary failed")?;
     task.status = "closed:success".to_string();
     task.updated_at = unix_now().to_string();
@@ -430,6 +440,7 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     let worktree = task.task_worktree.clone();
     let branch = task.task_branch.clone();
     if let Some(agent_worktree) = agent_worktree {
+        record_closeout_phase(task, phase, "agent-return-cleanup")?;
         run_git(&worktree, ["checkout", "--detach"])?;
         let task_state = worktree.join(".task");
         if task_state.exists() {
@@ -442,6 +453,7 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
         println!("QCOLD_AGENT_WORKTREE={}", agent_worktree.display());
         return Ok(0);
     }
+    record_closeout_phase(task, phase, "cleanup")?;
     run_git(
         &task.primary_repo_path,
         ["worktree", "remove", path_arg(&worktree)],
@@ -449,6 +461,53 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     run_git(&task.primary_repo_path, ["branch", "-d", &branch])?;
     println!("task-closeout\tsuccess\t{}", task.task_name);
     Ok(0)
+}
+
+fn record_closeout_phase(
+    task: &TaskEnv,
+    current: &mut &'static str,
+    next: &'static str,
+) -> Result<()> {
+    *current = next;
+    append_event(&task.task_worktree, "task-closeout-phase", next)
+}
+
+fn record_success_closeout_failure(task: &mut TaskEnv, phase: &str, error: &str) -> Result<()> {
+    task.status = "failed-closeout".to_string();
+    task.updated_at = unix_now().to_string();
+    write_task_env(task)?;
+    append_event(&task.task_worktree, "task-closeout-error", error)?;
+    append_event(
+        &task.task_worktree,
+        "task-closeout",
+        &format!("failed-closeout phase={phase}"),
+    )?;
+
+    let bundle = create_task_archive_bundle(task)
+        .context("failed to create failed-closeout diagnostic bundle")?;
+    let task_status = worktree_status_summary(&task.task_worktree)?;
+    let primary_status = worktree_status_summary(&task.primary_repo_path)?;
+    let receipt = TerminalReceipt {
+        outcome: "failed-closeout",
+        reason: Some(error),
+        closeout_category: closeout_category("failed-closeout", &task_status),
+        current_flow_problem: "closeout_failure",
+        historical_flow_problem: historical_flow_problem(&task_status),
+        closeout_failure_phase: Some(phase),
+        closeout_failure_error: Some(error),
+        primary_clean: primary_status.dirty_file_count == 0,
+        worktree_removed: false,
+        branch_removed: false,
+        primary_status,
+        task_status,
+    };
+    add_terminal_receipt_to_bundle(&bundle, &receipt)
+        .context("failed to append failed-closeout diagnostic receipt")?;
+    println!("task-closeout\tfailed-closeout\t{}", task.task_name);
+    println!("CLOSEOUT_FAILURE_PHASE={phase}");
+    println!("BUNDLE_PATH={}", bundle.display());
+    println!("TASK_WORKTREE={}", task.task_worktree.display());
+    Ok(())
 }
 
 fn deliver_task_branch_to_primary(task: &TaskEnv) -> Result<()> {
@@ -500,8 +559,8 @@ fn closeout_non_success(
         reason.unwrap_or(outcome),
     )?;
     let bundle = create_task_archive_bundle(task)?;
-    let primary_clean = git_output(&task.primary_repo_path, ["status", "--porcelain"])?.is_empty();
     let task_status = worktree_status_summary(&task.task_worktree)?;
+    let primary_status = worktree_status_summary(&task.primary_repo_path)?;
     std::env::set_current_dir(&task.primary_repo_path).with_context(|| {
         format!(
             "failed to leave task worktree for cleanup: {}",
@@ -523,9 +582,14 @@ fn closeout_non_success(
         outcome,
         reason,
         closeout_category,
-        primary_clean,
+        current_flow_problem: current_flow_problem(outcome),
+        historical_flow_problem: historical_flow_problem(&task_status),
+        closeout_failure_phase: None,
+        closeout_failure_error: None,
+        primary_clean: primary_status.dirty_file_count == 0,
         worktree_removed,
         branch_removed,
+        primary_status,
         task_status,
     };
     add_terminal_receipt_to_bundle(&bundle, &receipt)?;
@@ -541,9 +605,14 @@ struct TerminalReceipt<'a> {
     outcome: &'a str,
     reason: Option<&'a str>,
     closeout_category: &'a str,
+    current_flow_problem: &'a str,
+    historical_flow_problem: &'a str,
+    closeout_failure_phase: Option<&'a str>,
+    closeout_failure_error: Option<&'a str>,
     primary_clean: bool,
     worktree_removed: bool,
     branch_removed: bool,
+    primary_status: WorktreeStatusSummary,
     task_status: WorktreeStatusSummary,
 }
 
@@ -590,12 +659,33 @@ fn is_conflict_status(line: &str) -> bool {
 fn closeout_category(outcome: &str, task_status: &WorktreeStatusSummary) -> &'static str {
     if task_status.conflict_file_count > 0 {
         "task_worktree_conflicts"
+    } else if outcome == "failed-closeout" {
+        "closeout_failure"
     } else if outcome == "blocked" {
         "operator_blocked"
     } else if outcome == "failed" {
         "operator_failed"
     } else {
         "unknown"
+    }
+}
+
+fn current_flow_problem(outcome: &str) -> &'static str {
+    match outcome {
+        "blocked" => "operator_blocked",
+        "failed" => "operator_failed",
+        "failed-closeout" => "closeout_failure",
+        _ => "none",
+    }
+}
+
+fn historical_flow_problem(task_status: &WorktreeStatusSummary) -> &'static str {
+    if task_status.conflict_file_count > 0 {
+        "task_worktree_conflicts"
+    } else if task_status.dirty_file_count > 0 {
+        "task_worktree_dirty"
+    } else {
+        "none"
     }
 }
 
@@ -643,6 +733,9 @@ fn render_terminal_receipt(receipt: &TerminalReceipt<'_>) -> String {
     let primary_clean = yes_no(receipt.primary_clean);
     let worktree_removed = yes_no(receipt.worktree_removed);
     let branch_removed = yes_no(receipt.branch_removed);
+    let primary_dirty_file_count = receipt.primary_status.dirty_file_count.to_string();
+    let primary_conflict_file_count = receipt.primary_status.conflict_file_count.to_string();
+    let primary_conflict_paths = receipt.primary_status.conflict_paths.join("\n");
     let dirty_file_count = receipt.task_status.dirty_file_count.to_string();
     let conflict_file_count = receipt.task_status.conflict_file_count.to_string();
     let conflict_paths = receipt.task_status.conflict_paths.join("\n");
@@ -650,7 +743,36 @@ fn render_terminal_receipt(receipt: &TerminalReceipt<'_>) -> String {
         ("OUTCOME", receipt.outcome.to_string()),
         ("REASON", receipt.reason.unwrap_or("").to_string()),
         ("CLOSEOUT_CATEGORY", receipt.closeout_category.to_string()),
+        (
+            "CURRENT_FLOW_PROBLEM",
+            receipt.current_flow_problem.to_string(),
+        ),
+        (
+            "HISTORICAL_FLOW_PROBLEM",
+            receipt.historical_flow_problem.to_string(),
+        ),
+        (
+            "CLOSEOUT_FAILURE_PHASE",
+            receipt.closeout_failure_phase.unwrap_or("").to_string(),
+        ),
+        (
+            "CLOSEOUT_FAILURE_ERROR",
+            receipt.closeout_failure_error.unwrap_or("").to_string(),
+        ),
         ("PRIMARY_CHECKOUT_CLEAN", primary_clean),
+        (
+            "PRIMARY_CHECKOUT_STATUS_SHORT",
+            receipt.primary_status.status_short.clone(),
+        ),
+        (
+            "PRIMARY_CHECKOUT_DIRTY_FILE_COUNT",
+            primary_dirty_file_count,
+        ),
+        (
+            "PRIMARY_CHECKOUT_CONFLICT_FILE_COUNT",
+            primary_conflict_file_count,
+        ),
+        ("PRIMARY_CHECKOUT_CONFLICTS", primary_conflict_paths),
         ("TASK_WORKTREE_REMOVED", worktree_removed),
         ("LOCAL_TASK_BRANCH_REMOVED", branch_removed),
         (

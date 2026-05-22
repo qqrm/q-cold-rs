@@ -1,10 +1,6 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
     #[test]
     fn sequence_anchor_is_zero_padded_operator_order() {
         assert_eq!(sequence_anchor(1).as_deref(), Some("001"));
@@ -80,7 +76,7 @@ mod tests {
 
     #[test]
     fn refresh_task_codex_env_finds_rollout_by_thread_id() {
-        let _lock = ENV_LOCK.lock().unwrap();
+        let _lock = crate::rollout::ROLLOUT_ENV_LOCK.lock().unwrap();
         let _rollout = EnvVarGuard::capture("CODEX_ROLLOUT_PATH");
         let _thread = EnvVarGuard::capture("CODEX_THREAD_ID");
         let _codex_home = EnvVarGuard::capture("CODEX_HOME");
@@ -113,19 +109,139 @@ mod tests {
             outcome: "failed",
             reason: Some("rebase conflict"),
             closeout_category,
+            current_flow_problem: current_flow_problem("failed"),
+            historical_flow_problem: historical_flow_problem(&task_status),
+            closeout_failure_phase: None,
+            closeout_failure_error: None,
             primary_clean: false,
             worktree_removed: true,
             branch_removed: false,
+            primary_status: parse_worktree_status_summary(" M README.md\n".to_string()),
             task_status,
         };
 
         let rendered = render_terminal_receipt(&receipt);
 
         assert!(rendered.contains("CLOSEOUT_CATEGORY=task_worktree_conflicts"));
+        assert!(rendered.contains("CURRENT_FLOW_PROBLEM=operator_failed"));
+        assert!(rendered.contains("HISTORICAL_FLOW_PROBLEM=task_worktree_conflicts"));
+        assert!(rendered.contains("CLOSEOUT_FAILURE_PHASE="));
+        assert!(rendered.contains("PRIMARY_CHECKOUT_DIRTY_FILE_COUNT=1"));
         assert!(rendered.contains("TASK_WORKTREE_DIRTY_FILE_COUNT=2"));
         assert!(rendered.contains("TASK_WORKTREE_CONFLICT_FILE_COUNT=1"));
         assert!(rendered.contains("TASK_WORKTREE_CONFLICTS=src/lib.rs"));
         assert!(rendered.contains("TASK_WORKTREE_STATUS_SHORT=$'UU src/lib.rs\\n"));
+    }
+
+    #[test]
+    fn terminal_receipt_records_failed_closeout_phase_without_cleanup() {
+        let task_status = parse_worktree_status_summary(" M src/main.rs\n".to_string());
+        let receipt = TerminalReceipt {
+            outcome: "failed-closeout",
+            reason: Some("closeout phase push failed"),
+            closeout_category: closeout_category("failed-closeout", &task_status),
+            current_flow_problem: current_flow_problem("failed-closeout"),
+            historical_flow_problem: historical_flow_problem(&task_status),
+            closeout_failure_phase: Some("deliver-to-primary"),
+            closeout_failure_error: Some("closeout phase push failed"),
+            primary_clean: true,
+            worktree_removed: false,
+            branch_removed: false,
+            primary_status: parse_worktree_status_summary(String::new()),
+            task_status,
+        };
+
+        let rendered = render_terminal_receipt(&receipt);
+
+        assert!(rendered.contains("OUTCOME=failed-closeout"));
+        assert!(rendered.contains("CURRENT_FLOW_PROBLEM=closeout_failure"));
+        assert!(rendered.contains("HISTORICAL_FLOW_PROBLEM=task_worktree_dirty"));
+        assert!(rendered.contains("CLOSEOUT_FAILURE_PHASE=deliver-to-primary"));
+        assert!(rendered.contains("CLOSEOUT_FAILURE_ERROR='closeout phase push failed'"));
+        assert!(rendered.contains("TASK_WORKTREE_REMOVED=no"));
+        assert!(rendered.contains("LOCAL_TASK_BRANCH_REMOVED=no"));
+    }
+
+    #[test]
+    fn failed_success_closeout_records_diagnostic_bundle_and_preserves_worktree() {
+        if !seven_zip_available() {
+            return;
+        }
+        let root = unique_test_dir("qcold-failed-closeout-diagnostic");
+        let primary = root.join("primary");
+        run_git_in(&root, ["init", path_arg(&primary)]);
+        run_git_in(&primary, ["config", "user.name", "tester"]);
+        run_git_in(&primary, ["config", "user.email", "tester@example.com"]);
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        run_git_in(&primary, ["add", "README.md"]);
+        run_git_in(&primary, ["commit", "-m", "seed"]);
+
+        let worktree = root.join("task");
+        run_git_in(
+            &primary,
+            [
+                "worktree",
+                "add",
+                "-b",
+                "task/closeout-fails",
+                path_arg(&worktree),
+                "HEAD",
+            ],
+        );
+        fs::write(worktree.join("change.txt"), "dirty\n").unwrap();
+        let mut task = TaskEnv {
+            task_id: "task/closeout-fails".into(),
+            task_name: "closeout-fails".into(),
+            task_branch: "task/closeout-fails".into(),
+            task_execution_anchor: "002".into(),
+            task_description: "closeout failure".into(),
+            task_worktree: worktree.clone(),
+            task_profile: "default".into(),
+            primary_repo_path: primary.clone(),
+            base_branch: "main".into(),
+            base_head: String::new(),
+            task_head: String::new(),
+            started_at: "1".into(),
+            status: "open".into(),
+            updated_at: "1".into(),
+            devcontainer_name: "host-shell".into(),
+            delivery_mode: "self-hosted-qcold".into(),
+            codex_thread_id: String::new(),
+            codex_rollout_path: String::new(),
+        };
+
+        record_success_closeout_failure(&mut task, "deliver-to-primary", "push failed").unwrap();
+
+        assert_eq!(task.status, "failed-closeout");
+        assert!(worktree.is_dir());
+        let task_env = fs::read_to_string(worktree.join(".task/task.env")).unwrap();
+        assert!(task_env.contains("STATUS=failed-closeout"));
+        assert!(git_output(&primary, ["branch", "--list", "task/closeout-fails"])
+            .unwrap()
+            .contains("task/closeout-fails"));
+
+        let bundle = fs::read_dir(primary.join("bundles"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.extension().and_then(|value| value.to_str()) == Some("zip"))
+            .unwrap();
+        let extract = root.join("extract");
+        fs::create_dir_all(&extract).unwrap();
+        let status = std::process::Command::new("7z")
+            .current_dir(&extract)
+            .args(["x", path_arg(&bundle), "metadata/terminal-receipt.env"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let receipt = fs::read_to_string(extract.join("metadata/terminal-receipt.env")).unwrap();
+        assert!(receipt.contains("OUTCOME=failed-closeout"));
+        assert!(receipt.contains("CURRENT_FLOW_PROBLEM=closeout_failure"));
+        assert!(receipt.contains("HISTORICAL_FLOW_PROBLEM=task_worktree_dirty"));
+        assert!(receipt.contains("CLOSEOUT_FAILURE_PHASE=deliver-to-primary"));
+        assert!(receipt.contains("CLOSEOUT_FAILURE_ERROR='push failed'"));
+        assert!(receipt.contains("TASK_WORKTREE_REMOVED=no"));
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -257,6 +373,15 @@ mod tests {
 
     fn run_git_in<const N: usize>(repo: &Path, args: [&str; N]) {
         run_git(repo, args).unwrap();
+    }
+
+    fn seven_zip_available() -> bool {
+        std::process::Command::new("7z")
+            .arg("--help")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
     }
 
     struct EnvVarGuard {

@@ -3,6 +3,7 @@ mod agents;
 mod prompt;
 mod repo_bundle;
 mod repository;
+mod rollout;
 mod state;
 mod status;
 mod telegram;
