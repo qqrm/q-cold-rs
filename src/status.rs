@@ -34,12 +34,10 @@ pub fn snapshot_for(primary_root: &Path) -> Result<String> {
         .iter()
         .filter(|task| task.status == "failed-closeout")
         .count();
-    let terminal_ready = dirty_paths.is_empty() && tasks.is_empty();
     let mut lines = Vec::new();
     lines.push(format!(
-        "qcold-status\tterminal_ready={}\topen_tasks={}\tinterrupted_tasks={}\t\
+        "qcold-status\topen_tasks={}\tinterrupted_tasks={}\t\
          incomplete_closeouts={}\tprimary_dirty={}\toverlaps={}",
-        if terminal_ready { "yes" } else { "no" },
         tasks.len(),
         0,
         incomplete,
@@ -330,10 +328,6 @@ fn format_snapshot_for_telegram(snapshot: &str) -> String {
 
     let mut lines = Vec::new();
     lines.push("Q-COLD status".to_string());
-    lines.push(format!(
-        "Terminal ready: {}",
-        if summary.terminal_ready { "yes" } else { "no" }
-    ));
 
     if let Some(primary) = primary {
         lines.push(format!("Repository: {}", short_path(&primary.root)));
@@ -382,24 +376,11 @@ fn format_snapshot_for_telegram(snapshot: &str) -> String {
         }
     }
 
-    if !summary.terminal_ready {
-        lines.push(String::new());
-        lines.push("Next step".to_string());
-        if summary.incomplete_closeouts > 0 {
-            lines.push("Resolve failed closeouts or clear stale task state.".to_string());
-        } else if summary.open_tasks > 0 {
-            lines.push("Finish or close the attached tasks.".to_string());
-        } else if summary.primary_dirty > 0 || summary.overlaps > 0 {
-            lines.push("Clean the primary checkout drift.".to_string());
-        }
-    }
-
     lines.join("\n")
 }
 
 #[derive(Default)]
 struct StatusSummary {
-    terminal_ready: bool,
     open_tasks: usize,
     interrupted_tasks: usize,
     incomplete_closeouts: usize,
@@ -415,7 +396,6 @@ impl StatusSummary {
                 continue;
             };
             match key {
-                "terminal_ready" => summary.terminal_ready = value == "yes",
                 "open_tasks" => summary.open_tasks = value.parse().unwrap_or_default(),
                 "interrupted_tasks" => {
                     summary.interrupted_tasks = value.parse().unwrap_or_default();
@@ -470,7 +450,7 @@ mod tests {
     #[test]
     fn telegram_status_is_human_readable() {
         let raw = concat!(
-            "qcold-status\tterminal_ready=no\topen_tasks=3\tinterrupted_tasks=0\t",
+            "qcold-status\topen_tasks=3\tinterrupted_tasks=0\t",
             "incomplete_closeouts=2\tprimary_dirty=0\toverlaps=0\n",
             "primary\t/workspace/repos/github/repository\t",
             "managed_root=/workspace/repos/github/WT/repository\tbranch_context=primary\n",
@@ -482,7 +462,7 @@ mod tests {
         );
         let formatted = format_snapshot_for_telegram(raw);
         assert!(formatted.contains("Q-COLD status"));
-        assert!(formatted.contains("Terminal ready: no"));
+        assert!(!formatted.contains("Terminal ready:"));
         assert!(formatted.contains("Tasks: 3 attached, 0 interrupted, 2 incomplete closeout"));
         assert!(formatted.contains("1. review-batch-4"));
         assert!(formatted.contains("status: failed closeout"));

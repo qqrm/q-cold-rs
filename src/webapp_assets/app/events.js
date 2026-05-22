@@ -344,12 +344,11 @@
 
     function renderSystemStrip() {
       const summary = model.status.summary;
-      const terminalReady = summary.terminal_ready === 'yes';
       const openTasks = Number(summary.open_tasks || 0);
       const incomplete = Number(summary.incomplete_closeouts || 0);
       const dirty = Number(summary.primary_dirty || 0);
-      document.getElementById('ready-pill').textContent = terminalReady ? 'terminal ready' : 'terminal hold';
-      document.getElementById('ready-pill').className = terminalReady ? 'badge ready' : 'badge warn';
+      document.getElementById('ready-pill').textContent = 'status';
+      document.getElementById('ready-pill').className = 'badge';
       document.getElementById('repo-pill').textContent = `${state.repository.name} / ${state.repository.branch}`;
       const open = model.taskRecords.open || 0;
       const failed = model.taskRecords.failed || 0;
@@ -366,8 +365,8 @@
       idleSeg.className = 'segment idle';
       idleSeg.style.flex = Math.max(total - open - failed, 1);
       bar.append(openSeg, failedSeg, idleSeg);
-      document.getElementById('strip-terminal').textContent = terminalReady ? 'Terminal OK' : 'Terminal hold';
-      document.getElementById('strip-terminal').className = terminalReady ? 'badge ready' : 'badge warn';
+      document.getElementById('strip-terminal').textContent = `${openTasks} worktree${openTasks === 1 ? '' : 's'}`;
+      document.getElementById('strip-terminal').className = 'badge';
       document.getElementById('strip-repo').textContent = `${state.repository.name} / ${state.repository.branch}`;
       document.getElementById('strip-tasks').textContent = `${open} task records / `
         + `${openTasks} worktrees / ${failed} failed${dirty ? ` / ${dirty} dirty` : ''}`;

@@ -17,6 +17,7 @@
 mod task_flow_helpers;
 
 use assert_cmd::Command as AssertCommand;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use std::env;
 use std::fs;
@@ -385,7 +386,8 @@ fn status_from_managed_worktree_without_registered_repo_uses_primary_inventory()
     run_qcold_with_registry(&worktree, &fixture.fakebin, &state_dir, &["status"])
         .assert()
         .success()
-        .stdout(contains("qcold-status\tterminal_ready=no\topen_tasks=2"))
+        .stdout(contains("qcold-status\topen_tasks=2"))
+        .stdout(contains("terminal_ready").not())
         .stdout(contains(format!("primary\t{}", fixture.primary.display())))
         .stdout(contains("task\tagent-context\topen"))
         .stdout(contains("task\tpeer-agent\topen"));
