@@ -179,6 +179,15 @@ pub fn write_fake_container_tools(dir: &Path, validation_log: &Path) {
             r#"#!/usr/bin/env bash
 set -euo pipefail
 case "${{1:-}}:${{2:-}}:${{3:-}}" in
+  fmt:--check:*)
+    exit 0
+    ;;
+  test:*:*)
+    exit 0
+    ;;
+  clippy:*:*)
+    exit 0
+    ;;
   xtask:task:validate-success)
     printf 'verify-autofix|%s|%s|%s|%s|%s\n' "$PWD" \
       "${{QCOLD_TASKFLOW_CONTEXT:-}}" "${{QCOLD_TASKFLOW_DEVCONTAINER_ID:-}}" \

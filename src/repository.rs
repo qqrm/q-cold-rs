@@ -13,6 +13,7 @@ const DEFAULT_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 #[derive(Clone, Copy)]
 pub enum AdapterContext {
     ActiveRepository,
+    TaskFlowRepository,
     CwdManagedWorktree,
 }
 
@@ -157,7 +158,9 @@ fn resolve_unchecked(context: AdapterContext) -> Result<ResolvedRepository> {
         let root = canonical_root(Path::new(&root))?;
         if root.join(".task/task.env").is_file() {
             let repo = match context {
-                AdapterContext::ActiveRepository => config_for_managed_worktree_primary(&root)?,
+                AdapterContext::ActiveRepository | AdapterContext::TaskFlowRepository => {
+                    config_for_managed_worktree_primary(&root)?
+                }
                 AdapterContext::CwdManagedWorktree => config_for_managed_worktree(&root)?,
             };
             return Ok(ResolvedRepository {
@@ -208,6 +211,14 @@ fn resolve_unchecked(context: AdapterContext) -> Result<ResolvedRepository> {
             source: "current checkout fallback".to_string(),
         });
     }
+    if matches!(context, AdapterContext::TaskFlowRepository) {
+        if let Some(repo) = current_registered_checkout_config()? {
+            return Ok(ResolvedRepository {
+                source: format!("cwd checkout {}", repo.root.display()),
+                repo,
+            });
+        }
+    }
     if let Some(repo) = repos.iter().find(|repo| repo.active) {
         return Ok(ResolvedRepository {
             repo: repo.clone(),
@@ -239,10 +250,14 @@ fn ensure_cwd_matches_resolved_repo(
         None
     };
     match context {
-        AdapterContext::ActiveRepository if cwd_primary.as_deref() == Some(repo.root.as_path()) => {
+        AdapterContext::ActiveRepository | AdapterContext::TaskFlowRepository
+            if cwd_primary.as_deref() == Some(repo.root.as_path()) =>
+        {
             return Ok(());
         }
-        AdapterContext::ActiveRepository if is_agent_worktree_for_primary(&cwd_root, &repo.root) => {
+        AdapterContext::ActiveRepository | AdapterContext::TaskFlowRepository
+            if is_agent_worktree_for_primary(&cwd_root, &repo.root) =>
+        {
             return Ok(());
         }
         AdapterContext::CwdManagedWorktree if repo.root == cwd_root => return Ok(()),
@@ -280,6 +295,21 @@ fn current_checkout_config() -> Result<Option<RepositoryConfig>> {
         Err(_) => return Ok(None),
     };
     current_checkout_config_for_root(&root).map(Some)
+}
+
+fn current_registered_checkout_config() -> Result<Option<RepositoryConfig>> {
+    let root = match git_root() {
+        Ok(root) => canonical_root(&root)?,
+        Err(_) => return Ok(None),
+    };
+    if root.join(".task/task.env").is_file() {
+        return config_for_managed_worktree_primary(&root).map(Some);
+    }
+    if let Some(mut repo) = registered_for_root(&root)? {
+        repo.active = true;
+        return Ok(Some(repo));
+    }
+    Ok(None)
 }
 
 fn current_checkout_config_for_root(root: &Path) -> Result<RepositoryConfig> {

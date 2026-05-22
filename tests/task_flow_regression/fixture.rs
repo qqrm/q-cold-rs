@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "shared integration-test fixture supports several task-flow regression slices"
+)]
+
 mod fake_tools;
 
 use assert_cmd::Command as AssertCommand;
@@ -62,6 +67,20 @@ fn test_binary_path(bin: &str) -> PathBuf {
          QCOLD_TASKFLOW_CONTAINER_ROOT/cargo-target/default/debug, CARGO_TARGET_DIR/debug, \
          qcold sibling, and current_exe debug sibling"
     );
+}
+
+fn real_cargo_path() -> PathBuf {
+    if let Some(path) = env::var_os("CARGO").map(PathBuf::from) {
+        if path.is_absolute() {
+            return path;
+        }
+    }
+    let output = Command::new("sh")
+        .args(["-c", "command -v cargo"])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "failed to resolve cargo from PATH");
+    PathBuf::from(String::from_utf8(output.stdout).unwrap().trim())
 }
 
 pub(crate) fn submodule_materialized(repo: &Path, path: &str) -> bool {
@@ -161,13 +180,13 @@ pub(crate) struct Fixture {
     pub(crate) temp: TempDir,
     pub(crate) remote: PathBuf,
     pub(crate) primary: PathBuf,
+    state_dir: PathBuf,
     pub(crate) fakebin: PathBuf,
     fakecontainerbin: PathBuf,
     docker_state: PathBuf,
     docker_images: PathBuf,
     devcontainer_log: PathBuf,
     glab_state: PathBuf,
-    state_dir: PathBuf,
     pub(crate) validation_log: PathBuf,
     notification_env_file: PathBuf,
     telegram: TelegramStub,
@@ -246,37 +265,6 @@ impl Fixture {
             .args(["remote", "set-head", "origin", BASE_BRANCH])
             .status();
 
-        let sub1 = create_submodule_remote(temp.path(), "cpp-btree");
-        let sub2 = create_submodule_remote(temp.path(), "json11");
-        git(
-            &primary,
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                sub1.to_str().unwrap(),
-                "cpp-btree",
-            ],
-        );
-        git(
-            &primary,
-            &[
-                "-c",
-                "protocol.file.allow=always",
-                "submodule",
-                "add",
-                sub2.to_str().unwrap(),
-                "json11",
-            ],
-        );
-        git(&primary, &["add", "."]);
-        git(&primary, &["commit", "-m", "init"]);
-        git(&primary, &["push", "origin", BASE_BRANCH]);
-        git(&primary, &["submodule", "deinit", "-f", "--all"]);
-        git(&primary, &["reset", "--hard", "HEAD"]);
-        git(&primary, &["clean", "-ffd"]);
-
         fake_tools::write_fake_docker(&fakebin.join("docker"));
         fake_tools::write_fake_container_tools(&fakecontainerbin, &validation_log);
         fake_tools::write_fake_devcontainer(&fakebin.join("devcontainer"));
@@ -286,13 +274,13 @@ impl Fixture {
             temp,
             remote,
             primary,
+            state_dir,
             fakebin,
             fakecontainerbin,
             docker_state,
             docker_images,
             devcontainer_log,
             glab_state,
-            state_dir,
             validation_log,
             notification_env_file,
             telegram: TelegramStub::start(),
@@ -322,7 +310,6 @@ impl Fixture {
         cmd.current_dir(repo)
             .args(args)
             .env_remove("QCOLD_TASKFLOW_CONTAINER_ROOT")
-            .env_remove("CARGO_TARGET_DIR")
             .env_remove("QCOLD_TASKFLOW_CONTEXT")
             .env_remove("QCOLD_TASKFLOW_PRIMARY_REPO_PATH")
             .env_remove("QCOLD_TASKFLOW_TASK_ID")
@@ -332,6 +319,8 @@ impl Fixture {
             .env("QCOLD_REPO_ROOT", repo)
             .env("QCOLD_STATE_DIR", &self.state_dir)
             .env("QCOLD_XTASK_MANIFEST", xtask_process_manifest())
+            .env("CARGO", real_cargo_path())
+            .env("CARGO_TARGET_DIR", self.temp.path().join("cargo-target"))
             .env(
                 "QCOLD_TASKFLOW_TEST_ASSUME_CONTAINER_RUNTIME",
                 if assume_container_runtime { "1" } else { "0" },

@@ -134,30 +134,32 @@ mod tests {
     }
 
     #[test]
-    fn terminal_receipt_records_failed_closeout_phase_without_cleanup() {
-        let task_status = parse_worktree_status_summary(" M src/main.rs\n".to_string());
+    fn failed_closeout_receipt_separates_current_and_historical_problems() {
+        let task_status =
+            parse_worktree_status_summary("UU src/lib.rs\n M README.md\n".to_string());
         let receipt = TerminalReceipt {
             outcome: "failed-closeout",
-            reason: Some("closeout phase push failed"),
+            reason: Some("closeout phase deliver-to-primary failed: task rebase failed"),
             closeout_category: closeout_category("failed-closeout", &task_status),
             current_flow_problem: current_flow_problem("failed-closeout"),
             historical_flow_problem: historical_flow_problem(&task_status),
             closeout_failure_phase: Some("deliver-to-primary"),
-            closeout_failure_error: Some("closeout phase push failed"),
-            primary_clean: true,
+            closeout_failure_error: Some("task rebase failed"),
+            primary_clean: false,
             worktree_removed: false,
             branch_removed: false,
-            primary_status: parse_worktree_status_summary(String::new()),
+            primary_status: parse_worktree_status_summary(" M README.md\n".to_string()),
             task_status,
         };
 
         let rendered = render_terminal_receipt(&receipt);
 
         assert!(rendered.contains("OUTCOME=failed-closeout"));
-        assert!(rendered.contains("CURRENT_FLOW_PROBLEM=closeout_failure"));
-        assert!(rendered.contains("HISTORICAL_FLOW_PROBLEM=task_worktree_dirty"));
+        assert!(rendered.contains("CLOSEOUT_CATEGORY=success_closeout_failed"));
+        assert!(rendered.contains("CURRENT_FLOW_PROBLEM=success_closeout_failed"));
+        assert!(rendered.contains("HISTORICAL_FLOW_PROBLEM=task_worktree_conflicts"));
         assert!(rendered.contains("CLOSEOUT_FAILURE_PHASE=deliver-to-primary"));
-        assert!(rendered.contains("CLOSEOUT_FAILURE_ERROR='closeout phase push failed'"));
+        assert!(rendered.contains("CLOSEOUT_FAILURE_ERROR='task rebase failed'"));
         assert!(rendered.contains("TASK_WORKTREE_REMOVED=no"));
         assert!(rendered.contains("LOCAL_TASK_BRANCH_REMOVED=no"));
     }
@@ -235,7 +237,7 @@ mod tests {
         assert!(status.success());
         let receipt = fs::read_to_string(extract.join("metadata/terminal-receipt.env")).unwrap();
         assert!(receipt.contains("OUTCOME=failed-closeout"));
-        assert!(receipt.contains("CURRENT_FLOW_PROBLEM=closeout_failure"));
+        assert!(receipt.contains("CURRENT_FLOW_PROBLEM=success_closeout_failed"));
         assert!(receipt.contains("HISTORICAL_FLOW_PROBLEM=task_worktree_dirty"));
         assert!(receipt.contains("CLOSEOUT_FAILURE_PHASE=deliver-to-primary"));
         assert!(receipt.contains("CLOSEOUT_FAILURE_ERROR='push failed'"));

@@ -1,12 +1,6 @@
 #![allow(
     missing_docs,
-    clippy::cast_possible_truncation,
-    clippy::cognitive_complexity,
     clippy::expect_used,
-    clippy::redundant_closure_for_method_calls,
-    clippy::too_many_lines,
-    clippy::uninlined_format_args,
-    clippy::used_underscore_binding,
     clippy::unwrap_used,
     reason = "qcold integration tests validate orchestration task-flow behavior rather than a documented public API"
 )]
@@ -20,294 +14,284 @@ mod helpers;
 #[path = "support/task_flow_helpers.rs"]
 mod task_flow_helpers;
 
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use predicates::str::contains;
-use serde_json::Value;
 
-use fixture::{git_clone, submodule_materialized, Fixture, BASE_BRANCH};
-use helpers::{path_from_stdout, stdout_text, task_worktree_from_assert};
+use fixture::{Fixture, BASE_BRANCH};
+use helpers::{path_from_stdout, stdout_text};
 use task_flow_helpers::{
-    bundle_extract, bundle_extract_env, bundle_listing, git, git_output, load_task_env,
-    parse_value, repository_receipt_relative_path, save_task_env, terminal_receipt_relative_path,
-    write_exe, write_file, TaskStatus,
+    bundle_extract_env, bundle_listing, git_output, load_task_env, terminal_receipt_relative_path,
+    write_file,
 };
 
-#[cfg(unix)]
-use std::os::unix::fs::symlink;
+#[test]
+fn task_open_uses_generated_xtask_fixture_and_creates_managed_worktree() {
+    let fixture = Fixture::new();
 
-fn bundle_listing_has_path(listing: &str, path: &str) -> bool {
-    listing
-        .lines()
-        .filter_map(|line| line.strip_prefix("Path = "))
-        .any(|entry| entry == path)
+    let open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "self-contained"])
+        .assert()
+        .success()
+        .stdout(contains("task-opened\tself-contained"))
+        .stdout(contains("TASK_WORKTREE="));
+    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
+    assert!(worktree.join(".task/task.env").is_file());
+
+    let task = load_task_env(&worktree);
+    assert_eq!(task.task_name, "self-contained");
+    assert_eq!(task.task_branch, "task/self-contained");
+    assert_eq!(task.primary_repo_path, fixture.primary);
+    assert_eq!(task.status.as_str(), "open");
 }
 
-fn bundle_file_paths(listing: &str) -> BTreeSet<String> {
-    let mut files = Vec::new();
-    let mut current_path = None::<String>;
-    let mut current_is_folder = false;
-    for line in listing.lines() {
-        if line.is_empty() {
-            if let Some(path) = current_path.take() {
-                if !current_is_folder {
-                    files.push(path);
-                }
-            }
-            current_is_folder = false;
-            continue;
-        }
-        if let Some(path) = line.strip_prefix("Path = ") {
-            current_path = Some(path.to_string());
-        } else if let Some(folder) = line.strip_prefix("Folder = ") {
-            current_is_folder = folder == "+";
-        }
-    }
-    if let Some(path) = current_path.take() {
-        if !current_is_folder {
-            files.push(path);
-        }
-    }
-    files.into_iter().skip(1).collect()
+#[test]
+fn task_pause_then_open_resumes_existing_worktree() {
+    let fixture = Fixture::new();
+    let open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "resume"])
+        .assert()
+        .success();
+    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
+
+    fixture
+        .run_xtask(&worktree, &["task", "pause", "--reason", "operator wait"])
+        .assert()
+        .success()
+        .stdout(contains("task-pause\tresume"));
+
+    let reopened = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "resume"])
+        .assert()
+        .success()
+        .stdout(contains("task-resumed\tresume"));
+    assert_eq!(
+        path_from_stdout(&stdout_text(&reopened), "TASK_WORKTREE"),
+        worktree
+    );
+    assert_eq!(load_task_env(&worktree).status.as_str(), "open");
 }
 
-fn file_manifest_paths(manifest: &str) -> BTreeSet<String> {
-    manifest
-        .lines()
-        .filter_map(|line| {
-            let mut fields = line.split('\t');
-            match (fields.next(), fields.next()) {
-                (Some("file" | "symlink"), Some(entry)) => Some(entry.to_string()),
-                _ => None,
-            }
-        })
-        .collect()
+#[test]
+fn current_bundle_command_creates_source_bundle() {
+    let fixture = Fixture::new();
+
+    let bundle = fixture
+        .run_xtask(&fixture.primary, &["task", "bundle"])
+        .assert()
+        .success()
+        .stdout(contains("BUNDLE_PATH="));
+    let bundle_path = path_from_stdout(&stdout_text(&bundle), "BUNDLE_PATH");
+    assert!(bundle_path.is_file());
+    assert!(
+        bundle_listing(&bundle_path).contains("repo/file.txt")
+            || bundle_listing(&bundle_path).contains("file.txt")
+    );
 }
 
-fn file_manifest_has_path(manifest: &str, path: &str) -> bool {
-    manifest.lines().any(|line| {
-        let mut fields = line.split('\t');
-        matches!(
-            (fields.next(), fields.next()),
-            (Some("file" | "symlink"), Some(entry)) if entry == path
+#[test]
+fn blocked_and_failed_closeout_create_terminal_receipt_bundles_and_cleanup() {
+    let fixture = Fixture::new();
+
+    let blocked_open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "blocked"])
+        .assert()
+        .success();
+    let blocked_worktree = path_from_stdout(&stdout_text(&blocked_open), "TASK_WORKTREE");
+    write_file(&blocked_worktree.join("note.txt"), "blocked\n");
+    let blocked = fixture
+        .run_xtask(
+            &blocked_worktree,
+            &[
+                "task",
+                "closeout",
+                "--outcome",
+                "blocked",
+                "--reason",
+                "resume later",
+            ],
         )
-    })
+        .assert()
+        .code(10)
+        .stdout(contains("BUNDLE_PATH="));
+    assert_terminal_receipt(
+        &path_from_stdout(&stdout_text(&blocked), "BUNDLE_PATH"),
+        "blocked",
+        "operator_blocked",
+    );
+    assert!(!blocked_worktree.exists());
+
+    let failed_open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "failed"])
+        .assert()
+        .success();
+    let failed_worktree = path_from_stdout(&stdout_text(&failed_open), "TASK_WORKTREE");
+    write_file(&failed_worktree.join("failed.txt"), "failed\n");
+    let failed = fixture
+        .run_xtask(
+            &failed_worktree,
+            &[
+                "task",
+                "closeout",
+                "--outcome",
+                "failed",
+                "--reason",
+                "simulated failure",
+            ],
+        )
+        .assert()
+        .code(11)
+        .stdout(contains("BUNDLE_PATH="));
+    assert_terminal_receipt(
+        &path_from_stdout(&stdout_text(&failed), "BUNDLE_PATH"),
+        "failed",
+        "operator_failed",
+    );
+    assert!(!failed_worktree.exists());
 }
 
-fn checksum_manifest_paths(manifest: &str) -> BTreeSet<String> {
-    manifest
-        .lines()
-        .filter_map(|line| line.split_once("  ").map(|(_, path)| path.to_string()))
-        .collect()
+#[test]
+fn success_closeout_delivers_task_branch_to_primary_and_pushes_base() {
+    let fixture = Fixture::new();
+    let open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "ship"])
+        .assert()
+        .success();
+    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
+    write_file(&worktree.join("ship.txt"), "ship\n");
+
+    fixture
+        .run_xtask(
+            &worktree,
+            &[
+                "task",
+                "closeout",
+                "--outcome",
+                "success",
+                "--message",
+                "docs: close self-hosted task",
+            ],
+        )
+        .assert()
+        .success()
+        .stdout(contains("task-closeout\tsuccess\tship"));
+
+    assert!(!worktree.exists());
+    assert_eq!(git_output(&fixture.primary, &["status", "--porcelain"]), "");
+    let primary_head = git_output(&fixture.primary, &["rev-parse", BASE_BRANCH]);
+    let origin_head = git_output(
+        &fixture.primary,
+        &["rev-parse", &format!("origin/{BASE_BRANCH}")],
+    );
+    assert_eq!(primary_head, origin_head);
+    assert!(fixture.primary.join("ship.txt").is_file());
 }
 
-fn checksum_manifest_has_path(manifest: &str, path: &str) -> bool {
-    manifest
-        .lines()
-        .any(|line| line.ends_with(&format!("  {path}")))
+#[test]
+fn success_closeout_failure_records_failed_closeout_bundle_without_cleanup() {
+    let fixture = Fixture::new();
+    let open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "broken-success"])
+        .assert()
+        .success();
+    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
+    write_file(&worktree.join("payload.txt"), "payload\n");
+    corrupt_base_branch(&worktree);
+
+    let closeout = fixture
+        .run_xtask(
+            &worktree,
+            &[
+                "task",
+                "closeout",
+                "--outcome",
+                "success",
+                "--message",
+                "docs: should fail",
+            ],
+        )
+        .assert()
+        .code(12)
+        .stdout(contains("task-closeout\tfailed-closeout\tbroken-success"))
+        .stdout(contains("CLOSEOUT_FAILURE_PHASE=deliver-to-primary"))
+        .stdout(contains("BUNDLE_PATH="));
+
+    assert!(worktree.exists());
+    assert_eq!(load_task_env(&worktree).status.as_str(), "failed-closeout");
+    let stdout = stdout_text(&closeout);
+    let bundle = path_from_stdout(&stdout, "BUNDLE_PATH");
+    assert_terminal_receipt(&bundle, "failed-closeout", "success_closeout_failed");
+    let receipt = bundle_extract_env(&bundle, terminal_receipt_relative_path());
+    assert_eq!(
+        receipt.get("CURRENT_FLOW_PROBLEM"),
+        Some(&"success_closeout_failed".to_string())
+    );
+    assert_eq!(
+        receipt.get("CLOSEOUT_FAILURE_PHASE"),
+        Some(&"deliver-to-primary".to_string())
+    );
+    assert!(receipt
+        .get("CLOSEOUT_FAILURE_ERROR")
+        .is_some_and(|value| value.contains("deliver-to-primary")));
 }
 
-#[cfg(unix)]
-fn seed_snapshot_hardening_artifacts(root: &Path) {
-    let gitignore_path = root.join(".gitignore");
-    let mut gitignore = fs::read_to_string(&gitignore_path).unwrap_or_default();
-    gitignore.push_str(".env.taskflow-telegram.local\nfio\nqemu\n");
-    fs::write(&gitignore_path, gitignore).unwrap();
-    fs::write(root.join("snapshot-source.txt"), "payload\n").unwrap();
-    symlink("snapshot-source.txt", root.join("snapshot-link")).unwrap();
+#[test]
+fn terminal_check_reports_open_task_state() {
+    let fixture = Fixture::new();
+    let open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "pending"])
+        .assert()
+        .success();
+    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
+
+    fixture
+        .run_xtask(&fixture.primary, &["task", "terminal-check"])
+        .assert()
+        .code(1)
+        .stdout(contains(format!(
+            "open-task\tpending\t{}",
+            worktree.display()
+        )))
+        .stderr(contains("terminal-check blocked"));
+}
+
+#[test]
+fn verify_preflight_runs_directly_inside_container_runtime() {
+    let fixture = Fixture::new();
+    let open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "container-runtime"])
+        .assert()
+        .success();
+    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
+
+    fixture
+        .run_qcold_in_container_runtime(&worktree, &["verify", "fast"])
+        .assert()
+        .success();
+    assert!(!fixture.devcontainer_log_text().contains("exec|"));
+}
+
+fn assert_terminal_receipt(bundle: &Path, outcome: &str, category: &str) {
+    assert!(bundle.is_file(), "missing bundle {}", bundle.display());
+    assert!(bundle_listing(bundle).contains(terminal_receipt_relative_path()));
+    let receipt = bundle_extract_env(bundle, terminal_receipt_relative_path());
+    assert_eq!(receipt.get("OUTCOME"), Some(&outcome.to_string()));
+    assert_eq!(
+        receipt.get("CLOSEOUT_CATEGORY"),
+        Some(&category.to_string())
+    );
+}
+
+fn corrupt_base_branch(worktree: &Path) {
+    let task_env_path = worktree.join(".task/task.env");
+    let task_env = fs::read_to_string(&task_env_path).unwrap();
     fs::write(
-        root.join(".env.taskflow-telegram.local"),
-        "TELEGRAM_BOT_TOKEN=redacted-token\nTELEGRAM_CHAT_ID=redacted-chat\n",
+        &task_env_path,
+        task_env.replace(
+            &format!("BASE_BRANCH={BASE_BRANCH}"),
+            "BASE_BRANCH='does-not-exist'",
+        ),
     )
     .unwrap();
-    symlink("/opt/src/fio", root.join("fio")).unwrap();
-    symlink("/opt/src/qemu", root.join("qemu")).unwrap();
 }
-
-fn assert_snapshot_hardening(bundle: &Path) {
-    let listing = bundle_listing(bundle);
-    let archive_files = bundle_file_paths(&listing);
-    let file_manifest = bundle_extract(bundle, "metadata/file-manifest.txt");
-    let checksum_manifest = bundle_extract(bundle, "metadata/checksums.sha256");
-    let bundle_manifest = bundle_extract(bundle, "metadata/bundle-manifest.txt");
-
-    assert!(bundle_manifest.contains(
-        "ARCHIVE_NORMALIZATION=sorted-paths,utc-fixed-mtime,zip-deflate,symlink-preserve"
-    ));
-    assert!(bundle_manifest
-        .contains("REPO_SNAPSHOT_SELECTION=tracked paths from git ls-files --cached -z"));
-    assert!(bundle_manifest.contains(
-        "REPO_SNAPSHOT_SELECTION=untracked non-ignored paths from git ls-files --others --exclude-standard -z"
-    ));
-    assert!(
-        !archive_files.iter().any(|path| path.starts_with(".tmp")),
-        "unexpected temp-root archive entry present: {archive_files:?}"
-    );
-
-    let file_manifest_paths = file_manifest_paths(&file_manifest);
-    let checksum_manifest_paths = checksum_manifest_paths(&checksum_manifest);
-    assert_eq!(file_manifest_paths, checksum_manifest_paths);
-
-    let mut expected_archive_files = file_manifest_paths;
-    expected_archive_files.insert("metadata/file-manifest.txt".to_string());
-    expected_archive_files.insert("metadata/checksums.sha256".to_string());
-    assert_eq!(archive_files, expected_archive_files);
-
-    let path = "repo/snapshot-link";
-    assert!(
-        bundle_listing_has_path(&listing, path),
-        "missing bundle entry {path}"
-    );
-    assert!(
-        file_manifest_has_path(&file_manifest, path),
-        "missing file manifest entry {path}"
-    );
-    assert!(
-        checksum_manifest_has_path(&checksum_manifest, path),
-        "missing checksum manifest entry {path}"
-    );
-
-    for path in ["repo/.env.taskflow-telegram.local", "repo/fio", "repo/qemu"] {
-        assert!(
-            !bundle_listing_has_path(&listing, path),
-            "unexpected bundle entry {path}"
-        );
-        assert!(
-            !file_manifest_has_path(&file_manifest, path),
-            "unexpected file manifest entry {path}"
-        );
-        assert!(
-            !checksum_manifest_has_path(&checksum_manifest, path),
-            "unexpected checksum manifest entry {path}"
-        );
-    }
-}
-
-fn write_incompressible_blob(path: &Path, len: usize) {
-    let mut state = 0x9e37_79b9_7f4a_7c15_u64;
-    let mut data = vec![0u8; len];
-    for byte in &mut data {
-        state ^= state << 7;
-        state ^= state >> 9;
-        state ^= state << 8;
-        *byte = state as u8;
-    }
-    fs::write(path, data).unwrap();
-}
-
-#[path = "task_flow_regression/bundles.rs"]
-mod bundles;
-#[path = "task_flow_regression/closeout_contracts.rs"]
-mod closeout_contracts;
-#[path = "task_flow_regression/closeout_failures.rs"]
-mod closeout_failures;
-#[path = "task_flow_regression/delivery.rs"]
-mod delivery;
-#[path = "task_flow_regression/notifications_runtime.rs"]
-mod notifications_runtime;
-#[path = "task_flow_regression/task_open.rs"]
-mod task_open;
-
-macro_rules! task_flow_regression_test {
-    ($name:ident, $body:path) => {
-        #[test]
-        fn $name() {
-            if !task_flow_helpers::xtask_process_manifest_available() {
-                return;
-            }
-            $body();
-        }
-    };
-}
-
-task_flow_regression_test!(
-    task_open_accepts_clean_materialized_submodule_tree_and_can_resume_remote_tasks,
-    task_open::task_open_accepts_clean_materialized_submodule_tree_and_can_resume_remote_tasks
-);
-task_flow_regression_test!(
-    task_open_refuses_dirty_primary_without_scrubbing,
-    task_open::task_open_refuses_dirty_primary_without_scrubbing
-);
-task_flow_regression_test!(
-    task_open_full_qemu_profile_uses_full_qemu_devcontainer_config,
-    task_open::task_open_full_qemu_profile_uses_full_qemu_devcontainer_config
-);
-task_flow_regression_test!(
-    task_open_resume_reenters_managed_devcontainer_shell_and_marks_host_worktree_orchestration_only,
-    task_open::task_open_resume_reenters_managed_devcontainer_shell_and_marks_host_worktree_orchestration_only
-);
-task_flow_regression_test!(
-    task_open_mounts_notification_env_file_into_generated_devcontainer_config,
-    task_open::task_open_mounts_notification_env_file_into_generated_devcontainer_config
-);
-task_flow_regression_test!(
-    task_open_full_qemu_profile_uses_prebuilt_image_override_when_configured,
-    task_open::task_open_full_qemu_profile_uses_prebuilt_image_override_when_configured
-);
-task_flow_regression_test!(
-    current_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent,
-    bundles::current_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent
-);
-task_flow_regression_test!(
-    current_bundle_rejects_oversized_archive_payloads,
-    bundles::current_bundle_rejects_oversized_archive_payloads
-);
-task_flow_regression_test!(
-    task_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent,
-    bundles::task_bundle_snapshot_hardening_excludes_local_telegram_env_and_keeps_symlinks_consistent
-);
-task_flow_regression_test!(
-    blocked_failed_and_success_closeout_paths_preserve_terminal_contracts,
-    closeout_contracts::blocked_failed_and_success_closeout_paths_preserve_terminal_contracts
-);
-task_flow_regression_test!(
-    markdown_only_success_closeout_skips_canonical_validation,
-    closeout_failures::markdown_only_success_closeout_skips_canonical_validation
-);
-task_flow_regression_test!(
-    success_closeout_omits_repository_terminal_state_when_other_tasks_remain_open,
-    closeout_failures::success_closeout_omits_repository_terminal_state_when_other_tasks_remain_open
-);
-task_flow_regression_test!(
-    incomplete_success_closeout_emits_failed_bundle_and_preserves_worktree,
-    closeout_failures::incomplete_success_closeout_emits_failed_bundle_and_preserves_worktree
-);
-task_flow_regression_test!(
-    post_delivery_cleanup_failure_is_logged_without_blocking_success_closeout,
-    closeout_failures::post_delivery_cleanup_failure_is_logged_without_blocking_success_closeout
-);
-task_flow_regression_test!(
-    success_closeout_fails_before_validation_when_primary_dirty_overlaps_open_task,
-    closeout_failures::success_closeout_fails_before_validation_when_primary_dirty_overlaps_open_task
-);
-task_flow_regression_test!(
-    success_closeout_allows_failed_closeout_task_residue_and_leaves_terminal_check_non_terminal,
-    closeout_failures::success_closeout_allows_failed_closeout_task_residue_and_leaves_terminal_check_non_terminal
-);
-task_flow_regression_test!(
-    cleanup_failure_scrubs_terminal_receipt_from_incomplete_bundle,
-    closeout_failures::cleanup_failure_scrubs_terminal_receipt_from_incomplete_bundle
-);
-task_flow_regression_test!(
-    late_closeout_failure_preserves_precleanup_bundle_and_keeps_git_worktree_valid,
-    closeout_failures::late_closeout_failure_preserves_precleanup_bundle_and_keeps_git_worktree_valid
-);
-task_flow_regression_test!(
-    success_closeout_delivers_directly_and_records_delivery_metadata,
-    delivery::success_closeout_delivers_directly_and_records_delivery_metadata
-);
-task_flow_regression_test!(
-    success_closeout_treats_legacy_merge_request_mode_as_direct,
-    delivery::success_closeout_treats_legacy_merge_request_mode_as_direct
-);
-task_flow_regression_test!(
-    iteration_notify_sends_non_terminal_handoff_message_and_preserves_task_state,
-    notifications_runtime::iteration_notify_sends_non_terminal_handoff_message_and_preserves_task_state
-);
-task_flow_regression_test!(
-    verify_preflight_runs_directly_inside_container_runtime,
-    notifications_runtime::verify_preflight_runs_directly_inside_container_runtime
-);

@@ -455,7 +455,8 @@ fn manifest_binary(manifest: &Path) -> Result<PathBuf> {
         .join("target")
         .join("debug")
         .join(format!("xtask{}", env::consts::EXE_SUFFIX));
-    let status = Command::new("cargo")
+    let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let status = Command::new(cargo)
         .current_dir(workspace_root)
         .args(["build", "--quiet", "--manifest-path"])
         .arg(&manifest)

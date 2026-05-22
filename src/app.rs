@@ -339,11 +339,11 @@ impl CloseoutOutcome {
 fn task_command(args: TaskArgs) -> Result<u8> {
     match args.command {
         TaskSubcommand::Inspect { topic } => {
-            adapter_for_active_repo()?.inspect(topic.as_deref())
+            adapter_for_task_flow_repo()?.inspect(topic.as_deref())
         }
         TaskSubcommand::Open { task_slug, profile } => {
             let record = record_task_open(&task_slug, profile.as_deref())?;
-            adapter_for_active_repo()?.open(
+            adapter_for_task_flow_repo()?.open(
                 &task_slug,
                 profile.as_deref(),
                 record.sequence,
@@ -351,8 +351,8 @@ fn task_command(args: TaskArgs) -> Result<u8> {
             )
         }
         TaskSubcommand::Enter => adapter_for_cwd_sensitive_repo()?.enter(),
-        TaskSubcommand::List => adapter_for_active_repo()?.list(),
-        TaskSubcommand::TerminalCheck => adapter_for_active_repo()?.terminal_check(),
+        TaskSubcommand::List => adapter_for_task_flow_repo()?.list(),
+        TaskSubcommand::TerminalCheck => adapter_for_task_flow_repo()?.terminal_check(),
         TaskSubcommand::IterationNotify(args) => {
             adapter_for_cwd_sensitive_repo()?.iteration_notify(&args.message)
         }
@@ -405,12 +405,12 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         TaskSubcommand::Bundle { task_id } => {
             adapter_for_cwd_sensitive_repo()?.task_bundle(task_id.as_deref())
         }
-        TaskSubcommand::Clean { task_slug } => adapter_for_active_repo()?.clean(&task_slug),
-        TaskSubcommand::Clear { task_slug } => adapter_for_active_repo()?.clear(&task_slug),
-        TaskSubcommand::ClearAll => adapter_for_active_repo()?.clear_all(),
-        TaskSubcommand::OrphanList => adapter_for_active_repo()?.orphan_list(),
+        TaskSubcommand::Clean { task_slug } => adapter_for_task_flow_repo()?.clean(&task_slug),
+        TaskSubcommand::Clear { task_slug } => adapter_for_task_flow_repo()?.clear(&task_slug),
+        TaskSubcommand::ClearAll => adapter_for_task_flow_repo()?.clear_all(),
+        TaskSubcommand::OrphanList => adapter_for_task_flow_repo()?.orphan_list(),
         TaskSubcommand::OrphanClearStale { max_age_hours } => {
-            adapter_for_active_repo()?.orphan_clear_stale(max_age_hours)
+            adapter_for_task_flow_repo()?.orphan_clear_stale(max_age_hours)
         }
     }
 }
@@ -522,7 +522,7 @@ fn task_record_from_create_args(args: TaskRecordCreateArgs) -> state::TaskRecord
 }
 
 fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<state::TaskRecordRow> {
-    let repo = repository::for_adapter_context(AdapterContext::ActiveRepository)?;
+    let repo = repository::for_adapter_context(AdapterContext::TaskFlowRepository)?;
     let title = title_from_slug(task_slug);
     let original_prompt = env_prompt("QCOLD_TASKFLOW_PROMPT");
     let prompt_snippet = original_prompt.as_deref().map(prompt::prompt_snippet);

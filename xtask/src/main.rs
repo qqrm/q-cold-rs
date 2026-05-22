@@ -408,7 +408,8 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
         Err(err) => {
             let error = format!("{err:#}");
             record_success_closeout_failure(task, phase, &error)?;
-            bail!("{error}");
+            eprintln!("error: {error}");
+            Ok(12)
         }
     }
 }
@@ -424,6 +425,7 @@ fn closeout_success_inner(
         .context("closeout phase ensure-primary-clean failed")?;
     record_closeout_phase(task, phase, "preflight")?;
     run_preflight(PreflightProfile::default()).context("closeout phase preflight failed")?;
+    record_closeout_phase(task, phase, "deliver-to-primary")?;
     if !git_output(&task.task_worktree, ["status", "--porcelain"])?.is_empty() {
         record_closeout_phase(task, phase, "commit-task-worktree")?;
         run_git(&task.task_worktree, ["add", "-A"])
@@ -431,7 +433,7 @@ fn closeout_success_inner(
         run_git(&task.task_worktree, ["commit", "-m", message])
             .context("closeout phase commit-task-worktree failed")?;
     }
-    record_closeout_phase(task, phase, "deliver-to-primary")?;
+    *phase = "deliver-to-primary";
     deliver_task_branch_to_primary(task).context("closeout phase deliver-to-primary failed")?;
     task.status = "closed:success".to_string();
     task.updated_at = unix_now().to_string();
@@ -441,24 +443,31 @@ fn closeout_success_inner(
     let branch = task.task_branch.clone();
     if let Some(agent_worktree) = agent_worktree {
         record_closeout_phase(task, phase, "agent-return-cleanup")?;
-        run_git(&worktree, ["checkout", "--detach"])?;
+        run_git(&worktree, ["checkout", "--detach"])
+            .context("closeout phase cleanup-agent failed")?;
         let task_state = worktree.join(".task");
         if task_state.exists() {
             fs::remove_dir_all(&task_state)
+                .context("closeout phase cleanup-agent failed")
                 .with_context(|| format!("failed to remove {}", task_state.display()))?;
         }
-        run_git(&task.primary_repo_path, ["branch", "-d", &branch])?;
+        run_git(&task.primary_repo_path, ["branch", "-d", &branch])
+            .context("closeout phase cleanup-agent failed")?;
         println!("task-closeout\tsuccess\t{}", task.task_name);
         println!("task-return\t{}", agent_worktree.display());
         println!("QCOLD_AGENT_WORKTREE={}", agent_worktree.display());
         return Ok(0);
     }
-    record_closeout_phase(task, phase, "cleanup")?;
+    record_closeout_phase(task, phase, "cleanup-worktree")?;
+    run_git(&worktree, ["checkout", "--detach"])
+        .context("closeout phase cleanup-worktree failed")?;
+    run_git(&task.primary_repo_path, ["branch", "-d", &branch])
+        .context("closeout phase cleanup-worktree failed")?;
     run_git(
         &task.primary_repo_path,
-        ["worktree", "remove", path_arg(&worktree)],
-    )?;
-    run_git(&task.primary_repo_path, ["branch", "-d", &branch])?;
+        ["worktree", "remove", "--force", path_arg(&worktree)],
+    )
+    .context("closeout phase cleanup-worktree failed")?;
     println!("task-closeout\tsuccess\t{}", task.task_name);
     Ok(0)
 }
@@ -491,7 +500,7 @@ fn record_success_closeout_failure(task: &mut TaskEnv, phase: &str, error: &str)
         outcome: "failed-closeout",
         reason: Some(error),
         closeout_category: closeout_category("failed-closeout", &task_status),
-        current_flow_problem: "closeout_failure",
+        current_flow_problem: current_flow_problem("failed-closeout"),
         historical_flow_problem: historical_flow_problem(&task_status),
         closeout_failure_phase: Some(phase),
         closeout_failure_error: Some(error),
@@ -657,10 +666,10 @@ fn is_conflict_status(line: &str) -> bool {
 }
 
 fn closeout_category(outcome: &str, task_status: &WorktreeStatusSummary) -> &'static str {
-    if task_status.conflict_file_count > 0 {
+    if outcome == "failed-closeout" {
+        "success_closeout_failed"
+    } else if task_status.conflict_file_count > 0 {
         "task_worktree_conflicts"
-    } else if outcome == "failed-closeout" {
-        "closeout_failure"
     } else if outcome == "blocked" {
         "operator_blocked"
     } else if outcome == "failed" {
@@ -674,7 +683,7 @@ fn current_flow_problem(outcome: &str) -> &'static str {
     match outcome {
         "blocked" => "operator_blocked",
         "failed" => "operator_failed",
-        "failed-closeout" => "closeout_failure",
+        "failed-closeout" => "success_closeout_failed",
         _ => "none",
     }
 }

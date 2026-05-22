@@ -1,3 +1,8 @@
+#![allow(
+    dead_code,
+    reason = "shared integration-test helpers are used by disjoint task-flow regression slices"
+)]
+
 use std::path::PathBuf;
 
 use assert_cmd::assert::Assert;

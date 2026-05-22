@@ -509,6 +509,10 @@ closeout runs `cargo fmt --check` plus the serial `cargo-qcold` unit suite,
 then fast-forwards the primary checkout to the current remote base, rebases the
 task branch onto that base, pushes the base branch to `origin`, and refreshes
 the remote-tracking ref before terminal cleanup.
+If success closeout fails after task state is available, the adapter records
+`STATUS=failed-closeout`, preserves the task worktree, and writes a diagnostic
+bundle receipt with `CURRENT_FLOW_PROBLEM`, `HISTORICAL_FLOW_PROBLEM`,
+`CLOSEOUT_FAILURE_PHASE`, and `CLOSEOUT_FAILURE_ERROR` fields.
 Repository-specific proof semantics for other projects remain behind their adapters.
 The planned extraction backlog for moving deterministic task-flow ownership
 into Q-COLD is tracked in

@@ -606,8 +606,8 @@ fn unix_now() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-fn adapter_for_active_repo() -> Result<adapter::XtaskProcessAdapter> {
-    adapter_for_context(AdapterContext::ActiveRepository)
+fn adapter_for_task_flow_repo() -> Result<adapter::XtaskProcessAdapter> {
+    adapter_for_context(AdapterContext::TaskFlowRepository)
 }
 
 fn adapter_for_cwd_sensitive_repo() -> Result<adapter::XtaskProcessAdapter> {

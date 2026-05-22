@@ -33,6 +33,7 @@ fn task_record_list_warns_and_continues_when_codex_refresh_fails() {
             "--repo-root",
             repo.to_str().unwrap(),
         ])
+        .current_dir(&repo)
         .env("QCOLD_STATE_DIR", &state_dir)
         .env_remove("QCOLD_REPO_ROOT")
         .env_remove("QCOLD_ACTIVE_REPO")
@@ -42,11 +43,11 @@ fn task_record_list_warns_and_continues_when_codex_refresh_fails() {
     let sessions_parent = home.join(".codex-accounts/2");
     fs::create_dir_all(&sessions_parent).unwrap();
     fs::write(sessions_parent.join("sessions"), "not a directory").unwrap();
-
-    let started_at = SystemTime::now()
+    let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
+
     let connection = Connection::open(state_dir.join("qcold.sqlite3")).unwrap();
     connection
         .execute(
@@ -56,8 +57,8 @@ fn task_record_list_warns_and_continues_when_codex_refresh_fails() {
             params![
                 "agent-refresh-fails",
                 "manual",
-                9_999_999_i64,
-                started_at,
+                i64::from(std::process::id()),
+                now,
                 r#"["/home/qqrm/.local/bin/c2","inspect"]"#,
                 repo.to_str().unwrap(),
             ],
@@ -67,7 +68,9 @@ fn task_record_list_warns_and_continues_when_codex_refresh_fails() {
     AssertCommand::cargo_bin("cargo-qcold")
         .unwrap()
         .args(["task-record", "list", "--limit", "10"])
+        .current_dir(&repo)
         .env("QCOLD_STATE_DIR", &state_dir)
+        .env("CODEX_HOME", &sessions_parent)
         .env("HOME", &home)
         .env_remove("QCOLD_REPO_ROOT")
         .env_remove("QCOLD_ACTIVE_REPO")

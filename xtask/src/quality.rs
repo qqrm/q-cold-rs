@@ -103,6 +103,7 @@ fn tracked_text(repo: &Path, relative: &Path) -> Result<Option<String>> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::IsADirectory => return Ok(None),
         Err(error) => {
             return Err(error).with_context(|| format!("failed to read {}", relative.display()));
         }
@@ -171,5 +172,19 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn gitlink_directories_are_ignored() {
+        let root =
+            std::env::temp_dir().join(format!("qcold-quality-gitlink-{}", std::process::id()));
+        let path = root.join("submodule");
+        fs::create_dir_all(&path).unwrap();
+
+        assert!(tracked_text(&root, Path::new("submodule"))
+            .unwrap()
+            .is_none());
+
+        fs::remove_dir_all(root).unwrap();
     }
 }
