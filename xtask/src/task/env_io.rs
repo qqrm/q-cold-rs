@@ -146,8 +146,9 @@ fn refresh_task_codex_env(task: &mut TaskEnv) {
     if let Some(thread_id) = nonempty_env("CODEX_THREAD_ID") {
         task.codex_thread_id = thread_id;
     }
-    if let Some(rollout_path) = nonempty_env("CODEX_ROLLOUT_PATH") {
-        task.codex_rollout_path = rollout_path;
+    let thread_id = nonempty_str(&task.codex_thread_id);
+    if let Some(rollout_path) = current_codex_rollout_path(thread_id) {
+        task.codex_rollout_path = rollout_path.display().to_string();
     }
 }
 
@@ -156,6 +157,69 @@ fn nonempty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn nonempty_str(value: &str) -> Option<&str> {
+    let value = value.trim();
+    (!value.is_empty()).then_some(value)
+}
+
+fn current_codex_rollout_path(codex_thread_id: Option<&str>) -> Option<PathBuf> {
+    if let Some(path) = nonempty_env("CODEX_ROLLOUT_PATH") {
+        return Some(PathBuf::from(path));
+    }
+    let thread_id = codex_thread_id?;
+    let mut matches = Vec::new();
+    for root in codex_session_roots_from_env() {
+        find_rollout_paths_for_thread(&root, thread_id, &mut matches);
+    }
+    matches.sort();
+    matches.pop()
+}
+
+fn codex_session_roots_from_env() -> Vec<PathBuf> {
+    if let Some(home) = nonempty_env("CODEX_HOME") {
+        return vec![PathBuf::from(home).join("sessions")];
+    }
+    let Some(home) = nonempty_env("HOME") else {
+        return Vec::new();
+    };
+    let accounts = PathBuf::from(home).join(".codex-accounts");
+    let mut roots = Vec::new();
+    let Ok(entries) = fs::read_dir(accounts) else {
+        return roots;
+    };
+    for entry in entries.flatten() {
+        let sessions = entry.path().join("sessions");
+        if sessions.is_dir() {
+            roots.push(sessions);
+        }
+    }
+    roots.sort();
+    roots
+}
+
+fn find_rollout_paths_for_thread(root: &Path, thread_id: &str, matches: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            find_rollout_paths_for_thread(&path, thread_id, matches);
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let is_jsonl = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("jsonl"));
+        if is_jsonl && name.contains(thread_id) {
+            matches.push(path);
+        }
+    }
 }
 
 fn append_event(worktree: &Path, kind: &str, message: &str) -> Result<()> {
@@ -245,34 +309,37 @@ fn ensure_slug(slug: &str) -> Result<()> {
 }
 
 fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<()> {
+    let display = args.join(" ");
     let status = Command::new("git")
         .current_dir(repo)
         .args(args)
         .status()
-        .context("failed to run git")?;
+        .with_context(|| format!("failed to run git {display}"))?;
     if !status.success() {
-        bail!("git command failed");
+        bail!("git command failed: git {display}");
     }
     Ok(())
 }
 
 fn git_status<const N: usize>(repo: &Path, args: [&str; N]) -> Result<bool> {
+    let display = args.join(" ");
     Ok(Command::new("git")
         .current_dir(repo)
         .args(args)
         .status()
-        .context("failed to run git")?
+        .with_context(|| format!("failed to run git {display}"))?
         .success())
 }
 
 fn git_output<const N: usize>(repo: &Path, args: [&str; N]) -> Result<String> {
+    let display = args.join(" ");
     let output = Command::new("git")
         .current_dir(repo)
         .args(args)
         .output()
-        .context("failed to run git")?;
+        .with_context(|| format!("failed to run git {display}"))?;
     if !output.status.success() {
-        bail!("git command failed");
+        bail!("git command failed: git {display}");
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

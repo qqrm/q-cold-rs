@@ -1,6 +1,9 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn sequence_anchor_is_zero_padded_operator_order() {
@@ -73,6 +76,56 @@ mod tests {
         assert_eq!(parsed.codex_thread_id, task.codex_thread_id);
         assert_eq!(parsed.codex_rollout_path, task.codex_rollout_path);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn refresh_task_codex_env_finds_rollout_by_thread_id() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _rollout = EnvVarGuard::capture("CODEX_ROLLOUT_PATH");
+        let _thread = EnvVarGuard::capture("CODEX_THREAD_ID");
+        let _codex_home = EnvVarGuard::capture("CODEX_HOME");
+        let root = unique_test_dir("qcold-rollout-resolver");
+        let codex_home = root.join("codex-home");
+        let thread_id = "019e2a5a-96d5-72d0-9eaa-530232011047";
+        let rollout_path = codex_home.join(format!(
+            "sessions/2026/05/22/rollout-2026-05-22T03-08-55-{thread_id}.jsonl"
+        ));
+        fs::create_dir_all(rollout_path.parent().unwrap()).unwrap();
+        fs::write(&rollout_path, "{}\n").unwrap();
+        std::env::remove_var("CODEX_ROLLOUT_PATH");
+        std::env::remove_var("CODEX_THREAD_ID");
+        std::env::set_var("CODEX_HOME", &codex_home);
+
+        let mut task = test_task_env();
+        task.codex_thread_id = thread_id.into();
+        refresh_task_codex_env(&mut task);
+
+        assert_eq!(task.codex_rollout_path, rollout_path.display().to_string());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminal_receipt_summarizes_worktree_conflicts() {
+        let task_status =
+            parse_worktree_status_summary("UU src/lib.rs\n?? notes.txt\n".to_string());
+        let closeout_category = closeout_category("failed", &task_status);
+        let receipt = TerminalReceipt {
+            outcome: "failed",
+            reason: Some("rebase conflict"),
+            closeout_category,
+            primary_clean: false,
+            worktree_removed: true,
+            branch_removed: false,
+            task_status,
+        };
+
+        let rendered = render_terminal_receipt(&receipt);
+
+        assert!(rendered.contains("CLOSEOUT_CATEGORY=task_worktree_conflicts"));
+        assert!(rendered.contains("TASK_WORKTREE_DIRTY_FILE_COUNT=2"));
+        assert!(rendered.contains("TASK_WORKTREE_CONFLICT_FILE_COUNT=1"));
+        assert!(rendered.contains("TASK_WORKTREE_CONFLICTS=src/lib.rs"));
+        assert!(rendered.contains("TASK_WORKTREE_STATUS_SHORT=$'UU src/lib.rs\\n"));
     }
 
     #[test]
@@ -204,6 +257,30 @@ mod tests {
 
     fn run_git_in<const N: usize>(repo: &Path, args: [&str; N]) {
         run_git(repo, args).unwrap();
+    }
+
+    struct EnvVarGuard {
+        name: &'static str,
+        value: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn capture(name: &'static str) -> Self {
+            Self {
+                name,
+                value: std::env::var_os(name),
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            if let Some(value) = &self.value {
+                std::env::set_var(self.name, value);
+            } else {
+                std::env::remove_var(self.name);
+            }
+        }
     }
 
     fn test_task_env() -> TaskEnv {

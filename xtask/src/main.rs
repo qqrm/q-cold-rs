@@ -205,6 +205,10 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         ],
     )?;
 
+    let codex_thread_id = nonempty_env("CODEX_THREAD_ID").unwrap_or_default();
+    let codex_rollout_path = current_codex_rollout_path(nonempty_str(&codex_thread_id))
+        .map(|path| path.display().to_string())
+        .unwrap_or_default();
     let task = TaskEnv {
         task_id: branch.clone(),
         task_name: task_slug.to_string(),
@@ -222,8 +226,8 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         updated_at: unix_now().to_string(),
         devcontainer_name: "host-shell".to_string(),
         delivery_mode: "self-hosted-qcold".to_string(),
-        codex_thread_id: nonempty_env("CODEX_THREAD_ID").unwrap_or_default(),
-        codex_rollout_path: nonempty_env("CODEX_ROLLOUT_PATH").unwrap_or_default(),
+        codex_thread_id,
+        codex_rollout_path,
     };
     write_task_env(&task)?;
     append_event(&worktree, "task-open", &format!("opened {branch}"))?;
@@ -395,13 +399,30 @@ fn closeout_command(args: &CloseoutArgs) -> Result<u8> {
 fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
     let message = message.context("--message is required for success closeout")?;
     let agent_worktree = agent_return_worktree();
-    ensure_clean(&task.primary_repo_path, "primary checkout")?;
-    run_preflight(PreflightProfile::default())?;
+    append_event(
+        &task.task_worktree,
+        "task-closeout-phase",
+        "ensure-primary-clean",
+    )?;
+    ensure_clean(&task.primary_repo_path, "primary checkout")
+        .context("closeout phase ensure-primary-clean failed")?;
+    append_event(&task.task_worktree, "task-closeout-phase", "preflight")?;
+    run_preflight(PreflightProfile::default()).context("closeout phase preflight failed")?;
     if !git_output(&task.task_worktree, ["status", "--porcelain"])?.is_empty() {
+        append_event(
+            &task.task_worktree,
+            "task-closeout-phase",
+            "commit-task-worktree",
+        )?;
         run_git(&task.task_worktree, ["add", "-A"])?;
         run_git(&task.task_worktree, ["commit", "-m", message])?;
     }
-    deliver_task_branch_to_primary(task)?;
+    append_event(
+        &task.task_worktree,
+        "task-closeout-phase",
+        "deliver-to-primary",
+    )?;
+    deliver_task_branch_to_primary(task).context("closeout phase deliver-to-primary failed")?;
     task.status = "closed:success".to_string();
     task.updated_at = unix_now().to_string();
     write_task_env(task)?;
@@ -431,22 +452,26 @@ fn closeout_success(task: &mut TaskEnv, message: Option<&str>) -> Result<u8> {
 }
 
 fn deliver_task_branch_to_primary(task: &TaskEnv) -> Result<()> {
-    run_git(&task.primary_repo_path, ["fetch", "origin"])?;
+    run_git(&task.primary_repo_path, ["fetch", "origin"]).context("fetch origin failed")?;
     let remote_base = format!("refs/remotes/origin/{}", task.base_branch);
     run_git(
         &task.primary_repo_path,
         ["merge", "--ff-only", &remote_base],
-    )?;
-    run_git(&task.task_worktree, ["rebase", &remote_base])?;
+    )
+    .context("primary fast-forward to remote base failed")?;
+    run_git(&task.task_worktree, ["rebase", &remote_base]).context("task rebase failed")?;
     run_git(
         &task.primary_repo_path,
         ["merge", "--ff-only", &task.task_branch],
-    )?;
+    )
+    .context("primary fast-forward merge of task branch failed")?;
     run_git(
         &task.primary_repo_path,
         ["push", "origin", &task.base_branch],
-    )?;
-    run_git(&task.primary_repo_path, ["fetch", "origin"])?;
+    )
+    .context("push of integrated base branch failed")?;
+    run_git(&task.primary_repo_path, ["fetch", "origin"])
+        .context("refresh origin tracking failed")?;
     Ok(())
 }
 
@@ -476,6 +501,7 @@ fn closeout_non_success(
     )?;
     let bundle = create_task_archive_bundle(task)?;
     let primary_clean = git_output(&task.primary_repo_path, ["status", "--porcelain"])?.is_empty();
+    let task_status = worktree_status_summary(&task.task_worktree)?;
     std::env::set_current_dir(&task.primary_repo_path).with_context(|| {
         format!(
             "failed to leave task worktree for cleanup: {}",
@@ -492,12 +518,15 @@ fn closeout_non_success(
         ],
     )?;
     let branch_removed = git_status(&task.primary_repo_path, ["branch", "-D", &task.task_branch])?;
+    let closeout_category = closeout_category(outcome, &task_status);
     let receipt = TerminalReceipt {
         outcome,
         reason,
+        closeout_category,
         primary_clean,
         worktree_removed,
         branch_removed,
+        task_status,
     };
     add_terminal_receipt_to_bundle(&bundle, &receipt)?;
     println!("task-closeout\t{outcome}\t{}", task.task_name);
@@ -511,9 +540,63 @@ fn closeout_non_success(
 struct TerminalReceipt<'a> {
     outcome: &'a str,
     reason: Option<&'a str>,
+    closeout_category: &'a str,
     primary_clean: bool,
     worktree_removed: bool,
     branch_removed: bool,
+    task_status: WorktreeStatusSummary,
+}
+
+struct WorktreeStatusSummary {
+    status_short: String,
+    dirty_file_count: usize,
+    conflict_file_count: usize,
+    conflict_paths: Vec<String>,
+}
+
+fn worktree_status_summary(repo: &Path) -> Result<WorktreeStatusSummary> {
+    let status_short = git_output(repo, ["status", "--porcelain", "--untracked-files=all"])?;
+    Ok(parse_worktree_status_summary(status_short))
+}
+
+fn parse_worktree_status_summary(status_short: String) -> WorktreeStatusSummary {
+    let mut dirty_paths = BTreeSet::new();
+    let mut conflict_paths = BTreeSet::new();
+    for line in status_short.lines() {
+        let Some(path) = status_path(line) else {
+            continue;
+        };
+        let path = path.display().to_string();
+        if is_conflict_status(line) {
+            conflict_paths.insert(path.clone());
+        }
+        dirty_paths.insert(path);
+    }
+    WorktreeStatusSummary {
+        status_short,
+        dirty_file_count: dirty_paths.len(),
+        conflict_file_count: conflict_paths.len(),
+        conflict_paths: conflict_paths.into_iter().collect(),
+    }
+}
+
+fn is_conflict_status(line: &str) -> bool {
+    matches!(
+        line.get(..2),
+        Some("DD" | "AU" | "UD" | "UA" | "DU" | "AA" | "UU")
+    )
+}
+
+fn closeout_category(outcome: &str, task_status: &WorktreeStatusSummary) -> &'static str {
+    if task_status.conflict_file_count > 0 {
+        "task_worktree_conflicts"
+    } else if outcome == "blocked" {
+        "operator_blocked"
+    } else if outcome == "failed" {
+        "operator_failed"
+    } else {
+        "unknown"
+    }
 }
 
 fn create_task_archive_bundle(task: &TaskEnv) -> Result<PathBuf> {
@@ -557,33 +640,38 @@ fn add_terminal_receipt_to_bundle(bundle: &Path, receipt: &TerminalReceipt<'_>) 
 
 fn render_terminal_receipt(receipt: &TerminalReceipt<'_>) -> String {
     let mut output = String::new();
+    let primary_clean = yes_no(receipt.primary_clean);
+    let worktree_removed = yes_no(receipt.worktree_removed);
+    let branch_removed = yes_no(receipt.branch_removed);
+    let dirty_file_count = receipt.task_status.dirty_file_count.to_string();
+    let conflict_file_count = receipt.task_status.conflict_file_count.to_string();
+    let conflict_paths = receipt.task_status.conflict_paths.join("\n");
     for (key, value) in [
-        ("OUTCOME", receipt.outcome),
-        ("REASON", receipt.reason.unwrap_or("")),
+        ("OUTCOME", receipt.outcome.to_string()),
+        ("REASON", receipt.reason.unwrap_or("").to_string()),
+        ("CLOSEOUT_CATEGORY", receipt.closeout_category.to_string()),
+        ("PRIMARY_CHECKOUT_CLEAN", primary_clean),
+        ("TASK_WORKTREE_REMOVED", worktree_removed),
+        ("LOCAL_TASK_BRANCH_REMOVED", branch_removed),
         (
-            "PRIMARY_CHECKOUT_CLEAN",
-            if receipt.primary_clean { "yes" } else { "no" },
+            "TASK_WORKTREE_STATUS_SHORT",
+            receipt.task_status.status_short.clone(),
         ),
-        (
-            "TASK_WORKTREE_REMOVED",
-            if receipt.worktree_removed {
-                "yes"
-            } else {
-                "no"
-            },
-        ),
-        (
-            "LOCAL_TASK_BRANCH_REMOVED",
-            if receipt.branch_removed { "yes" } else { "no" },
-        ),
-        ("CANONICAL_VALIDATION", "not-applicable"),
+        ("TASK_WORKTREE_DIRTY_FILE_COUNT", dirty_file_count),
+        ("TASK_WORKTREE_CONFLICT_FILE_COUNT", conflict_file_count),
+        ("TASK_WORKTREE_CONFLICTS", conflict_paths),
+        ("CANONICAL_VALIDATION", "not-applicable".to_string()),
     ] {
         output.push_str(key);
         output.push('=');
-        output.push_str(&shell_quote(value));
+        output.push_str(&shell_quote(&value));
         output.push('\n');
     }
     output
+}
+
+fn yes_no(value: bool) -> String {
+    String::from(if value { "yes" } else { "no" })
 }
 
 fn bundle_command(task_id: Option<&str>) -> Result<u8> {
