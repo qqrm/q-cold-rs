@@ -61,6 +61,7 @@ repo-local code owns it.
 - `qcold --help`
 - `qcold status`
 - `qcold task-record list`
+- `qcold task-record audit [--repo-root <path>] [--top <n>] [--record-limit <n>]`
 - `qcold task-record create --description "<task description>"`
 - `qcold task-record show <task-id>`
 - `qcold task-record update <task-id> [--title "<title>"] [--description "<description>"] [--status <status>]`
@@ -83,6 +84,7 @@ repo-local code owns it.
 - `cargo qcold --version`
 - `cargo qcold status`
 - `cargo qcold task-record list`
+- `cargo qcold task-record audit [--repo-root <path>] [--top <n>] [--record-limit <n>]`
 - `cargo qcold task-record create --description "<task description>"`
 - `cargo qcold task-record show <task-id>`
 - `cargo qcold task-record update <task-id> [--title "<title>"] [--description "<description>"] [--status <status>]`

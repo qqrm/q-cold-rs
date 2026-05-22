@@ -7,7 +7,8 @@ mod tests {
         codex_import_matches_existing, find_codex_session_summary_in_root, is_queue_agent_track,
         guard_command, parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
         prompt_from_agent_command, repo_root_for_agent_cwd_from_repositories,
-        render_token_efficiency, render_token_usage, render_top_tool_outputs,
+        render_task_record_audit, render_token_efficiency, render_token_usage,
+        render_top_tool_outputs,
         should_skip_stale_codex_agent_import, slug_from_title, task_flow_metadata_equivalent,
         unix_now, GuardArgs,
     };
@@ -661,6 +662,79 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn task_record_audit_reports_gaps_and_noisy_records() {
+        let records = vec![
+            audit_record(
+                "task/noisy",
+                "task-flow",
+                "closed:blocked",
+                Some(serde_json::json!({
+                    "token_usage": {
+                        "total_tokens": 1000,
+                        "displayed_total_tokens": 400,
+                        "output_tokens": 100,
+                        "reasoning_output_tokens": 20,
+                        "model_calls": 3,
+                    },
+                    "token_efficiency": {
+                        "session_count": 1,
+                        "tool_output_original_tokens": 600,
+                        "large_tool_output_calls": 1,
+                        "large_tool_output_original_tokens": 550,
+                    },
+                })),
+            ),
+            audit_record(
+                "adhoc/codex",
+                "codex-session",
+                "closed:unknown",
+                Some(serde_json::json!({
+                    "token_usage": {
+                        "total_tokens": 200,
+                        "displayed_total_tokens": 100,
+                        "model_calls": 1,
+                    },
+                })),
+            ),
+            audit_record("task/missing", "manual", "open", None),
+        ];
+
+        let lines = render_task_record_audit(&records, 2);
+        let output = lines.join("\n");
+
+        assert!(output.contains("task-record-audit\trecords=3"));
+        assert!(output.contains("\ttoken_usage_records=2\ttoken_efficiency_records=1"));
+        assert!(output.contains("\tmissing_token_usage=1\tmissing_token_efficiency=2"));
+        assert!(output.contains("task-record-audit-gap\tkind=missing-token-efficiency"));
+        assert!(output.contains("source=codex-session\tstatus=closed:unknown\tcount=1"));
+        assert!(output.contains("task-record-audit-top-tool\trank=1\ttotal_tokens=1000"));
+        assert!(output.contains("\ttool_output_tokens=600"));
+        assert!(output.contains("task-record-audit-top-cost\trank=1\ttotal_tokens=1000"));
+    }
+
+    fn audit_record(
+        id: &str,
+        source: &str,
+        status: &str,
+        metadata: Option<serde_json::Value>,
+    ) -> state::TaskRecordRow {
+        state::TaskRecordRow {
+            id: id.to_string(),
+            source: source.to_string(),
+            sequence: None,
+            title: id.to_string(),
+            description: String::new(),
+            status: status.to_string(),
+            created_at: 1,
+            updated_at: 1,
+            repo_root: Some("/repo".to_string()),
+            cwd: None,
+            agent_id: None,
+            metadata_json: metadata.map(|value| value.to_string()),
+        }
     }
 
     #[test]

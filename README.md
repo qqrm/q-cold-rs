@@ -28,6 +28,7 @@ qcold repo list
 qcold status
 qcold task-record create --description "Add task CRUD and automatic capture"
 qcold task-record list
+qcold task-record audit --top 10
 qcold agent list
 qcold agent start --track audit -- codex exec "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
@@ -137,6 +138,11 @@ record status. `qcold status` also triggers the refresh and prints compact
 contain imported telemetry. `qcold task-record show <task-id>` prints
 `token-usage`, `token-efficiency`, and top `token-efficiency-top` tool-output
 samples for the selected record when that per-task telemetry is available.
+`qcold task-record audit [--repo-root <path>] [--top <n>]` summarizes telemetry
+coverage gaps, cost by source/outcome, and the noisiest task records by total
+tokens and tool-output tokens. It is a metadata audit, not a quality score:
+missing `token_efficiency`, high large-output ratios, or expensive blocked
+records are surfaced as operator review targets.
 Read-only task-record commands keep serving the last stored records if a
 concurrent dashboard or agent process temporarily blocks the telemetry refresh;
 they print a warning instead of failing the read. SQLite lock waits default to

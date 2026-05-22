@@ -25,7 +25,7 @@ use std::thread;
 use std::time::Duration;
 use std::{
     cmp::Reverse,
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
 };
 
 use agents::AgentArgs;
@@ -53,6 +53,7 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold status\n",
     "  qcold task-record create --description \"Add task CRUD and automatic capture\"\n",
     "  qcold task-record list\n",
+    "  qcold task-record audit\n",
     "  qcold agent list\n",
     "  qcold agent start --track audit -- codex exec \"inspect repo\"\n",
     "  qcold telegram poll\n",
@@ -204,6 +205,8 @@ enum TaskRecordSubcommand {
     },
     #[command(about = "Show one Q-COLD-owned task record")]
     Show { id: String },
+    #[command(about = "Audit task-record telemetry coverage and tool-output noise")]
+    Audit(TaskRecordAuditArgs),
     #[command(about = "Create or update a Q-COLD-owned task record")]
     Create(TaskRecordCreateArgs),
     #[command(about = "Update title, description, or status for a task record")]
@@ -216,6 +219,16 @@ enum TaskRecordSubcommand {
     },
     #[command(about = "Delete a task record")]
     Delete { id: String },
+}
+
+#[derive(Args)]
+struct TaskRecordAuditArgs {
+    #[arg(long)]
+    repo_root: Option<PathBuf>,
+    #[arg(long, default_value_t = 10)]
+    top: usize,
+    #[arg(long, default_value_t = 10_000)]
+    record_limit: usize,
 }
 
 #[derive(Args)]
@@ -431,6 +444,17 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
                 println!("{line}");
             }
             for line in render_task_record_top_tool_outputs(&record) {
+                println!("{line}");
+            }
+        }
+        TaskRecordSubcommand::Audit(args) => {
+            sync_codex_task_records_best_effort();
+            let records = if let Some(repo_root) = args.repo_root {
+                state::load_task_records_for_repo(&repo_root.display().to_string(), None, args.record_limit)?
+            } else {
+                state::load_task_records(None, args.record_limit)?
+            };
+            for line in render_task_record_audit(&records, args.top) {
                 println!("{line}");
             }
         }

@@ -44,6 +44,283 @@ fn render_task_record_top_tool_outputs(record: &state::TaskRecordRow) -> Vec<Str
     )
 }
 
+fn render_task_record_audit(records: &[state::TaskRecordRow], top_limit: usize) -> Vec<String> {
+    let mut total = TaskRecordAuditBucket::default();
+    let mut by_source = BTreeMap::<String, TaskRecordAuditBucket>::new();
+    let mut gaps = BTreeMap::<(String, String, String), usize>::new();
+    let mut ranked = Vec::<TaskRecordAuditEntry>::new();
+
+    for record in records {
+        let metrics = task_record_audit_metrics(record);
+        total.add(record, &metrics);
+        by_source
+            .entry(record.source.clone())
+            .or_default()
+            .add(record, &metrics);
+        if !metrics.has_token_usage {
+            *gaps
+                .entry((
+                    "missing-token-usage".to_string(),
+                    record.source.clone(),
+                    record.status.clone(),
+                ))
+                .or_default() += 1;
+        }
+        if !metrics.has_token_efficiency {
+            *gaps
+                .entry((
+                    "missing-token-efficiency".to_string(),
+                    record.source.clone(),
+                    record.status.clone(),
+                ))
+                .or_default() += 1;
+        }
+        ranked.push(TaskRecordAuditEntry::from_record(record, metrics));
+    }
+
+    let mut lines = vec![format!("task-record-audit\t{}", total.render_summary())];
+    for (source, bucket) in by_source {
+        lines.push(format!(
+            "task-record-audit-source\tsource={}\t{}",
+            audit_text(&source, 80),
+            bucket.render_summary()
+        ));
+    }
+    for ((kind, source, status), count) in gaps {
+        lines.push(format!(
+            "task-record-audit-gap\tkind={}\tsource={}\tstatus={}\tcount={}",
+            kind,
+            audit_text(&source, 80),
+            audit_text(&status, 80),
+            count
+        ));
+    }
+
+    ranked.sort_by_key(|entry| Reverse(entry.metrics.tool_output_tokens));
+    for (index, entry) in ranked
+        .iter()
+        .filter(|entry| entry.metrics.tool_output_tokens > 0)
+        .take(top_limit)
+        .enumerate()
+    {
+        lines.push(entry.render("task-record-audit-top-tool", index + 1));
+    }
+
+    ranked.sort_by_key(|entry| Reverse(entry.metrics.total_tokens));
+    for (index, entry) in ranked
+        .iter()
+        .filter(|entry| entry.metrics.total_tokens > 0)
+        .take(top_limit)
+        .enumerate()
+    {
+        lines.push(entry.render("task-record-audit-top-cost", index + 1));
+    }
+
+    lines
+}
+
+#[derive(Default)]
+struct TaskRecordAuditBucket {
+    records: usize,
+    token_usage_records: usize,
+    token_efficiency_records: usize,
+    open_records: usize,
+    closed_success_records: usize,
+    closed_blocked_records: usize,
+    closed_failed_records: usize,
+    closed_unknown_records: usize,
+    total_tokens: u64,
+    displayed_tokens: u64,
+    output_tokens: u64,
+    reasoning_tokens: u64,
+    model_calls: u64,
+    sessions: u64,
+    tool_output_tokens: u64,
+    large_tool_outputs: u64,
+    large_tool_output_tokens: u64,
+}
+
+impl TaskRecordAuditBucket {
+    fn add(&mut self, record: &state::TaskRecordRow, metrics: &TaskRecordAuditMetrics) {
+        self.records += 1;
+        self.token_usage_records += usize::from(metrics.has_token_usage);
+        self.token_efficiency_records += usize::from(metrics.has_token_efficiency);
+        match record.status.as_str() {
+            "open" => self.open_records += 1,
+            "closed:success" => self.closed_success_records += 1,
+            "closed:blocked" => self.closed_blocked_records += 1,
+            "closed:failed" => self.closed_failed_records += 1,
+            "closed:unknown" => self.closed_unknown_records += 1,
+            _ => {}
+        }
+        self.total_tokens = self.total_tokens.saturating_add(metrics.total_tokens);
+        self.displayed_tokens = self.displayed_tokens.saturating_add(metrics.displayed_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(metrics.output_tokens);
+        self.reasoning_tokens = self
+            .reasoning_tokens
+            .saturating_add(metrics.reasoning_tokens);
+        self.model_calls = self.model_calls.saturating_add(metrics.model_calls);
+        self.sessions = self.sessions.saturating_add(metrics.sessions);
+        self.tool_output_tokens = self
+            .tool_output_tokens
+            .saturating_add(metrics.tool_output_tokens);
+        self.large_tool_outputs = self
+            .large_tool_outputs
+            .saturating_add(metrics.large_tool_outputs);
+        self.large_tool_output_tokens = self
+            .large_tool_output_tokens
+            .saturating_add(metrics.large_tool_output_tokens);
+    }
+
+    fn render_summary(&self) -> String {
+        format!(
+            concat!(
+                "records={}\ttoken_usage_records={}\ttoken_efficiency_records={}",
+                "\tmissing_token_usage={}\tmissing_token_efficiency={}",
+                "\topen={}\tclosed_success={}\tclosed_blocked={}\tclosed_failed={}",
+                "\tclosed_unknown={}\ttotal_tokens={}\tdisplayed_tokens={}",
+                "\toutput_tokens={}\treasoning_tokens={}\tmodel_calls={}\tsessions={}",
+                "\ttool_output_tokens={}\tlarge_tool_outputs={}",
+                "\tlarge_tool_output_tokens={}\ttool_output_ratio_ppm={}",
+                "\tlarge_output_ratio_ppm={}",
+            ),
+            self.records,
+            self.token_usage_records,
+            self.token_efficiency_records,
+            self.records.saturating_sub(self.token_usage_records),
+            self.records.saturating_sub(self.token_efficiency_records),
+            self.open_records,
+            self.closed_success_records,
+            self.closed_blocked_records,
+            self.closed_failed_records,
+            self.closed_unknown_records,
+            self.total_tokens,
+            self.displayed_tokens,
+            self.output_tokens,
+            self.reasoning_tokens,
+            self.model_calls,
+            self.sessions,
+            self.tool_output_tokens,
+            self.large_tool_outputs,
+            self.large_tool_output_tokens,
+            ratio_ppm(self.tool_output_tokens, self.total_tokens),
+            ratio_ppm(self.large_tool_output_tokens, self.tool_output_tokens)
+        )
+    }
+}
+
+#[derive(Clone, Default)]
+struct TaskRecordAuditMetrics {
+    has_token_usage: bool,
+    has_token_efficiency: bool,
+    total_tokens: u64,
+    displayed_tokens: u64,
+    output_tokens: u64,
+    reasoning_tokens: u64,
+    model_calls: u64,
+    sessions: u64,
+    tool_output_tokens: u64,
+    large_tool_outputs: u64,
+    large_tool_output_tokens: u64,
+}
+
+struct TaskRecordAuditEntry {
+    id: String,
+    title: String,
+    source: String,
+    status: String,
+    repo: String,
+    metrics: TaskRecordAuditMetrics,
+}
+
+impl TaskRecordAuditEntry {
+    fn from_record(record: &state::TaskRecordRow, metrics: TaskRecordAuditMetrics) -> Self {
+        Self {
+            id: record.id.clone(),
+            title: record.title.clone(),
+            source: record.source.clone(),
+            status: record.status.clone(),
+            repo: record.repo_root.clone().unwrap_or_default(),
+            metrics,
+        }
+    }
+
+    fn render(&self, kind: &str, rank: usize) -> String {
+        format!(
+            concat!(
+                "{}\trank={}\ttotal_tokens={}\ttool_output_tokens={}",
+                "\tlarge_tool_output_tokens={}\tlarge_tool_outputs={}",
+                "\tmodel_calls={}\tsource={}\tstatus={}\trepo={}\tid={}\ttitle={}",
+            ),
+            kind,
+            rank,
+            self.metrics.total_tokens,
+            self.metrics.tool_output_tokens,
+            self.metrics.large_tool_output_tokens,
+            self.metrics.large_tool_outputs,
+            self.metrics.model_calls,
+            audit_text(&self.source, 80),
+            audit_text(&self.status, 80),
+            audit_text(&self.repo, 120),
+            audit_text(&self.id, 120),
+            audit_text(&self.title, 120)
+        )
+    }
+}
+
+fn task_record_audit_metrics(record: &state::TaskRecordRow) -> TaskRecordAuditMetrics {
+    let Some(metadata) = record
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+    else {
+        return TaskRecordAuditMetrics::default();
+    };
+    let mut metrics = TaskRecordAuditMetrics::default();
+    if let Some(usage) = metadata.get("token_usage").and_then(Value::as_object) {
+        metrics.has_token_usage = true;
+        metrics.total_tokens = audit_u64(usage, "total_tokens");
+        metrics.displayed_tokens = audit_u64(usage, "displayed_total_tokens");
+        metrics.output_tokens = audit_u64(usage, "output_tokens");
+        metrics.reasoning_tokens = audit_u64(usage, "reasoning_output_tokens");
+        metrics.model_calls = audit_u64(usage, "model_calls");
+    }
+    if let Some(efficiency) = metadata
+        .get("token_efficiency")
+        .and_then(Value::as_object)
+    {
+        metrics.has_token_efficiency = true;
+        metrics.sessions = audit_u64(efficiency, "session_count");
+        metrics.tool_output_tokens = audit_u64(efficiency, "tool_output_original_tokens");
+        metrics.large_tool_outputs = audit_u64(efficiency, "large_tool_output_calls");
+        metrics.large_tool_output_tokens = audit_u64(efficiency, "large_tool_output_original_tokens");
+    }
+    metrics
+}
+
+fn audit_u64(object: &serde_json::Map<String, Value>, name: &str) -> u64 {
+    object.get(name).and_then(Value::as_u64).unwrap_or_default()
+}
+
+fn ratio_ppm(numerator: u64, denominator: u64) -> u64 {
+    if denominator == 0 {
+        return 0;
+    }
+    numerator.saturating_mul(1_000_000) / denominator
+}
+
+fn audit_text(value: &str, max_chars: usize) -> String {
+    let compact = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('\t', " ");
+    if compact.chars().count() <= max_chars {
+        return compact;
+    }
+    compact.chars().take(max_chars).collect()
+}
+
 fn render_token_usage(usage: &Value) -> Option<String> {
     let object = usage.as_object()?;
     let field = |name: &str| {
