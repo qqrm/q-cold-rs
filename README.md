@@ -377,6 +377,9 @@ short scope label such as `refactoring`; those overrides are stored in Q-COLD
 state. The default backend is `tmux`.
 Set `QCOLD_TERMINAL_BACKEND=zellij` to start new Q-COLD terminal agents through
 `zellij` instead; the GUI discovers both Q-COLD `tmux` and `zellij` sessions.
+With the zellij backend, `qcold agent start --terminal --name "<pane name>" ...`
+sets only the zellij pane title. It does not send Codex TUI `/rename` and does
+not change Q-COLD dashboard metadata.
 Plain processes started in a non-multiplexed console are visible as host
 processes but are not safely attachable after the fact. Start agents with
 `qcold agent start --terminal --attach --track <track> -- <command>...` to see

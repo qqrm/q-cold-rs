@@ -59,7 +59,7 @@ pub struct AvailableAgentCommand {
     pub status_command: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum TerminalBackend {
     Tmux,
     Zellij,
@@ -84,6 +84,7 @@ struct TerminalLaunch {
     qcold_repo_root: Option<PathBuf>,
     qcold_agent_worktree: Option<PathBuf>,
     output_guard: Option<OutputGuardLaunch>,
+    zellij_pane_name: Option<String>,
 }
 
 struct LaunchContext {
@@ -132,13 +133,15 @@ struct AttachArgs {
 struct StartArgs {
     #[arg(long)]
     id: Option<String>,
+    #[arg(long, help = "Set the zellij pane name for a terminal agent")]
+    name: Option<String>,
     #[arg(long)]
     track: String,
     #[arg(long, help = "Directory used as the agent launch context")]
     cwd: Option<PathBuf>,
-    #[arg(long, help = "Run the agent in an attachable tmux terminal session")]
+    #[arg(long, help = "Run the agent in an attachable terminal session")]
     terminal: bool,
-    #[arg(long, help = "Attach to the tmux terminal after starting the agent")]
+    #[arg(long, help = "Attach to the terminal after starting the agent")]
     attach: bool,
     #[arg(required = true, trailing_var_arg = true)]
     command: Vec<String>,
@@ -153,8 +156,12 @@ pub fn run(args: AgentArgs) -> Result<u8> {
                     &args.track,
                     &shell_join(&args.command),
                     args.cwd.as_deref(),
+                    args.name.as_deref(),
                 )?
             } else {
+                if args.name.is_some() {
+                    bail!("--name requires --terminal or --attach");
+                }
                 start_agent(args.id, &args.track, &args.command, args.cwd.as_deref())?
             };
             println!("{}", snapshot_line(&record));
@@ -311,7 +318,7 @@ pub fn start_terminal_shell_agent_with_id(
     if command.trim().is_empty() {
         bail!("agent command is empty");
     }
-    start_terminal_agent(id, track, command, None)
+    start_terminal_agent(id, track, command, None, None)
 }
 
 pub fn start_terminal_shell_agent_with_id_in_cwd(
@@ -323,7 +330,7 @@ pub fn start_terminal_shell_agent_with_id_in_cwd(
     if command.trim().is_empty() {
         bail!("agent command is empty");
     }
-    start_terminal_agent(id, track, command, Some(cwd))
+    start_terminal_agent(id, track, command, Some(cwd), None)
 }
 
 fn start_agent(
@@ -396,12 +403,18 @@ fn start_terminal_agent(
     track: &str,
     command: &str,
     requested_cwd: Option<&Path>,
+    zellij_pane_name: Option<&str>,
 ) -> Result<AgentRecord> {
     if track.trim().is_empty() {
         bail!("agent track is empty");
     }
     if command.trim().is_empty() {
         bail!("agent command is empty");
+    }
+    let backend = selected_terminal_backend()?;
+    let zellij_pane_name = clean_zellij_pane_name(zellij_pane_name)?;
+    if zellij_pane_name.is_some() && backend != TerminalBackend::Zellij {
+        bail!("--name is only supported with QCOLD_TERMINAL_BACKEND=zellij");
     }
     let state = AgentState::load()?;
     let started_at = unix_now()?;
@@ -413,8 +426,14 @@ fn start_terminal_agent(
     let state_dir = state_dir()?;
     fs::create_dir_all(state_dir.join("logs"))?;
     let stdout_log_path = log_path(&id, "out")?;
-    let launch = prepare_terminal_launch(&id, track, started_at, requested_cwd, command)?;
-    let backend = selected_terminal_backend()?;
+    let launch = prepare_terminal_launch(
+        &id,
+        track,
+        started_at,
+        requested_cwd,
+        command,
+        zellij_pane_name,
+    )?;
     let record = match backend {
         TerminalBackend::Tmux => {
             start_tmux_terminal_agent(&id, track, started_at, &launch, &stdout_log_path)?
@@ -472,6 +491,7 @@ fn prepare_terminal_launch(
     started_at: u64,
     requested_cwd: Option<&Path>,
     command: &str,
+    zellij_pane_name: Option<String>,
 ) -> Result<TerminalLaunch> {
     let context = prepare_launch_context(id, track, started_at, requested_cwd, command)?;
     let output_guard = prepare_output_guard_launch(id, started_at)?;
@@ -481,7 +501,23 @@ fn prepare_terminal_launch(
         qcold_repo_root: context.qcold_repo_root,
         qcold_agent_worktree: context.qcold_agent_worktree,
         output_guard,
+        zellij_pane_name,
     })
+}
+
+fn clean_zellij_pane_name(value: Option<&str>) -> Result<Option<String>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.chars().any(char::is_control) {
+        bail!("zellij pane name contains a control character");
+    }
+    let mut value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.is_empty() {
+        bail!("zellij pane name is empty");
+    }
+    crate::prompt::truncate_chars(&mut value, 80);
+    Ok(Some(value))
 }
 
 fn prepare_launch_context(
@@ -890,4 +926,5 @@ fn git_root_for(cwd: &Path) -> Result<PathBuf> {
 
 include!("agents/worktree_terminal.rs");
 include!("agents/render_state_tests.rs");
+include!("agents/zellij_name_tests.rs");
 include!("agents/resume_tests.rs");

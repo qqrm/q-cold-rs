@@ -193,7 +193,8 @@ fn start_zellij_terminal_agent(
         shell_quote(&session)
     );
     let layout_path = state_dir()?.join("logs").join(format!("{id}.zellij.kdl"));
-    fs::write(&layout_path, zellij_layout(id, &wrapped)?)
+    let pane_name = launch.zellij_pane_name.as_deref().unwrap_or(id);
+    fs::write(&layout_path, zellij_layout(pane_name, &wrapped)?)
         .with_context(|| format!("failed to write zellij layout {}", layout_path.display()))?;
 
     let status = Command::new("zellij")
@@ -243,10 +244,10 @@ fn start_zellij_terminal_agent(
     })
 }
 
-fn zellij_layout(id: &str, wrapped: &str) -> Result<String> {
+fn zellij_layout(pane_name: &str, wrapped: &str) -> Result<String> {
     Ok(format!(
         "layout {{\n    pane name={} command=\"sh\" close_on_exit=true {{\n        args \"-lc\" {}\n    }}\n}}\n",
-        kdl_quote(id)?,
+        kdl_quote(pane_name)?,
         kdl_quote(wrapped)?
     ))
 }

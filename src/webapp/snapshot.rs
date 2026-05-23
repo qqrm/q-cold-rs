@@ -507,18 +507,17 @@ fn parse_zellij_pane(session: &str, pid: u32, line: &str) -> Option<TerminalPane
     if fields.len() < 2 || fields[1] != "terminal" {
         return None;
     }
-    let title = fields.get(2).copied().unwrap_or("zellij");
-    let expected_title = session.strip_prefix("qcold-").unwrap_or(session);
-    if title != expected_title {
-        return None;
-    }
+    let title = fields
+        .get(2..)
+        .filter(|fields| !fields.is_empty())
+        .map_or_else(|| "zellij".to_string(), |fields| fields.join(" "));
     let pane = fields[0].to_string();
     Some(TerminalPane::new(
         format!("zellij:{session}:{pane}"),
         session.to_string(),
         pane,
         pid,
-        title.to_string(),
+        title,
         "zellij".to_string(),
     ))
 }

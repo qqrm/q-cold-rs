@@ -1,0 +1,7 @@
+interface:
+  display_name: "Repo Task Run Audit"
+  short_description: "Audit task-flow bundles and live task state"
+  default_prompt: "Use $repo-task-run-audit to inspect recent task bundles and explain what happened dynamically."
+
+policy:
+  allow_implicit_invocation: true

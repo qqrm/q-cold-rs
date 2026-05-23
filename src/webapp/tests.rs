@@ -803,6 +803,15 @@ mod tests {
     }
 
     #[test]
+    fn zellij_pane_parser_accepts_custom_qcold_title() {
+        let pane = parse_zellij_pane("qcold-c1-1234", 42, "terminal_0 terminal client migration")
+            .unwrap();
+
+        assert_eq!(pane.target, "zellij:qcold-c1-1234:terminal_0");
+        assert_eq!(pane.command, "client migration");
+    }
+
+    #[test]
     fn terminal_capture_uses_deeper_scrollback_window() {
         assert_eq!(terminal_capture_start_arg(), "-2000");
     }

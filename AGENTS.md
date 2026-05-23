@@ -69,7 +69,7 @@ repo-local code owns it.
 - `qcold task-record delete <task-id>`
 - `qcold agent list`
 - `qcold agent attach <agent-id|terminal-target|session|name>`
-- `qcold agent start --track <track> -- <command>...`
+- `qcold agent start [--name <zellij-pane-name>] --track <track> -- <command>...`
 - `qcold telegram poll`
 - `qcold wsl autostart install [--listen <addr>] [--repo-root <path>] [--qcold-bin <path>]`
 - `qcold wsl autostart status`
@@ -92,7 +92,7 @@ repo-local code owns it.
 - `cargo qcold task-record delete <task-id>`
 - `cargo qcold agent list`
 - `cargo qcold agent attach <agent-id|terminal-target|session|name>`
-- `cargo qcold agent start --track <track> -- <command>...`
+- `cargo qcold agent start [--name <zellij-pane-name>] --track <track> -- <command>...`
 - `cargo qcold telegram poll`
 - `cargo qcold wsl autostart install [--listen <addr>] [--repo-root <path>] [--qcold-bin <path>]`
 - `cargo qcold wsl autostart status`
