@@ -20,6 +20,7 @@ struct LargeFileException {
 
 pub(crate) fn run(repo: &Path) -> Result<()> {
     let tracked = tracked_files(repo)?;
+    reject_python_skill_scripts(repo, &tracked)?;
     reject_large_text_files(repo, &tracked)?;
     reject_long_text_lines(repo, &tracked)
 }
@@ -92,6 +93,26 @@ fn reject_long_text_lines(repo: &Path, paths: &[PathBuf]) -> Result<()> {
     );
 }
 
+fn reject_python_skill_scripts(repo: &Path, paths: &[PathBuf]) -> Result<()> {
+    let mut violations = Vec::new();
+    for relative in paths {
+        if !is_skill_script_path(relative) {
+            continue;
+        }
+        let text = tracked_text(repo, relative)?;
+        if skill_script_uses_python(relative, text.as_deref()) {
+            violations.push(relative.display().to_string());
+        }
+    }
+    if violations.is_empty() {
+        return Ok(());
+    }
+    bail!(
+        "repo-local skill scripts must not use Python; use POSIX shell or Rust-owned tooling: {}",
+        violations.join(", ")
+    );
+}
+
 fn tracked_text(repo: &Path, relative: &Path) -> Result<Option<String>> {
     if ignored_tracked_path(relative) {
         return Ok(None);
@@ -115,6 +136,26 @@ fn tracked_text(repo: &Path, relative: &Path) -> Result<Option<String>> {
         Ok(text) => Ok(Some(text)),
         Err(_) => Ok(None),
     }
+}
+
+fn is_skill_script_path(relative: &Path) -> bool {
+    let path = relative.to_string_lossy();
+    path.starts_with(".codex/skills/") && path.contains("/scripts/")
+}
+
+fn skill_script_uses_python(relative: &Path, text: Option<&str>) -> bool {
+    if !is_skill_script_path(relative) {
+        return false;
+    }
+    if relative
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension == "py")
+    {
+        return true;
+    }
+    text.and_then(|text| text.lines().next())
+        .is_some_and(|line| line.starts_with("#!") && line.contains("python"))
 }
 
 fn ignored_tracked_path(relative: &Path) -> bool {
@@ -163,6 +204,26 @@ mod tests {
             "docs/screenshots/qcold-web-terminals.jpg"
         )));
         assert!(!ignored_tracked_path(Path::new("src/webapp.rs")));
+    }
+
+    #[test]
+    fn python_skill_scripts_are_rejected() {
+        assert!(skill_script_uses_python(
+            Path::new(".codex/skills/repo-task-run-audit/scripts/helper.py"),
+            Some("#!/usr/bin/env python3")
+        ));
+        assert!(skill_script_uses_python(
+            Path::new(".codex/skills/repo-task-run-audit/scripts/helper"),
+            Some("#!/usr/bin/python3")
+        ));
+        assert!(!skill_script_uses_python(
+            Path::new(".codex/skills/repo-task-run-audit/scripts/helper.sh"),
+            Some("#!/bin/sh")
+        ));
+        assert!(!skill_script_uses_python(
+            Path::new("scripts/helper.py"),
+            Some("#!/usr/bin/env python3")
+        ));
     }
 
     #[test]

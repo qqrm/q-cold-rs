@@ -33,10 +33,11 @@ systems, so they must be checked separately.
 ## Audit Bundles
 
 When bundle paths are provided or a repo has a `bundles/` directory, make a
-timeline before reading raw logs:
+timeline before reading raw logs. This skill must not use Python helpers; keep
+bundled automation in POSIX shell or repository-owned Rust tooling.
 
 ```bash
-python3 .codex/skills/repo-task-run-audit/scripts/summarize_task_bundles.py \
+sh .codex/skills/repo-task-run-audit/scripts/summarize_task_bundles.sh \
   /path/to/repo/bundles/*.zip
 ```
 

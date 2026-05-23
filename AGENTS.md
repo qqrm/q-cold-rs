@@ -139,6 +139,8 @@ fixture or debugging task explicitly needs them.
   `cargo-qcold ...` execution must stay equivalent where intended.
 - Prefer small, typed Rust changes over stringly shell glue.
 - Avoid broad refactors unless the task is explicitly architectural.
+- Do not add Python helper scripts to repo-local skills; use POSIX shell
+  helpers or Rust-owned tooling for bundled skill automation.
 - Shape broad searches and log reads before consuming raw output. Use focused
   paths, `rg -l`, `rg --count`, `sed -n`, `head`, `tail`, or
   `qcold guard -- <command>...` when a command can dump large output.
