@@ -22,8 +22,8 @@ use predicates::str::contains;
 use fixture::{Fixture, BASE_BRANCH};
 use helpers::{path_from_stdout, stdout_text};
 use task_flow_helpers::{
-    bundle_extract_env, bundle_listing, git_output, load_task_env, terminal_receipt_relative_path,
-    write_file,
+    bundle_extract, bundle_extract_env, bundle_listing, git_output, load_task_env,
+    terminal_receipt_relative_path, write_file,
 };
 
 #[test]
@@ -197,6 +197,8 @@ fn success_closeout_failure_records_failed_closeout_bundle_without_cleanup() {
         .success();
     let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
     write_file(&worktree.join("payload.txt"), "payload\n");
+    fs::create_dir_all(worktree.join("target")).unwrap();
+    write_file(&worktree.join("target/build-output.txt"), "generated\n");
     corrupt_base_branch(&worktree);
 
     let closeout = fixture
@@ -222,6 +224,9 @@ fn success_closeout_failure_records_failed_closeout_bundle_without_cleanup() {
     let stdout = stdout_text(&closeout);
     let bundle = path_from_stdout(&stdout, "BUNDLE_PATH");
     assert_terminal_receipt(&bundle, "failed-closeout", "success_closeout_failed");
+    let listing = bundle_listing(&bundle);
+    assert!(listing.contains("repo/payload.txt"));
+    assert!(!listing.contains("target/build-output.txt"));
     let receipt = bundle_extract_env(&bundle, terminal_receipt_relative_path());
     assert_eq!(
         receipt.get("CURRENT_FLOW_PROBLEM"),
@@ -274,13 +279,20 @@ fn verify_preflight_runs_directly_inside_container_runtime() {
 
 fn assert_terminal_receipt(bundle: &Path, outcome: &str, category: &str) {
     assert!(bundle.is_file(), "missing bundle {}", bundle.display());
-    assert!(bundle_listing(bundle).contains(terminal_receipt_relative_path()));
+    let listing = bundle_listing(bundle);
+    assert!(listing.contains("summary.md"));
+    assert!(listing.contains("metadata/bundle.env"));
+    assert!(listing.contains(terminal_receipt_relative_path()));
     let receipt = bundle_extract_env(bundle, terminal_receipt_relative_path());
     assert_eq!(receipt.get("OUTCOME"), Some(&outcome.to_string()));
     assert_eq!(
         receipt.get("CLOSEOUT_CATEGORY"),
         Some(&category.to_string())
     );
+    let summary = bundle_extract(bundle, "summary.md");
+    assert!(summary.contains(&format!("- Outcome: `{outcome}`")));
+    assert!(summary.contains(&format!("- Closeout category: `{category}`")));
+    assert!(summary.contains("metadata/terminal-receipt.env"));
 }
 
 fn corrupt_base_branch(worktree: &Path) {

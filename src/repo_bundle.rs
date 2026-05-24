@@ -23,6 +23,8 @@ fn create_source_bundle(repo: &Repository) -> Result<Bundle> {
     let prefix = format!("{}-{}/", repo.name, repo.short_head);
     let manifest_path = format!("{prefix}metadata/bundle-manifest.txt");
     let manifest = manifest_content(repo, &archive, &manifest_path);
+    let summary_path = format!("{prefix}summary.md");
+    let summary = summary_content(repo, &archive, &manifest_path);
 
     let status = Command::new("git")
         .current_dir(&repo.root)
@@ -31,6 +33,7 @@ fn create_source_bundle(repo: &Repository) -> Result<Bundle> {
             "--format=zip",
             &format!("--prefix={prefix}"),
             &format!("--add-virtual-file={manifest_path}:{manifest}"),
+            &format!("--add-virtual-file={summary_path}:{summary}"),
             "-o",
         ])
         .arg(&archive)
@@ -72,6 +75,24 @@ fn manifest_content(repo: &Repository, archive: &Path, manifest_path: &str) -> S
         repo.head,
         created_unix,
         archive.display(),
+        manifest_path
+    )
+}
+
+fn summary_content(repo: &Repository, archive: &Path, manifest_path: &str) -> String {
+    format!(
+        "# Q-COLD Source Bundle\n\n\
+         - Repository: `{}`\n\
+         - Branch: `{}`\n\
+         - Commit: `{}`\n\
+         - Archive: `{}`\n\
+         - Metadata: `{}`\n\n\
+         Machine-readable bundle metadata lives in `{}`.\n",
+        repo.name,
+        repo.branch,
+        repo.head,
+        archive.display(),
+        manifest_path,
         manifest_path
     )
 }
@@ -163,6 +184,9 @@ mod tests {
         let manifest = unzip_stdout(&bundle.path, "metadata/bundle-manifest.txt");
         assert!(manifest.contains("repo="));
         assert!(manifest.contains("archive_format=zip"));
+        let summary = unzip_stdout(&bundle.path, "summary.md");
+        assert!(summary.contains("# Q-COLD Source Bundle"));
+        assert!(summary.contains("Machine-readable bundle metadata lives in"));
     }
 
     fn git(root: &Path, args: &[&str]) {

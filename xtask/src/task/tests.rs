@@ -220,6 +220,8 @@ mod tests {
             ],
         );
         fs::write(worktree.join("change.txt"), "dirty\n").unwrap();
+        fs::create_dir_all(worktree.join("target")).unwrap();
+        fs::write(worktree.join("target/generated.log"), "generated\n").unwrap();
         let mut task = TaskEnv {
             task_id: "task/closeout-fails".into(),
             task_name: "closeout-fails".into(),
@@ -257,14 +259,27 @@ mod tests {
             .map(|entry| entry.unwrap().path())
             .find(|path| path.extension().and_then(|value| value.to_str()) == Some("zip"))
             .unwrap();
+        let listing = std::process::Command::new("7z")
+            .args(["l", "-slt", path_arg(&bundle)])
+            .output()
+            .unwrap();
+        assert!(listing.status.success());
+        let listing = String::from_utf8_lossy(&listing.stdout);
+        assert!(listing.contains("summary.md"));
+        assert!(listing.contains("metadata/bundle.env"));
+        assert!(listing.contains("repo/change.txt"));
+        assert!(!listing.contains("target/generated.log"));
         let extract = root.join("extract");
         fs::create_dir_all(&extract).unwrap();
         let status = std::process::Command::new("7z")
             .current_dir(&extract)
-            .args(["x", path_arg(&bundle), "metadata/terminal-receipt.env"])
+            .args(["x", path_arg(&bundle), "summary.md", "metadata/terminal-receipt.env"])
             .status()
             .unwrap();
         assert!(status.success());
+        let summary = fs::read_to_string(extract.join("summary.md")).unwrap();
+        assert!(summary.contains("- Outcome: `failed-closeout`"));
+        assert!(summary.contains("- Closeout category: `success_closeout_failed`"));
         let receipt = fs::read_to_string(extract.join("metadata/terminal-receipt.env")).unwrap();
         assert!(receipt.contains("OUTCOME=failed-closeout"));
         assert!(receipt.contains("CURRENT_FLOW_PROBLEM=success_closeout_failed"));

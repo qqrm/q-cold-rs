@@ -516,9 +516,10 @@ calls cross the process boundary.
 `qcold bundle` writes one source ZIP archive for the current repository into
 the repository-local `bundles/` directory, which is ignored by git. The command
 requires a clean worktree and prints `BUNDLE_PATH=...` for handoff. Bundle
-metadata is embedded inside the ZIP at `metadata/bundle-manifest.txt`. The
-self-hosted task cleanup path removes stale ZIP bundles only after the bundle
-retention window, which defaults to 24 hours.
+metadata is embedded inside the ZIP at `metadata/bundle-manifest.txt`, and
+root `summary.md` provides the human-readable handoff. The self-hosted task
+cleanup path removes stale ZIP bundles only after the bundle retention window,
+which defaults to 24 hours.
 
 ## Development contract
 
@@ -529,10 +530,17 @@ closeout runs `cargo fmt --check` plus the serial `cargo-qcold` unit suite,
 then fast-forwards the primary checkout to the current remote base, rebases the
 task branch onto that base, pushes the base branch to `origin`, and refreshes
 the remote-tracking ref before terminal cleanup.
-If success closeout fails after task state is available, the adapter records
-`STATUS=failed-closeout`, preserves the task worktree, and writes a diagnostic
-bundle receipt with `CURRENT_FLOW_PROBLEM`, `HISTORICAL_FLOW_PROBLEM`,
-`CLOSEOUT_FAILURE_PHASE`, and `CLOSEOUT_FAILURE_ERROR` fields.
+Terminal task bundles are self-contained ZIP archives. They include root
+`summary.md` for human handoff, `metadata/bundle.env`,
+`metadata/terminal-receipt.env`, promoted task logs under `logs/`, focused git
+evidence under `evidence/`, and a git-visible repo snapshot under `repo/`.
+Generated local output families such as `target/`, `build/`, `dist/`,
+`node_modules/`, and `bundles/` are excluded from that snapshot. If success
+closeout fails after task state is available, the adapter records
+`STATUS=failed-closeout`, preserves the task worktree, and writes the same
+diagnostic bundle shape with `CURRENT_FLOW_PROBLEM`,
+`HISTORICAL_FLOW_PROBLEM`, `CLOSEOUT_FAILURE_PHASE`, and
+`CLOSEOUT_FAILURE_ERROR` fields in `metadata/terminal-receipt.env`.
 Repository-specific proof semantics for other projects remain behind their adapters.
 Adapters that run E2E or compatibility proof lanes should keep raw logs in
 bundles or task-local logs, but commit only the compact recent result index.

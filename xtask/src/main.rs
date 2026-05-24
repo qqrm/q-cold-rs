@@ -739,113 +739,6 @@ fn historical_flow_problem(task_status: &WorktreeStatusSummary) -> &'static str 
     }
 }
 
-fn create_task_archive_bundle(task: &TaskEnv) -> Result<PathBuf> {
-    let bundles = task.primary_repo_path.join("bundles");
-    fs::create_dir_all(&bundles)?;
-    let bundle = bundles.join(format!("{}-{}.zip", task.task_name, unix_now()));
-    let status = Command::new("7z")
-        .current_dir(&task.task_worktree)
-        .args(["a", path_arg(&bundle), ".", "-xr!.git"])
-        .status()
-        .context("failed to create terminal evidence bundle")?;
-    if !status.success() {
-        bail!("7z failed to create terminal evidence bundle with status {status}");
-    }
-    Ok(bundle)
-}
-
-fn add_terminal_receipt_to_bundle(bundle: &Path, receipt: &TerminalReceipt<'_>) -> Result<()> {
-    let staging = std::env::temp_dir().join(format!(
-        "qcold-terminal-receipt-{}-{}",
-        std::process::id(),
-        unix_now()
-    ));
-    let metadata = staging.join("metadata");
-    fs::create_dir_all(&metadata)?;
-    fs::write(
-        metadata.join("terminal-receipt.env"),
-        render_terminal_receipt(receipt),
-    )?;
-    let status = Command::new("7z")
-        .current_dir(&staging)
-        .args(["a", path_arg(bundle), "metadata/terminal-receipt.env"])
-        .status()
-        .context("failed to append terminal receipt to bundle")?;
-    fs::remove_dir_all(&staging).ok();
-    if !status.success() {
-        bail!("7z failed to append terminal receipt with status {status}");
-    }
-    Ok(())
-}
-
-fn render_terminal_receipt(receipt: &TerminalReceipt<'_>) -> String {
-    let mut output = String::new();
-    let primary_clean = yes_no(receipt.primary_clean);
-    let worktree_removed = yes_no(receipt.worktree_removed);
-    let branch_removed = yes_no(receipt.branch_removed);
-    let primary_dirty_file_count = receipt.primary_status.dirty_file_count.to_string();
-    let primary_conflict_file_count = receipt.primary_status.conflict_file_count.to_string();
-    let primary_conflict_paths = receipt.primary_status.conflict_paths.join("\n");
-    let dirty_file_count = receipt.task_status.dirty_file_count.to_string();
-    let conflict_file_count = receipt.task_status.conflict_file_count.to_string();
-    let conflict_paths = receipt.task_status.conflict_paths.join("\n");
-    for (key, value) in [
-        ("OUTCOME", receipt.outcome.to_string()),
-        ("REASON", receipt.reason.unwrap_or("").to_string()),
-        ("CLOSEOUT_CATEGORY", receipt.closeout_category.to_string()),
-        (
-            "CURRENT_FLOW_PROBLEM",
-            receipt.current_flow_problem.to_string(),
-        ),
-        (
-            "HISTORICAL_FLOW_PROBLEM",
-            receipt.historical_flow_problem.to_string(),
-        ),
-        (
-            "CLOSEOUT_FAILURE_PHASE",
-            receipt.closeout_failure_phase.unwrap_or("").to_string(),
-        ),
-        (
-            "CLOSEOUT_FAILURE_ERROR",
-            receipt.closeout_failure_error.unwrap_or("").to_string(),
-        ),
-        ("PRIMARY_CHECKOUT_CLEAN", primary_clean),
-        (
-            "PRIMARY_CHECKOUT_STATUS_SHORT",
-            receipt.primary_status.status_short.clone(),
-        ),
-        (
-            "PRIMARY_CHECKOUT_DIRTY_FILE_COUNT",
-            primary_dirty_file_count,
-        ),
-        (
-            "PRIMARY_CHECKOUT_CONFLICT_FILE_COUNT",
-            primary_conflict_file_count,
-        ),
-        ("PRIMARY_CHECKOUT_CONFLICTS", primary_conflict_paths),
-        ("TASK_WORKTREE_REMOVED", worktree_removed),
-        ("LOCAL_TASK_BRANCH_REMOVED", branch_removed),
-        (
-            "TASK_WORKTREE_STATUS_SHORT",
-            receipt.task_status.status_short.clone(),
-        ),
-        ("TASK_WORKTREE_DIRTY_FILE_COUNT", dirty_file_count),
-        ("TASK_WORKTREE_CONFLICT_FILE_COUNT", conflict_file_count),
-        ("TASK_WORKTREE_CONFLICTS", conflict_paths),
-        ("CANONICAL_VALIDATION", "not-applicable".to_string()),
-    ] {
-        output.push_str(key);
-        output.push('=');
-        output.push_str(&shell_quote(&value));
-        output.push('\n');
-    }
-    output
-}
-
-fn yes_no(value: bool) -> String {
-    String::from(if value { "yes" } else { "no" })
-}
-
 fn bundle_command(task_id: Option<&str>) -> Result<u8> {
     let repo = repo_root()?;
     let bundles = repo.join("bundles");
@@ -932,6 +825,7 @@ struct BundleCleanup {
 }
 
 include!("task/cleanup.rs");
+include!("task/bundle.rs");
 include!("task/verify.rs");
 include!("task/env_io.rs");
 include!("task/proof_runs.rs");
