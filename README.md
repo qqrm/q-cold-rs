@@ -450,19 +450,34 @@ message and exits with code 2 so the operator or agent can rerun a narrower
 query such as `rg -l`, `rg --count`, `sed -n`, `head`, `tail`, or a path-limited
 search.
 
-Q-COLD-started agents also get automatic guard wrappers for broad output
-commands. By default, each agent launch prepends a per-agent
-`QCOLD_OUTPUT_GUARD_BIN` directory to `PATH` with wrappers for `rg`, `grep`,
-and `find`; each wrapper invokes `qcold guard -- <real-command> "$@"` using the
-real command path resolved before the guard directory is added. Set
-`QCOLD_AGENT_OUTPUT_GUARD=0` to disable this setup for one launch. Set
-`QCOLD_AGENT_OUTPUT_GUARD_COMMANDS=rg,grep,find,cat` to override the command
-list; `cat` is guarded only when explicitly listed. This automatic setup is
-limited to processes launched through `qcold agent start`, including queue and
-web terminal agents for registered target repositories such as Vitastor. It
-does not intercept absolute command paths, shell builtins, aliases, already
-running external terminals, or execution tools outside the launched agent
-process environment.
+Q-COLD-managed agent and task contexts also get automatic guard wrappers for
+broad output commands. By default, each Q-COLD agent launch prepends a
+per-context `QCOLD_OUTPUT_GUARD_BIN` directory to `PATH` with wrappers for
+`rg`, `grep`, `find`, `cat`, `git`, `unzip`, `zcat`, and `jq`; each wrapper
+invokes `qcold guard -- <real-command> "$@"` using the real command path
+resolved before the guard directory is added. Q-COLD also records compact guard
+provenance in managed task `.task/task.env`, including
+`QCOLD_OUTPUT_GUARD_ENABLED`, `QCOLD_OUTPUT_GUARD_BIN`, and
+`QCOLD_OUTPUT_GUARD_COMMANDS`. `qcold task enter` prints matching shell exports
+when the task env has guard metadata, so Q-COLD-controlled task handoffs can
+restore the guarded `PATH`.
+
+Set `QCOLD_AGENT_OUTPUT_GUARD=0` to disable wrapper setup for one launch or task
+open. Set `QCOLD_AGENT_OUTPUT_GUARD_COMMANDS=rg,grep,find,cat,git,unzip,zcat,jq`
+to override the command list. `sed`, `awk`, and `ls` are intentionally opt-in:
+they are common shell-script data plumbing and wrapping them by default is more
+likely to change normal validation or build helper behavior. For bundle,
+performance, or broad-audit work where a stricter interactive shell is useful,
+set `QCOLD_AGENT_OUTPUT_GUARD_COMMANDS=rg,grep,find,cat,git,unzip,zcat,jq,sed,awk,ls`.
+Invalid command names are rejected; use bare command names, not paths or shell
+fragments.
+
+Automatic guard setup applies to `qcold agent start`, web/queue-started agents,
+managed task worktree agent sessions, and Q-COLD-controlled task-open/task-enter
+handoffs. Adapter-owned validation and closeout subprocesses scrub inherited
+guard `PATH` state so repository automation is not silently changed. Guard
+wrappers cannot intercept absolute command paths, shell builtins, aliases,
+already-running external terminals, or non-Q-COLD-launched processes.
 
 Q-COLD state is stored in one local SQLite database under `QCOLD_STATE_DIR` or
 `~/.local/state/qcold/qcold.sqlite3`. The database owns repository registry,

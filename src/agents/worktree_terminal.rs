@@ -282,26 +282,7 @@ fn apply_qcold_launch_env(
     if let Some(agent_worktree) = agent_worktree {
         command.env("QCOLD_AGENT_WORKTREE", agent_worktree);
     }
-    let inherited_guard_bin = env::var_os("QCOLD_OUTPUT_GUARD_BIN").map(PathBuf::from);
-    if inherited_guard_bin.is_some() || output_guard.is_some() {
-        command.env_remove("QCOLD_OUTPUT_GUARD_BIN");
-        command.env_remove("QCOLD_GUARD_QCOLD");
-    }
-    let path = env::var("PATH").unwrap_or_default();
-    let cleaned_path = path_without_output_guard_bin(&path, inherited_guard_bin.as_deref());
-    if let Some(output_guard) = output_guard {
-        command.env("QCOLD_OUTPUT_GUARD_BIN", &output_guard.bin_dir);
-        command.env("QCOLD_GUARD_QCOLD", &output_guard.qcold_path);
-        for guarded in &output_guard.real_commands {
-            command.env(&guarded.env_name, &guarded.real_path);
-        }
-        command.env(
-            "PATH",
-            guarded_path_value(output_guard.bin_dir.as_path(), &cleaned_path),
-        );
-    } else if inherited_guard_bin.is_some() && cleaned_path != path {
-        command.env("PATH", cleaned_path);
-    }
+    crate::output_guard::apply_output_guard_to_command(command, output_guard);
 }
 
 fn terminal_qcold_env_prefix(
@@ -320,7 +301,6 @@ fn terminal_qcold_env_prefix_with_path(
     path: Option<&str>,
 ) -> String {
     let mut prefix = String::new();
-    let inherited_guard_bin = env::var_os("QCOLD_OUTPUT_GUARD_BIN").map(PathBuf::from);
     if let Some(root) = root {
         let _ = write!(
             prefix,
@@ -335,57 +315,11 @@ fn terminal_qcold_env_prefix_with_path(
             shell_quote(&agent_worktree.display().to_string())
         );
     }
-    if inherited_guard_bin.is_some() || output_guard.is_some() {
-        prefix.push_str("unset QCOLD_OUTPUT_GUARD_BIN QCOLD_GUARD_QCOLD; ");
-    }
-    let path = path.unwrap_or_default();
-    let cleaned_path = path_without_output_guard_bin(path, inherited_guard_bin.as_deref());
-    if let Some(output_guard) = output_guard {
-        let _ = write!(
-            prefix,
-            "export QCOLD_OUTPUT_GUARD_BIN={}; ",
-            shell_quote(&output_guard.bin_dir.display().to_string())
-        );
-        let _ = write!(
-            prefix,
-            "export QCOLD_GUARD_QCOLD={}; ",
-            shell_quote(&output_guard.qcold_path.display().to_string())
-        );
-        for guarded in &output_guard.real_commands {
-            let _ = write!(
-                prefix,
-                "export {}={}; ",
-                guarded.env_name,
-                shell_quote(&guarded.real_path.display().to_string())
-            );
-        }
-        let guarded_path = guarded_path_value(output_guard.bin_dir.as_path(), &cleaned_path);
-        let _ = write!(prefix, "export PATH={}; ", shell_quote(&guarded_path));
-    } else if inherited_guard_bin.is_some() && cleaned_path != path {
-        let _ = write!(prefix, "export PATH={}; ", shell_quote(&cleaned_path));
-    }
+    prefix.push_str(&crate::output_guard::terminal_output_guard_env_prefix_with_path(
+        output_guard,
+        path,
+    ));
     prefix
-}
-
-fn guarded_path_value(guard_bin: &Path, path: &str) -> String {
-    if path.is_empty() {
-        guard_bin.display().to_string()
-    } else {
-        format!("{}:{path}", guard_bin.display())
-    }
-}
-
-fn path_without_output_guard_bin(path: &str, inherited_guard_bin: Option<&Path>) -> String {
-    let Some(inherited_guard_bin) = inherited_guard_bin else {
-        return path.to_string();
-    };
-    let dirs = env::split_paths(path)
-        .filter(|dir| dir.as_path() != inherited_guard_bin)
-        .collect::<Vec<_>>();
-    env::join_paths(dirs)
-        .ok()
-        .and_then(|path| path.into_string().ok())
-        .unwrap_or_else(|| path.to_string())
 }
 
 fn zellij_first_terminal_pane_once(session: &str) -> Result<String> {

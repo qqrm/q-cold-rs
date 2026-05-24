@@ -19,6 +19,11 @@ struct TaskEnv {
     delivery_mode: String,
     codex_thread_id: String,
     codex_rollout_path: String,
+    output_guard_enabled: String,
+    output_guard_bin: String,
+    output_guard_commands: String,
+    output_guard_qcold: String,
+    output_guard_real_commands: Vec<(String, String)>,
 }
 
 fn current_task_env() -> Result<TaskEnv> {
@@ -73,6 +78,12 @@ fn parse_task_env(path: &Path) -> Result<TaskEnv> {
             .map(unquote)
             .unwrap_or_default()
     };
+    let output_guard_real_commands = content
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .filter(|(key, _raw)| key.starts_with("QCOLD_GUARD_REAL_"))
+        .map(|(key, raw)| (key.to_string(), unquote(raw)))
+        .collect();
     Ok(TaskEnv {
         task_id: value("TASK_ID"),
         task_name: value("TASK_NAME"),
@@ -93,6 +104,11 @@ fn parse_task_env(path: &Path) -> Result<TaskEnv> {
         delivery_mode: value("DELIVERY_MODE"),
         codex_thread_id: value("CODEX_THREAD_ID"),
         codex_rollout_path: value("CODEX_ROLLOUT_PATH"),
+        output_guard_enabled: value("QCOLD_OUTPUT_GUARD_ENABLED"),
+        output_guard_bin: value("QCOLD_OUTPUT_GUARD_BIN"),
+        output_guard_commands: value("QCOLD_OUTPUT_GUARD_COMMANDS"),
+        output_guard_qcold: value("QCOLD_GUARD_QCOLD"),
+        output_guard_real_commands,
     })
 }
 
@@ -132,6 +148,16 @@ fn write_task_env(task: &TaskEnv) -> Result<()> {
     for (key, value) in [
         ("CODEX_THREAD_ID", task.codex_thread_id.as_str()),
         ("CODEX_ROLLOUT_PATH", task.codex_rollout_path.as_str()),
+        (
+            "QCOLD_OUTPUT_GUARD_ENABLED",
+            task.output_guard_enabled.as_str(),
+        ),
+        ("QCOLD_OUTPUT_GUARD_BIN", task.output_guard_bin.as_str()),
+        (
+            "QCOLD_OUTPUT_GUARD_COMMANDS",
+            task.output_guard_commands.as_str(),
+        ),
+        ("QCOLD_GUARD_QCOLD", task.output_guard_qcold.as_str()),
     ] {
         if value.is_empty() {
             continue;
@@ -139,6 +165,17 @@ fn write_task_env(task: &TaskEnv) -> Result<()> {
         output.push_str(key);
         output.push('=');
         output.push_str(&shell_quote(value));
+        output.push('\n');
+    }
+    let mut real_commands = task.output_guard_real_commands.clone();
+    real_commands.sort_by(|left, right| left.0.cmp(&right.0));
+    for (key, value) in real_commands {
+        if value.is_empty() {
+            continue;
+        }
+        output.push_str(&key);
+        output.push('=');
+        output.push_str(&shell_quote(&value));
         output.push('\n');
     }
     fs::write(env_path, output)?;
@@ -153,6 +190,66 @@ fn refresh_task_codex_env(task: &mut TaskEnv) {
     if let Some(rollout_path) = crate::rollout::current_codex_rollout_path(thread_id) {
         task.codex_rollout_path = rollout_path.display().to_string();
     }
+}
+
+fn refresh_task_output_guard_env(task: &mut TaskEnv) {
+    task.output_guard_enabled = nonempty_env("QCOLD_OUTPUT_GUARD_ENABLED")
+        .unwrap_or_else(|| "no".to_string());
+    task.output_guard_bin = nonempty_env("QCOLD_OUTPUT_GUARD_BIN").unwrap_or_default();
+    task.output_guard_commands =
+        nonempty_env("QCOLD_OUTPUT_GUARD_COMMANDS").unwrap_or_default();
+    task.output_guard_qcold = nonempty_env("QCOLD_GUARD_QCOLD").unwrap_or_default();
+    let mut real_commands = std::env::vars()
+        .filter(|(key, value)| {
+            key.starts_with("QCOLD_GUARD_REAL_") && !value.trim().is_empty()
+        })
+        .collect::<Vec<_>>();
+    real_commands.sort_by(|left, right| left.0.cmp(&right.0));
+    task.output_guard_real_commands = real_commands;
+}
+
+fn task_output_guard_shell_exports(task: &TaskEnv) -> String {
+    if task.output_guard_enabled != "yes" || task.output_guard_bin.trim().is_empty() {
+        return String::new();
+    }
+    let mut output = String::new();
+    output.push_str("export QCOLD_OUTPUT_GUARD_ENABLED=yes\n");
+    for (key, value) in [
+        ("QCOLD_OUTPUT_GUARD_BIN", task.output_guard_bin.as_str()),
+        (
+            "QCOLD_OUTPUT_GUARD_COMMANDS",
+            task.output_guard_commands.as_str(),
+        ),
+        ("QCOLD_GUARD_QCOLD", task.output_guard_qcold.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            continue;
+        }
+        output.push_str("export ");
+        output.push_str(key);
+        output.push('=');
+        output.push_str(&shell_quote(value));
+        output.push('\n');
+    }
+    let mut real_commands = task.output_guard_real_commands.clone();
+    real_commands.sort_by(|left, right| left.0.cmp(&right.0));
+    for (key, value) in real_commands {
+        if value.trim().is_empty() {
+            continue;
+        }
+        output.push_str("export ");
+        output.push_str(&key);
+        output.push('=');
+        output.push_str(&shell_quote(&value));
+        output.push('\n');
+    }
+    output.push_str("case \":$PATH:\" in *:");
+    output.push_str(&shell_quote(&task.output_guard_bin));
+    output.push_str(":*) ;; *) export PATH=");
+    output.push_str(&shell_quote(&task.output_guard_bin));
+    output.push_str(":\"$PATH\"");
+    output.push_str(" ;; esac\n");
+    output
 }
 
 fn nonempty_env(name: &str) -> Option<String> {

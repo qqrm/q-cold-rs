@@ -2,6 +2,7 @@ use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 
@@ -160,6 +161,7 @@ impl XtaskProcessAdapter {
             }
         };
         command.args(args);
+        crate::output_guard::scrub_inherited_output_guard(&mut command);
         Ok(command)
     }
 
@@ -191,11 +193,16 @@ impl TaskAdapter for XtaskProcessAdapter {
         let mut args = os_args(&["task", "open", task_slug]);
         push_optional(&mut args, profile);
         let mut command = self.command(&args)?;
+        let output_guard = crate::output_guard::prepare_output_guard_launch(
+            &format!("task-open-{task_slug}"),
+            unix_now(),
+        )?;
         apply_task_open_env(
             &mut command,
             task_sequence,
             task_prompt,
             self.task_open_base_branch.as_deref(),
+            output_guard.as_ref(),
         );
         self.run_command(command, &args)
     }
@@ -333,6 +340,7 @@ fn apply_task_open_env(
     task_sequence: Option<u64>,
     task_prompt: Option<&str>,
     task_open_base_branch: Option<&str>,
+    output_guard: Option<&crate::output_guard::OutputGuardLaunch>,
 ) {
     let codex_thread_id = nonempty_env("CODEX_THREAD_ID");
     let codex_rollout_path = crate::rollout::current_codex_rollout_path(codex_thread_id.as_deref());
@@ -343,6 +351,7 @@ fn apply_task_open_env(
         codex_thread_id.as_deref(),
         codex_rollout_path.as_deref(),
         task_open_base_branch,
+        output_guard,
     );
 }
 
@@ -353,6 +362,7 @@ fn apply_task_open_env_values(
     codex_thread_id: Option<&str>,
     codex_rollout_path: Option<&Path>,
     task_open_base_branch: Option<&str>,
+    output_guard: Option<&crate::output_guard::OutputGuardLaunch>,
 ) {
     if let Some(sequence) = task_sequence {
         command.env("QCOLD_TASK_SEQUENCE", sequence.to_string());
@@ -373,6 +383,7 @@ fn apply_task_open_env_values(
     {
         command.env("QCOLD_TASK_OPEN_BASE_BRANCH", branch);
     }
+    crate::output_guard::apply_output_guard_metadata_to_command(command, output_guard);
 }
 
 fn nonempty_env(name: &str) -> Option<String> {
@@ -380,6 +391,12 @@ fn nonempty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 #[cfg(test)]
@@ -401,6 +418,7 @@ mod tests {
             Some("019e2a5a-96d5-72d0-9eaa-530232011047"),
             Some(Path::new("/tmp/rollout.jsonl")),
             Some("developer"),
+            None,
         );
 
         let sequence = command
@@ -476,6 +494,77 @@ mod tests {
         assert_eq!(thread_id, "019e2a5a-96d5-72d0-9eaa-530232011047");
         assert_eq!(rollout_path, "/tmp/rollout.jsonl");
         assert_eq!(base_branch, "developer");
+        assert_eq!(
+            command
+                .get_envs()
+                .find_map(|(key, value)| {
+                    (key == "QCOLD_OUTPUT_GUARD_ENABLED").then(|| {
+                        value
+                            .and_then(std::ffi::OsStr::to_str)
+                            .unwrap_or_default()
+                            .to_string()
+                    })
+                })
+                .as_deref(),
+            Some("no")
+        );
+    }
+
+    #[test]
+    fn task_open_passes_output_guard_metadata_without_guarding_adapter_path() {
+        let mut command = Command::new("cargo");
+        let output_guard = crate::output_guard::OutputGuardLaunch {
+            bin_dir: PathBuf::from("/tmp/qcold-guard"),
+            qcold_path: PathBuf::from("/opt/bin/qcold"),
+            real_commands: vec![crate::output_guard::GuardedCommand {
+                command: "rg".to_string(),
+                env_name: "QCOLD_GUARD_REAL_0_RG".to_string(),
+                real_path: PathBuf::from("/usr/bin/rg"),
+            }],
+        };
+
+        apply_task_open_env_values(
+            &mut command,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(&output_guard),
+        );
+
+        assert_eq!(
+            command_env_string(&command, "QCOLD_OUTPUT_GUARD_ENABLED").as_deref(),
+            Some("yes")
+        );
+        assert_eq!(
+            command_env_string(&command, "QCOLD_OUTPUT_GUARD_BIN").as_deref(),
+            Some("/tmp/qcold-guard")
+        );
+        assert_eq!(
+            command_env_string(&command, "QCOLD_OUTPUT_GUARD_COMMANDS").as_deref(),
+            Some("rg")
+        );
+        assert_eq!(
+            command_env_string(&command, "QCOLD_GUARD_QCOLD").as_deref(),
+            Some("/opt/bin/qcold")
+        );
+        assert_eq!(
+            command_env_string(&command, "QCOLD_GUARD_REAL_0_RG").as_deref(),
+            Some("/usr/bin/rg")
+        );
+        assert!(command_env_string(&command, "PATH").is_none());
+    }
+
+    fn command_env_string(command: &Command, name: &str) -> Option<String> {
+        command.get_envs().find_map(|(key, value)| {
+            (key == name).then(|| {
+                value
+                    .and_then(std::ffi::OsStr::to_str)
+                    .unwrap_or_default()
+                    .to_string()
+            })
+        })
     }
 }
 
@@ -494,7 +583,9 @@ fn manifest_binary(manifest: &Path) -> Result<PathBuf> {
         .join("debug")
         .join(format!("xtask{}", env::consts::EXE_SUFFIX));
     let cargo = env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
-    let status = Command::new(cargo)
+    let mut command = Command::new(cargo);
+    crate::output_guard::scrub_inherited_output_guard(&mut command);
+    let status = command
         .current_dir(workspace_root)
         .args(["build", "--quiet", "--manifest-path"])
         .arg(&manifest)

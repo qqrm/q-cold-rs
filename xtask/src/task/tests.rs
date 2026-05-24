@@ -86,6 +86,14 @@ mod tests {
         task.task_worktree = worktree.clone();
         task.codex_thread_id = "019e2a5a-96d5-72d0-9eaa-530232011047".into();
         task.codex_rollout_path = "/tmp/rollout.jsonl".into();
+        task.output_guard_enabled = "yes".into();
+        task.output_guard_bin = "/tmp/qcold guard/bin".into();
+        task.output_guard_commands = "rg,grep,find,cat,git,unzip,zcat,jq".into();
+        task.output_guard_qcold = "/opt/bin/qcold".into();
+        task.output_guard_real_commands = vec![
+            ("QCOLD_GUARD_REAL_1_GIT".into(), "/usr/bin/git".into()),
+            ("QCOLD_GUARD_REAL_0_RG".into(), "/usr/bin/rg".into()),
+        ];
 
         write_task_env(&task).unwrap();
 
@@ -93,14 +101,48 @@ mod tests {
         assert!(content.contains("TASK_DESCRIPTION=$'first line\\n"));
         assert!(content.contains("CODEX_THREAD_ID=019e2a5a-96d5-72d0-9eaa-530232011047"));
         assert!(content.contains("CODEX_ROLLOUT_PATH=/tmp/rollout.jsonl"));
-        assert_eq!(content.lines().count(), 19);
+        assert!(content.contains("QCOLD_OUTPUT_GUARD_ENABLED=yes"));
+        assert!(content.contains("QCOLD_OUTPUT_GUARD_BIN='/tmp/qcold guard/bin'"));
+        assert!(
+            content.contains("QCOLD_OUTPUT_GUARD_COMMANDS='rg,grep,find,cat,git,unzip,zcat,jq'")
+        );
+        assert!(content.contains("QCOLD_GUARD_REAL_0_RG=/usr/bin/rg"));
+        assert!(content.contains("QCOLD_GUARD_REAL_1_GIT=/usr/bin/git"));
+        assert_eq!(content.lines().count(), 25);
 
         let parsed = parse_task_env(&worktree.join(".task/task.env")).unwrap();
 
         assert_eq!(parsed.task_description, task.task_description);
         assert_eq!(parsed.codex_thread_id, task.codex_thread_id);
         assert_eq!(parsed.codex_rollout_path, task.codex_rollout_path);
+        assert_eq!(parsed.output_guard_enabled, "yes");
+        assert_eq!(parsed.output_guard_bin, "/tmp/qcold guard/bin");
+        assert_eq!(parsed.output_guard_commands, "rg,grep,find,cat,git,unzip,zcat,jq");
+        assert_eq!(parsed.output_guard_qcold, "/opt/bin/qcold");
+        assert_eq!(parsed.output_guard_real_commands.len(), 2);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn task_enter_handoff_exports_output_guard_from_task_env() {
+        let mut task = test_task_env();
+        task.output_guard_enabled = "yes".into();
+        task.output_guard_bin = "/tmp/qcold guard/bin".into();
+        task.output_guard_commands = "rg,grep,find,cat,git,unzip,zcat,jq".into();
+        task.output_guard_qcold = "/opt/bin/qcold".into();
+        task.output_guard_real_commands = vec![
+            ("QCOLD_GUARD_REAL_0_RG".into(), "/usr/bin/rg".into()),
+            ("QCOLD_GUARD_REAL_1_GIT".into(), "/usr/bin/git".into()),
+        ];
+
+        let exports = task_output_guard_shell_exports(&task);
+
+        assert!(exports.contains("export QCOLD_OUTPUT_GUARD_ENABLED=yes"));
+        assert!(exports.contains("export QCOLD_OUTPUT_GUARD_BIN='/tmp/qcold guard/bin'"));
+        assert!(exports.contains("export QCOLD_GUARD_QCOLD=/opt/bin/qcold"));
+        assert!(exports.contains("export QCOLD_GUARD_REAL_0_RG=/usr/bin/rg"));
+        assert!(exports.contains("export QCOLD_GUARD_REAL_1_GIT=/usr/bin/git"));
+        assert!(exports.contains("export PATH='/tmp/qcold guard/bin':\"$PATH\""));
     }
 
     #[test]
@@ -242,6 +284,11 @@ mod tests {
             delivery_mode: "self-hosted-qcold".into(),
             codex_thread_id: String::new(),
             codex_rollout_path: String::new(),
+            output_guard_enabled: String::new(),
+            output_guard_bin: String::new(),
+            output_guard_commands: String::new(),
+            output_guard_qcold: String::new(),
+            output_guard_real_commands: Vec::new(),
         };
 
         record_success_closeout_failure(&mut task, "deliver-to-primary", "push failed").unwrap();
@@ -387,6 +434,11 @@ mod tests {
             delivery_mode: "self-hosted-qcold".into(),
             codex_thread_id: String::new(),
             codex_rollout_path: String::new(),
+            output_guard_enabled: String::new(),
+            output_guard_bin: String::new(),
+            output_guard_commands: String::new(),
+            output_guard_qcold: String::new(),
+            output_guard_real_commands: Vec::new(),
         };
 
         deliver_task_branch_to_primary(&task).unwrap();
@@ -601,6 +653,11 @@ mod tests {
             delivery_mode: "self-hosted-qcold".into(),
             codex_thread_id: String::new(),
             codex_rollout_path: String::new(),
+            output_guard_enabled: String::new(),
+            output_guard_bin: String::new(),
+            output_guard_commands: String::new(),
+            output_guard_qcold: String::new(),
+            output_guard_real_commands: Vec::new(),
         }
     }
 }

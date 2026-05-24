@@ -128,6 +128,14 @@ fn write_task_bundle_env(metadata: &Path, task: &TaskEnv, task_head: &str, dirty
         ("DEVCONTAINER_NAME", task.devcontainer_name.as_str()),
         ("DELIVERY_MODE", task.delivery_mode.as_str()),
         ("CODEX_THREAD_ID", task.codex_thread_id.as_str()),
+        (
+            "QCOLD_OUTPUT_GUARD_ENABLED",
+            task.output_guard_enabled.as_str(),
+        ),
+        (
+            "QCOLD_OUTPUT_GUARD_COMMANDS",
+            task.output_guard_commands.as_str(),
+        ),
     ] {
         output.push_str(key);
         output.push('=');

@@ -1,5 +1,6 @@
 mod adapter;
 mod agents;
+mod output_guard;
 mod prompt;
 mod repo_bundle;
 mod repository;

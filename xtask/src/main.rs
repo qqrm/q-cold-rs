@@ -167,6 +167,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
             task.status = "open".to_string();
             task.updated_at = unix_now().to_string();
             refresh_task_codex_env(&mut task);
+            refresh_task_output_guard_env(&mut task);
             if let Some(profile) = profile {
                 task.task_profile = profile.to_string();
             }
@@ -218,7 +219,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         crate::rollout::current_codex_rollout_path(nonempty_str(&codex_thread_id))
             .map(|path| path.display().to_string())
             .unwrap_or_default();
-    let task = TaskEnv {
+    let mut task = TaskEnv {
         task_id: branch.clone(),
         task_name: task_slug.to_string(),
         task_sequence: task_sequence.map_or_else(String::new, |value| value.to_string()),
@@ -238,7 +239,13 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         delivery_mode: "self-hosted-qcold".to_string(),
         codex_thread_id,
         codex_rollout_path,
+        output_guard_enabled: String::new(),
+        output_guard_bin: String::new(),
+        output_guard_commands: String::new(),
+        output_guard_qcold: String::new(),
+        output_guard_real_commands: Vec::new(),
     };
+    refresh_task_output_guard_env(&mut task);
     write_task_env(&task)?;
     append_event(&worktree, "task-open", &format!("opened {branch}"))?;
     println!("task-opened\t{task_slug}\t{}", worktree.display());
@@ -291,6 +298,7 @@ fn enter_command() -> Result<u8> {
         "cd {}",
         shell_quote(&task.task_worktree.display().to_string())
     );
+    print!("{}", task_output_guard_shell_exports(&task));
     Ok(0)
 }
 

@@ -11,6 +11,12 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
+use crate::output_guard::{prepare_output_guard_launch, OutputGuardLaunch};
+#[cfg(test)]
+use crate::output_guard::{
+    output_guard_commands, parse_output_guard_commands, prepare_output_guard_launch_with_paths,
+    write_output_guard_wrapper, GuardedCommand,
+};
 use crate::state;
 
 const AGENT_DISPLAY_NAMES: &[&str] = &[
@@ -91,20 +97,6 @@ struct LaunchContext {
     cwd: PathBuf,
     qcold_repo_root: Option<PathBuf>,
     qcold_agent_worktree: Option<PathBuf>,
-}
-
-#[derive(Clone, Debug)]
-struct OutputGuardLaunch {
-    bin_dir: PathBuf,
-    qcold_path: PathBuf,
-    real_commands: Vec<GuardedCommand>,
-}
-
-#[derive(Clone, Debug)]
-struct GuardedCommand {
-    command: String,
-    env_name: String,
-    real_path: PathBuf,
 }
 
 #[derive(Args)]
@@ -674,136 +666,6 @@ fn command_path(command: &str) -> Option<PathBuf> {
         .find(|candidate| executable_file(candidate))
 }
 
-fn prepare_output_guard_launch(id: &str, started_at: u64) -> Result<Option<OutputGuardLaunch>> {
-    if env::var("QCOLD_AGENT_OUTPUT_GUARD").is_ok_and(|value| value == "0") {
-        return Ok(None);
-    }
-    let commands = output_guard_commands();
-    let path_dirs = env::var_os("PATH")
-        .into_iter()
-        .flat_map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
-    let inherited_guard_bin = env::var_os("QCOLD_OUTPUT_GUARD_BIN").map(PathBuf::from);
-    prepare_output_guard_launch_with_paths(
-        id,
-        started_at,
-        commands,
-        &path_dirs,
-        inherited_guard_bin.as_deref(),
-    )
-}
-
-fn prepare_output_guard_launch_with_paths(
-    id: &str,
-    started_at: u64,
-    commands: Vec<String>,
-    path_dirs: &[PathBuf],
-    inherited_guard_bin: Option<&Path>,
-) -> Result<Option<OutputGuardLaunch>> {
-    if commands.is_empty() {
-        return Ok(None);
-    }
-    let mut real_commands = Vec::new();
-    for (index, command) in commands.into_iter().enumerate() {
-        let Some(real_path) = command_path_skipping_guard_dirs(&command, path_dirs, inherited_guard_bin)
-        else {
-            continue;
-        };
-        real_commands.push(GuardedCommand {
-            env_name: guard_real_env_name(index, &command),
-            command,
-            real_path,
-        });
-    }
-    if real_commands.is_empty() {
-        return Ok(None);
-    }
-
-    let bin_dir = state_dir()?
-        .join("guard-bin")
-        .join(format!("{}-{started_at}", sanitize_id(id)));
-    fs::create_dir_all(&bin_dir)
-        .with_context(|| format!("failed to create output guard bin {}", bin_dir.display()))?;
-    for guarded in &real_commands {
-        write_output_guard_wrapper(&bin_dir, guarded)?;
-    }
-    Ok(Some(OutputGuardLaunch {
-        bin_dir,
-        qcold_path: env::current_exe().context("failed to resolve current qcold executable")?,
-        real_commands,
-    }))
-}
-
-fn output_guard_commands() -> Vec<String> {
-    let raw = env::var("QCOLD_AGENT_OUTPUT_GUARD_COMMANDS")
-        .unwrap_or_else(|_| "rg,grep,find".to_string());
-    let mut seen = HashSet::new();
-    raw.split(',')
-        .map(str::trim)
-        .filter(|command| {
-            !command.is_empty()
-                && command
-                    .chars()
-                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        })
-        .filter(|command| seen.insert((*command).to_string()))
-        .map(ToString::to_string)
-        .collect()
-}
-
-fn command_path_skipping_guard_dirs(
-    command: &str,
-    path_dirs: &[PathBuf],
-    inherited_guard_bin: Option<&Path>,
-) -> Option<PathBuf> {
-    path_dirs
-        .iter()
-        .filter(|dir| inherited_guard_bin != Some(dir.as_path()))
-        .map(|dir| dir.join(command))
-        .find(|candidate| executable_file(candidate))
-}
-
-fn guard_real_env_name(index: usize, command: &str) -> String {
-    format!(
-        "QCOLD_GUARD_REAL_{index}_{}",
-        command
-            .chars()
-            .map(|ch| {
-                if ch.is_ascii_alphanumeric() {
-                    ch.to_ascii_uppercase()
-                } else {
-                    '_'
-                }
-            })
-            .collect::<String>()
-    )
-}
-
-fn write_output_guard_wrapper(bin_dir: &Path, guarded: &GuardedCommand) -> Result<()> {
-    let wrapper = bin_dir.join(&guarded.command);
-    let script = format!(
-        "#!/bin/sh\nexec \"$QCOLD_GUARD_QCOLD\" guard -- \"${}\" \"$@\"\n",
-        guarded.env_name
-    );
-    fs::write(&wrapper, script)
-        .with_context(|| format!("failed to write output guard wrapper {}", wrapper.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(&wrapper)
-            .with_context(|| format!("failed to stat output guard wrapper {}", wrapper.display()))?
-            .permissions();
-        permissions.set_mode(0o755);
-        fs::set_permissions(&wrapper, permissions).with_context(|| {
-            format!(
-                "failed to make output guard wrapper executable {}",
-                wrapper.display()
-            )
-        })?;
-    }
-    Ok(())
-}
-
 fn executable_file(path: &Path) -> bool {
     let Ok(metadata) = fs::metadata(path) else {
         return false;
@@ -902,6 +764,7 @@ fn git_root_for(cwd: &Path) -> Result<PathBuf> {
 
 include!("agents/worktree_terminal.rs");
 include!("agents/render_state_tests.rs");
+include!("agents/output_guard_tests.rs");
 include!("agents/terminal_metadata_tests.rs");
 include!("agents/zellij_name_tests.rs");
 include!("agents/resume_tests.rs");
