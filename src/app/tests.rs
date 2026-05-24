@@ -141,12 +141,12 @@ mod tests {
     #[test]
     fn c2_command_prompt_is_detected() {
         assert_eq!(
-            prompt_from_agent_command("/home/qqrm/.local/bin/c2 \"Добавь CRUD для задач\"")
+            prompt_from_agent_command("/opt/qcold-test/bin/c2 \"Добавь CRUD для задач\"")
                 .as_deref(),
             Some("Добавь CRUD для задач")
         );
         assert_eq!(
-            prompt_from_agent_command("/home/qqrm/.local/bin/cc1 \"Проверь сабмодули\"")
+            prompt_from_agent_command("/opt/qcold-test/bin/cc1 \"Проверь сабмодули\"")
                 .as_deref(),
             Some("Проверь сабмодули")
         );
@@ -164,11 +164,11 @@ mod tests {
     #[test]
     fn codex_account_is_detected_from_cc2_wrapper() {
         assert_eq!(
-            codex_account_from_agent_command("/home/qqrm/.local/bin/cc1").as_deref(),
+            codex_account_from_agent_command("/opt/qcold-test/bin/cc1").as_deref(),
             Some("1")
         );
         assert_eq!(
-            codex_account_from_agent_command("/home/qqrm/.local/bin/cc2").as_deref(),
+            codex_account_from_agent_command("/opt/qcold-test/bin/cc2").as_deref(),
             Some("2")
         );
         assert_eq!(
@@ -485,7 +485,7 @@ mod tests {
                 "rollout-2026-05-06T00-00-00-019df1ab-7579-7e41-ad71-701b63175455.jsonl",
             ),
             [
-                jsonl(session_meta_event("/home/qqrm/repos/github/qcold")),
+                jsonl(session_meta_event("/workspace/repos/qcold")),
                 jsonl(serde_json::json!({
                     "timestamp": "1970-01-01T00:00:02.000Z",
                     "type": "response_item",
@@ -494,7 +494,7 @@ mod tests {
                         "name": "exec_command",
                         "arguments": serde_json::json!({
                             "cmd": "pgrep -af task-mp0by95n",
-                            "workdir": "/home/qqrm/repos/github/qcold",
+                            "workdir": "/workspace/repos/qcold",
                         })
                         .to_string(),
                         "call_id": "call_noise",
@@ -838,7 +838,7 @@ mod tests {
         let title = "status";
         let description = "status";
         let status = "closed:unknown";
-        let cwd = "/home/qqrm/repos/github/WT/vitastor/agents/agent-c1-123";
+        let cwd = "/workspace/WT/vitastor/agents/agent-c1-123";
         let metadata = r#"{"kind":"codex-session-import"}"#;
         let existing = state::new_task_record(
             "adhoc/1-status".to_string(),
@@ -846,7 +846,7 @@ mod tests {
             title.to_string(),
             description.to_string(),
             status.to_string(),
-            Some("/home/qqrm/repos/github/qcold".to_string()),
+            Some("/workspace/repos/qcold".to_string()),
             Some(cwd.to_string()),
             Some("c1-123".to_string()),
             Some(metadata.to_string()),
@@ -857,7 +857,7 @@ mod tests {
             title.to_string(),
             description.to_string(),
             status.to_string(),
-            Some("/home/qqrm/repos/github/vitastor".to_string()),
+            Some("/workspace/repos/vitastor".to_string()),
             Some(cwd.to_string()),
             Some("c1-123".to_string()),
             Some(metadata.to_string()),

@@ -59,7 +59,7 @@ fn task_record_list_warns_and_continues_when_codex_refresh_fails() {
                 "manual",
                 i64::from(std::process::id()),
                 now,
-                r#"["/home/qqrm/.local/bin/c2","inspect"]"#,
+                r#"["/opt/qcold-test/bin/c2","inspect"]"#,
                 repo.to_str().unwrap(),
             ],
         )

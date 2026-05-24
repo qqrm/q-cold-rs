@@ -169,10 +169,13 @@ fn terminal_attach_candidates(
     }
 }
 
-fn assign_terminal_display_name(record: &AgentRecord) -> Result<()> {
+fn assign_terminal_display_name(record: &AgentRecord, requested_name: Option<&str>) -> Result<()> {
     let Some(target) = terminal_target_key(record) else {
         return Ok(());
     };
+    if let Some(name) = requested_name.filter(|name| !name.trim().is_empty()) {
+        return state::save_terminal_metadata(&target, Some(name), None);
+    }
     let metadata = terminal_metadata_by_target()?;
     if metadata
         .get(&target)
@@ -185,7 +188,6 @@ fn assign_terminal_display_name(record: &AgentRecord) -> Result<()> {
     let name = choose_agent_display_name(&record.id, &used);
     state::save_terminal_metadata(&target, Some(&name), None)
 }
-
 fn terminal_display_name<'a>(
     record: &AgentRecord,
     metadata: &'a HashMap<String, state::TerminalMetadataRow>,
@@ -522,7 +524,7 @@ mod tests {
         let temp = tempdir().unwrap();
         assert!(command_contains_codex_agent("cc1 \"inspect submodules\""));
         assert!(command_contains_codex_agent(
-            "/home/qqrm/.local/bin/cc2 \"fix context reset\""
+            "/opt/qcold-test/bin/cc2 \"fix context reset\""
         ));
         assert!(command_contains_codex_agent("codex3 exec \"audit\""));
         assert!(!command_contains_codex_agent("printf ok"));

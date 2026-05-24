@@ -422,6 +422,15 @@ fn start_terminal_agent(
     if state.records.iter().any(|record| record.id == id) {
         bail!("agent id already exists: {id}");
     }
+    let named_resume =
+        named_codex_resume_launch(track, command, requested_cwd, zellij_pane_name.as_deref())?;
+    let launch_command = named_resume
+        .as_ref()
+        .map_or(command, |resume| resume.command.as_str());
+    let launch_cwd = named_resume
+        .as_ref()
+        .map(|resume| resume.cwd.as_path())
+        .or(requested_cwd);
 
     let state_dir = state_dir()?;
     fs::create_dir_all(state_dir.join("logs"))?;
@@ -430,9 +439,9 @@ fn start_terminal_agent(
         &id,
         track,
         started_at,
-        requested_cwd,
-        command,
-        zellij_pane_name,
+        launch_cwd,
+        launch_command,
+        zellij_pane_name.clone(),
     )?;
     let record = match backend {
         TerminalBackend::Tmux => {
@@ -450,7 +459,7 @@ fn start_terminal_agent(
         stdout_log_path: Some(stdout_log_path),
         stderr_log_path: None,
     })?;
-    assign_terminal_display_name(&record)?;
+    assign_terminal_display_name(&record, zellij_pane_name.as_deref())?;
     crate::record_agent_task(&record)?;
     Ok(record)
 }
@@ -535,6 +544,11 @@ fn prepare_launch_context(
     } else {
         env::current_dir().context("failed to read current directory")?
     };
+    if codex_like {
+        if let Some(context) = existing_agent_worktree_context(&cwd)? {
+            return Ok(context);
+        }
+    }
     if !should_open_managed_worktree(codex_like, &cwd) {
         return Ok(LaunchContext {
             qcold_repo_root: managed_task_root_for(&cwd),
@@ -568,82 +582,7 @@ fn resolve_codex_launch_cwd() -> Result<PathBuf> {
     }
 }
 
-fn reusable_codex_agent_context(
-    track: &str,
-    command: &str,
-    requested_cwd: Option<&Path>,
-    base_cwd: &Path,
-) -> Result<Option<LaunchContext>> {
-    if requested_cwd.is_some() {
-        return Ok(None);
-    }
-    let Some(primary_root) = git_root_for(base_cwd).ok() else {
-        return Ok(None);
-    };
-    let include_running = command_is_codex_resume(command);
-    if !include_running && !command_is_interactive_codex_launch(command) {
-        return Ok(None);
-    }
-    let Some(cwd) = latest_agent_cwd_for_launch(track, command, &primary_root, include_running)? else {
-        return Ok(None);
-    };
-    let qcold_agent_worktree = git_root_for(&cwd).ok();
-    Ok(Some(LaunchContext {
-        cwd,
-        qcold_repo_root: Some(primary_root),
-        qcold_agent_worktree,
-    }))
-}
-
-fn command_is_interactive_codex_launch(command: &str) -> bool {
-    let words = shell_words(command);
-    words.iter().enumerate().any(|(index, word)| {
-        Path::new(word)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(is_codex_agent_command)
-            && words.get(index + 1).is_none_or(|next| next != "exec")
-    })
-}
-
-fn latest_agent_cwd_for_launch(
-    track: &str,
-    command: &str,
-    primary_root: &Path,
-    include_running: bool,
-) -> Result<Option<PathBuf>> {
-    let Some(account) = codex_account_from_command(command) else {
-        return Ok(None);
-    };
-    let agents_dir = agent_worktrees_dir(primary_root)?;
-    let mut records = AgentState::load()?.records;
-    records.sort_by_key(|record| std::cmp::Reverse(record.started_at));
-    Ok(records.into_iter().find_map(|record| {
-        let cwd = record.cwd?;
-        if record.track != track || !cwd.is_dir() || !cwd.starts_with(&agents_dir) {
-            return None;
-        }
-        if !include_running && process_state(record.pid) == "running" {
-            return None;
-        }
-        (codex_account_from_command(&terminal_command_from_record(&record.command)).as_deref()
-            == Some(account.as_str()))
-        .then_some(cwd)
-    }))
-}
-
-fn command_is_codex_resume(command: &str) -> bool {
-    let words = shell_words(command);
-    words.iter().enumerate().any(|(index, word)| {
-        Path::new(word)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(is_codex_agent_command)
-            && words
-                .get(index + 1)
-                .is_some_and(|next| next == "resume")
-    })
-}
+include!("agents/reuse_context.rs");
 
 fn codex_account_from_command(command: &str) -> Option<String> {
     shell_words(command)
@@ -926,5 +865,6 @@ fn git_root_for(cwd: &Path) -> Result<PathBuf> {
 
 include!("agents/worktree_terminal.rs");
 include!("agents/render_state_tests.rs");
+include!("agents/terminal_metadata_tests.rs");
 include!("agents/zellij_name_tests.rs");
 include!("agents/resume_tests.rs");

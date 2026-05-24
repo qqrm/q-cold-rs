@@ -382,8 +382,10 @@ state. The default backend is `tmux`.
 Set `QCOLD_TERMINAL_BACKEND=zellij` to start new Q-COLD terminal agents through
 `zellij` instead; the GUI discovers both Q-COLD `tmux` and `zellij` sessions.
 With the zellij backend, `qcold agent start --terminal --name "<pane name>" ...`
-sets only the zellij pane title. It does not send Codex TUI `/rename` and does
-not change Q-COLD dashboard metadata.
+sets the zellij pane title and the Q-COLD terminal display name. It does not
+send Codex TUI `/rename`. A later plain named Codex launch, such as
+`cc1 --name atomic`, resumes the latest exited same-track named Codex chat when
+Q-COLD has imported that prior session id; otherwise it starts a fresh chat.
 Plain processes started in a non-multiplexed console are visible as host
 processes but are not safely attachable after the fact. Start agents with
 `qcold agent start --terminal --attach --track <track> -- <command>...` to see
@@ -407,14 +409,17 @@ a task devcontainer; the agent should enter a devcontainer only after opening a
 specific managed task worktree. Task worktrees opened later by the agent remain
 separate and can be closed without deleting the agent workspace. For
 interactive Codex launches without an explicit `--cwd`, Q-COLD reuses the
-latest compatible same-track exited agent worktree for the repository. Explicit
-`resume` launches can also reuse the latest compatible worktree, so normal
-`cc1`/`cc2` restarts come back in the same cwd and Codex's in-chat `/resume`
-picker sees sessions and metadata saved from previous runs instead of starting
-from a fresh empty agent cwd. Q-COLD exports the primary checkout as
-`QCOLD_REPO_ROOT` and the agent-owned worktree as `QCOLD_AGENT_WORKTREE` for
-the launched agent, so active inventory commands such as `qcold task list`
-resolve through the task's primary checkout.
+latest compatible same-track exited agent worktree for the repository only when
+that worktree still points at the current checkout HEAD and matching branch
+identity when both worktrees are on named branches. Explicit `resume` launches
+can also reuse the latest compatible worktree, so normal `cc1`/`cc2`
+restarts come back in the same cwd and Codex's in-chat `/resume` picker sees
+sessions and metadata saved from previous runs instead of starting from a fresh
+empty agent cwd. Launches started from inside an existing agent-owned worktree
+stay in that worktree instead of opening or reusing another one. Q-COLD exports
+the primary checkout as `QCOLD_REPO_ROOT` and the agent-owned worktree as
+`QCOLD_AGENT_WORKTREE` for the launched agent, so active inventory commands such
+as `qcold task list` resolve through the task's primary checkout.
 Worktree-sensitive commands such as `task closeout` still prefer the current
 managed task worktree when the agent has changed into one. In that agent
 context, successful task closeout leaves the closed task worktree detached and

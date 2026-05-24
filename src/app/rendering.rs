@@ -446,17 +446,20 @@ fn prompt_from_agent_command(command: &str) -> Option<String> {
             let clean = word.trim();
             clean.len() >= 3
                 && !clean.starts_with('-')
-                && clean != "/home/qqrm/.local/bin/c1"
-                && clean != "/home/qqrm/.local/bin/cc1"
-                && clean != "/home/qqrm/.local/bin/c2"
-                && clean != "/home/qqrm/.local/bin/cc2"
-                && clean != "c1"
-                && clean != "cc1"
-                && clean != "c2"
-                && clean != "cc2"
-                && clean != "codex"
+                && !is_codex_launcher_word(clean)
         })?.clone();
     Some(prompt)
+}
+
+fn is_codex_launcher_word(word: &str) -> bool {
+    let name = Path::new(word)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(word);
+    matches!(name, "c1" | "cc1" | "c2" | "cc2" | "codex")
+        || name
+            .strip_prefix("codex")
+            .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn shell_words(command: &str) -> Vec<String> {
