@@ -186,9 +186,10 @@ fn start_zellij_terminal_agent(
         launch.output_guard.as_ref(),
     );
     let wrapped = format!(
-        "{env_prefix}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \
+        "{env_prefix}{}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \
          \"$status\"; sleep 0.1; zellij delete-session --force {} >/dev/null 2>&1 || true; \
          exit \"$status\"",
+        terminal_title_shell_prefix(launch.zellij_pane_name.as_deref()),
         launch.command,
         shell_quote(&session)
     );
@@ -480,6 +481,7 @@ fn tmux_pane_pid(target: &str) -> Result<u32> {
 
 fn attach_terminal(record: &AgentRecord) -> Result<()> {
     let target = terminal_target(record).context("agent was not started in a terminal session")?;
+    set_host_terminal_title_for_record(record)?;
     let (program, args, session) = match target {
         TerminalTarget::Tmux { session } => (
             "tmux",
@@ -498,6 +500,51 @@ fn attach_terminal(record: &AgentRecord) -> Result<()> {
         bail!("terminal attach failed with {status}");
     }
     Ok(())
+}
+
+fn set_host_terminal_title_for_record(record: &AgentRecord) -> Result<()> {
+    let metadata = terminal_metadata_by_target().unwrap_or_default();
+    let Some(title) = terminal_host_title(record, &metadata) else {
+        return Ok(());
+    };
+    let Some(sequence) = terminal_title_sequence(&title) else {
+        return Ok(());
+    };
+    let mut stdout = std::io::stdout();
+    <std::io::Stdout as std::io::Write>::write_all(&mut stdout, sequence.as_bytes())
+        .context("failed to write terminal title escape")?;
+    <std::io::Stdout as std::io::Write>::flush(&mut stdout)
+        .context("failed to flush terminal title escape")
+}
+
+fn terminal_host_title(
+    record: &AgentRecord,
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+) -> Option<String> {
+    terminal_display_name(record, metadata)
+        .map(ToString::to_string)
+        .or_else(|| match terminal_target(record)? {
+            TerminalTarget::Tmux { session } | TerminalTarget::Zellij { session, .. } => {
+                Some(session.strip_prefix("qcold-").unwrap_or(&session).to_string())
+            }
+        })
+}
+
+fn terminal_title_shell_prefix(title: Option<&str>) -> String {
+    title
+        .and_then(terminal_title_sequence)
+        .map(|sequence| format!("printf %s {}; ", shell_quote(&sequence)))
+        .unwrap_or_default()
+}
+
+fn terminal_title_sequence(title: &str) -> Option<String> {
+    let mut title = title
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .collect::<String>();
+    crate::prompt::truncate_chars(&mut title, 80);
+    let title = title.trim();
+    (!title.is_empty()).then(|| format!("\x1b]0;{title}\x07"))
 }
 
 fn terminate_terminal_target(target: &TerminalTarget) -> Result<()> {

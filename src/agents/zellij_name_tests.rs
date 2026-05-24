@@ -11,6 +11,53 @@ mod zellij_name_tests {
     }
 
     #[test]
+    fn terminal_title_sequence_uses_clean_short_name() {
+        assert_eq!(
+            terminal_title_sequence(" flow \x1b[31m ").as_deref(),
+            Some("\x1b]0;flow [31m\x07")
+        );
+        assert!(terminal_title_sequence("\x1b\t").is_none());
+        assert_eq!(
+            terminal_title_shell_prefix(Some("flow")),
+            "printf %s '\u{1b}]0;flow\u{7}'; "
+        );
+    }
+
+    #[test]
+    fn terminal_host_title_prefers_display_metadata() {
+        let record = AgentRecord {
+            id: "c1-1234".to_string(),
+            track: "c1".to_string(),
+            pid: std::process::id(),
+            started_at: 456,
+            command: vec![
+                "zellij".to_string(),
+                "--session".to_string(),
+                "qcold-c1-1234".to_string(),
+                "pane".to_string(),
+                "terminal_0".to_string(),
+                "cc1".to_string(),
+            ],
+            cwd: None,
+        };
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "zellij:qcold-c1-1234:terminal_0".to_string(),
+            state::TerminalMetadataRow {
+                target: "zellij:qcold-c1-1234:terminal_0".to_string(),
+                name: Some("flow".to_string()),
+                scope: None,
+                updated_at: 123,
+            },
+        );
+
+        assert_eq!(
+            terminal_host_title(&record, &metadata).as_deref(),
+            Some("flow")
+        );
+    }
+
+    #[test]
     fn zellij_pane_name_is_compacted_and_limited() {
         assert_eq!(
             clean_zellij_pane_name(Some("  client   migration  ")).unwrap().as_deref(),
