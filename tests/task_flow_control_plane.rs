@@ -238,6 +238,7 @@ impl TaskRepoFixture {
         let task_env = TaskEnv {
             task_id: branch.clone(),
             task_name: slug.to_string(),
+            task_sequence: String::new(),
             task_branch: branch,
             task_execution_anchor: "purple-apple-042".to_string(),
             task_worktree: worktree.clone(),

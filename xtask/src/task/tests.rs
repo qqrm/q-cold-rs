@@ -64,7 +64,7 @@ mod tests {
         assert!(content.contains("TASK_DESCRIPTION=$'first line\\n"));
         assert!(content.contains("CODEX_THREAD_ID=019e2a5a-96d5-72d0-9eaa-530232011047"));
         assert!(content.contains("CODEX_ROLLOUT_PATH=/tmp/rollout.jsonl"));
-        assert_eq!(content.lines().count(), 18);
+        assert_eq!(content.lines().count(), 19);
 
         let parsed = parse_task_env(&worktree.join(".task/task.env")).unwrap();
 
@@ -194,6 +194,7 @@ mod tests {
         let mut task = TaskEnv {
             task_id: "task/closeout-fails".into(),
             task_name: "closeout-fails".into(),
+            task_sequence: "2".into(),
             task_branch: "task/closeout-fails".into(),
             task_execution_anchor: "002".into(),
             task_description: "closeout failure".into(),
@@ -325,6 +326,7 @@ mod tests {
         let task = TaskEnv {
             task_id: "task/push-proof".into(),
             task_name: "push-proof".into(),
+            task_sequence: "1".into(),
             task_branch: "task/push-proof".into(),
             task_execution_anchor: "001".into(),
             task_description: "push proof".into(),
@@ -386,6 +388,130 @@ mod tests {
             .is_ok_and(|status| status.success())
     }
 
+    #[test]
+    fn proof_run_index_records_task_identity_and_retains_latest_twenty() {
+        let root = unique_test_dir("qcold-proof-run-index");
+        let worktree = root.join("task");
+        let summary_dir = worktree.join(".task/logs/compat/e2e-rust-blockstore");
+        fs::create_dir_all(&summary_dir).unwrap();
+        fs::write(
+            summary_dir.join("summary.tsv"),
+            "suite\tprofile\tbaseline_source\tbaseline_ref\tselected\tmatched\tregressions\t\
+             timeouts\texecuted\treused_matched\n\
+             rust-blockstore-e2e\tfull-qemu\tbaked\timage-sha256:abc\t59\t56\t2\t1\t59\t0\n",
+        )
+        .unwrap();
+        fs::write(
+            summary_dir.join("regressions.tsv"),
+            "test\nheal-local-read\nheal-pg-size-2\n",
+        )
+        .unwrap();
+        fs::write(summary_dir.join("timeouts.tsv"), "test\nnfs-unaligned-append\n").unwrap();
+
+        let index = worktree.join(PROOF_RUN_INDEX);
+        let mut existing = PROOF_RUN_INDEX_HEADER.join("\t");
+        existing.push('\n');
+        for sequence in 1..=20 {
+            existing.push_str(&old_proof_run_row(sequence));
+            existing.push('\n');
+        }
+        fs::create_dir_all(index.parent().unwrap()).unwrap();
+        fs::write(&index, existing).unwrap();
+
+        let mut task = test_task_env();
+        task.task_id = "vitastor-123".into();
+        task.task_name = "rust-blockstore-proof".into();
+        task.task_sequence = "123".into();
+        task.task_worktree = worktree.clone();
+        task.task_profile = "full-qemu".into();
+        task.task_head = "task-head-123".into();
+        task.base_head = "base-head-122".into();
+
+        update_proof_run_index(&task).unwrap();
+
+        let content = fs::read_to_string(index).unwrap();
+        let lines = content.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), PROOF_RUN_INDEX_LIMIT + 1);
+        assert_eq!(lines[0], PROOF_RUN_INDEX_HEADER.join("\t"));
+        assert!(!content.contains("bundles/"));
+        assert!(!content.contains(".zip"));
+        assert!(!content.contains("old-task-1\t"));
+        assert!(content.contains(
+            "123\tvitastor-123\trust-blockstore-proof\ttask-head-123\tbase-head-122\t\
+             rust-blockstore-e2e\tfull-qemu\tbaked\timage-sha256:abc\t59\t56\t2\t1\t59\t0\t\
+             fail\theal-local-read;heal-pg-size-2;nfs-unaligned-append"
+        ));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn proof_run_index_ignores_zero_selected_summaries() {
+        let root = unique_test_dir("qcold-proof-run-index-zero");
+        let worktree = root.join("task");
+        let summary_dir = worktree.join(".task/logs/compat/e2e");
+        fs::create_dir_all(&summary_dir).unwrap();
+        fs::write(
+            summary_dir.join("summary.tsv"),
+            "selected\tmatched\tregressions\ttimeouts\n0\t0\t0\t0\n",
+        )
+        .unwrap();
+
+        let mut task = test_task_env();
+        task.task_worktree = worktree.clone();
+
+        update_proof_run_index(&task).unwrap();
+
+        assert!(!worktree.join(PROOF_RUN_INDEX).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn proof_run_index_accepts_compat_rows_without_selected() {
+        let root = unique_test_dir("qcold-proof-run-index-compat");
+        let worktree = root.join("task");
+        let summary_dir = worktree.join(".task/logs/compat/blockstore");
+        fs::create_dir_all(&summary_dir).unwrap();
+        fs::write(
+            summary_dir.join("summary.tsv"),
+            "suite=blockstore-compat profile=matrix compat_rows=12 passed=12 regressions=0 \
+             timeouts=0\n",
+        )
+        .unwrap();
+
+        let mut task = test_task_env();
+        task.task_worktree = worktree.clone();
+
+        update_proof_run_index(&task).unwrap();
+
+        let content = fs::read_to_string(worktree.join(PROOF_RUN_INDEX)).unwrap();
+        assert!(content.contains("\tblockstore-compat\tmatrix\t\t\t12\t12\t0\t0\t\t\tpass\t"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    fn old_proof_run_row(sequence: u64) -> String {
+        [
+            sequence.to_string(),
+            format!("old-task-{sequence}"),
+            "old".to_string(),
+            format!("head-{sequence}"),
+            "base".to_string(),
+            "old-suite".to_string(),
+            "fast".to_string(),
+            "none".to_string(),
+            String::new(),
+            "1".to_string(),
+            "1".to_string(),
+            "0".to_string(),
+            "0".to_string(),
+            "1".to_string(),
+            "0".to_string(),
+            "pass".to_string(),
+            String::new(),
+        ]
+        .join("\t")
+    }
+
     struct EnvVarGuard {
         name: &'static str,
         value: Option<std::ffi::OsString>,
@@ -414,6 +540,7 @@ mod tests {
         TaskEnv {
             task_id: "task/pause".into(),
             task_name: "pause".into(),
+            task_sequence: "1".into(),
             task_branch: "task/pause".into(),
             task_execution_anchor: "001".into(),
             task_description: "pause".into(),

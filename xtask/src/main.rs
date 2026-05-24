@@ -182,7 +182,10 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     let base_head = git_output(&repo, ["rev-parse", "HEAD"])?;
     let base_branch = git_output(&repo, ["branch", "--show-current"])?;
     let branch = format!("task/{task_slug}");
-    let execution_anchor = task_execution_anchor();
+    let task_sequence = qcold_task_sequence();
+    let execution_anchor = task_sequence
+        .and_then(sequence_anchor)
+        .unwrap_or_else(short_anchor);
     let worktree = managed_root(&repo)?.join(format!("{execution_anchor}-{task_slug}"));
     if worktree.exists() {
         bail!(
@@ -215,6 +218,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     let task = TaskEnv {
         task_id: branch.clone(),
         task_name: task_slug.to_string(),
+        task_sequence: task_sequence.map_or_else(String::new, |value| value.to_string()),
         task_branch: branch.clone(),
         task_execution_anchor: execution_anchor,
         task_description: task_open_description(task_slug),
@@ -425,6 +429,10 @@ fn closeout_success_inner(
         .context("closeout phase ensure-primary-clean failed")?;
     record_closeout_phase(task, phase, "preflight")?;
     run_preflight(PreflightProfile::default()).context("closeout phase preflight failed")?;
+    record_closeout_phase(task, phase, "proof-run-index")?;
+    task.task_head = git_output(&task.task_worktree, ["rev-parse", "HEAD"])
+        .context("closeout phase proof-run-index failed")?;
+    update_proof_run_index(task).context("closeout phase proof-run-index failed")?;
     record_closeout_phase(task, phase, "deliver-to-primary")?;
     if !git_output(&task.task_worktree, ["status", "--porcelain"])?.is_empty() {
         record_closeout_phase(task, phase, "commit-task-worktree")?;
@@ -893,4 +901,5 @@ struct BundleCleanup {
 include!("task/cleanup.rs");
 include!("task/verify.rs");
 include!("task/env_io.rs");
+include!("task/proof_runs.rs");
 include!("task/tests.rs");

@@ -344,6 +344,7 @@ impl From<String> for TaskStatus {
 pub(crate) struct TaskEnv {
     pub(crate) task_id: String,
     pub(crate) task_name: String,
+    pub(crate) task_sequence: String,
     pub(crate) task_branch: String,
     pub(crate) task_execution_anchor: String,
     pub(crate) task_description: String,
@@ -391,6 +392,7 @@ impl TaskEnv {
         Self {
             task_id: take(&mut values, "TASK_ID"),
             task_name: take(&mut values, "TASK_NAME"),
+            task_sequence: take(&mut values, "TASK_SEQUENCE"),
             task_branch: take(&mut values, "TASK_BRANCH"),
             task_execution_anchor: take(&mut values, "TASK_EXECUTION_ANCHOR"),
             task_description: take(&mut values, "TASK_DESCRIPTION"),
@@ -423,6 +425,7 @@ impl TaskEnv {
         for (key, value) in [
             ("TASK_ID", self.task_id.as_str()),
             ("TASK_NAME", self.task_name.as_str()),
+            ("TASK_SEQUENCE", self.task_sequence.as_str()),
             ("TASK_BRANCH", self.task_branch.as_str()),
             ("TASK_EXECUTION_ANCHOR", self.task_execution_anchor.as_str()),
             ("TASK_DESCRIPTION", self.task_description.as_str()),

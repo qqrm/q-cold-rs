@@ -2,6 +2,7 @@
 struct TaskEnv {
     task_id: String,
     task_name: String,
+    task_sequence: String,
     task_branch: String,
     task_execution_anchor: String,
     task_description: String,
@@ -75,6 +76,7 @@ fn parse_task_env(path: &Path) -> Result<TaskEnv> {
     Ok(TaskEnv {
         task_id: value("TASK_ID"),
         task_name: value("TASK_NAME"),
+        task_sequence: value("TASK_SEQUENCE"),
         task_branch: value("TASK_BRANCH"),
         task_execution_anchor: value("TASK_EXECUTION_ANCHOR"),
         task_description: value("TASK_DESCRIPTION"),
@@ -101,6 +103,7 @@ fn write_task_env(task: &TaskEnv) -> Result<()> {
     let fields = [
         ("TASK_ID", task.task_id.as_str()),
         ("TASK_NAME", task.task_name.as_str()),
+        ("TASK_SEQUENCE", task.task_sequence.as_str()),
         ("TASK_BRANCH", task.task_branch.as_str()),
         ("TASK_EXECUTION_ANCHOR", task.task_execution_anchor.as_str()),
         ("TASK_DESCRIPTION", task.task_description.as_str()),
@@ -303,12 +306,10 @@ fn run_required(program: &str, args: Vec<OsString>) -> Result<()> {
     }
 }
 
-fn task_execution_anchor() -> String {
+fn qcold_task_sequence() -> Option<u64> {
     std::env::var("QCOLD_TASK_SEQUENCE")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())
-        .and_then(sequence_anchor)
-        .unwrap_or_else(short_anchor)
 }
 
 fn sequence_anchor(sequence: u64) -> Option<String> {

@@ -93,7 +93,10 @@ Adapter-backed `qcold task open <slug>` automatically creates or updates a
 Q-COLD task record with source `task-flow`. When that record has a repo-scoped
 `sequence`, Q-COLD passes it to the repository adapter as
 `QCOLD_TASK_SEQUENCE` so managed task anchors can use an operator-sortable
-monotonic number instead of a random-looking suffix. Queue-opened task records
+monotonic number instead of a random-looking suffix. The self-hosted adapter
+also records that value as `TASK_SEQUENCE` in `.task/task.env` so adapter-owned
+evidence files can preserve both a numeric task id and the human task id/name.
+Queue-opened task records
 also preserve the original queue-card prompt in metadata and pass it to the
 adapter as `QCOLD_TASKFLOW_PROMPT`; compact operator surfaces use a bounded
 first-lines snippet instead of prompt-derived labels. Q-COLD-managed agent starts also
@@ -517,6 +520,15 @@ If success closeout fails after task state is available, the adapter records
 bundle receipt with `CURRENT_FLOW_PROBLEM`, `HISTORICAL_FLOW_PROBLEM`,
 `CLOSEOUT_FAILURE_PHASE`, and `CLOSEOUT_FAILURE_ERROR` fields.
 Repository-specific proof semantics for other projects remain behind their adapters.
+Adapters that run E2E or compatibility proof lanes should keep raw logs in
+bundles or task-local logs, but commit only the compact recent result index.
+The reference path is `compat/evidence/proof-runs.tsv`; it has no bundle path,
+bundle filename, or bundle hash column, includes `task_sequence`, `task_id`,
+and `task_name` when available, and retains only the latest 20 data rows. The
+Q-COLD self-hosted adapter treats `.task/logs/compat/**/summary.tsv` files with
+positive proof counters as input to that index during success closeout. Target
+repository adapters own their own extraction details and must not present those
+repository-specific proof rules as Q-COLD facade behavior.
 The planned extraction backlog for moving deterministic task-flow ownership
 into Q-COLD is tracked in
 [`docs/taskflow-extraction/`](docs/taskflow-extraction/README.md).
