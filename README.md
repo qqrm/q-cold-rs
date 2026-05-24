@@ -23,6 +23,7 @@ commands through the active repository:
 ```bash
 qcold repo add target-repo /path/to/target-repo \
   --xtask-manifest /path/to/target-repo/xtask/Cargo.toml \
+  --default-branch main \
   --set-active
 qcold repo list
 qcold status
@@ -478,7 +479,12 @@ manifest path is needed. In the Q-COLD checkout itself, `.cargo/config.toml`
 defines `cargo xtask` as the self-hosted adapter in `xtask/`, so normal
 development can start with `QCOLD_REPO_ROOT=$PWD cargo qcold task open <slug>`
 from a clean primary checkout, or with plain `cargo qcold task open <slug>` when
-the Q-COLD repository is the active registered repo. `cargo qcold task pause --reason "<reason>"`
+the Q-COLD repository is the active registered repo. The Q-COLD self-hosted
+adapter requires new task opens to start from `main`; it fails before creating
+a task worktree when the primary checkout is on another branch. Registered
+repositories may set `--default-branch <branch>`, which Q-COLD forwards to the
+process adapter as `QCOLD_TASK_OPEN_BASE_BRANCH`; repository adapters may also
+set `taskflow.base-branch` in git config. `cargo qcold task pause --reason "<reason>"`
 records a non-terminal pause for work that needs operator
 input or an external unblock while preserving the managed worktree for direct
 resume. Technical validation blockers that are small, mechanical, and within

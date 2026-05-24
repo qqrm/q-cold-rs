@@ -52,16 +52,19 @@ pub trait BundleAdapter {
 pub fn xtask_process_for(
     repo_root: &Path,
     xtask_manifest: Option<&Path>,
+    default_branch: Option<&str>,
 ) -> Result<XtaskProcessAdapter> {
     XtaskProcessAdapter::discover_for(
         repo_root.to_path_buf(),
         xtask_manifest.map(Path::to_path_buf),
+        default_branch.map(str::to_string),
     )
 }
 
 pub struct XtaskProcessAdapter {
     repo_root: PathBuf,
     mode: XtaskMode,
+    task_open_base_branch: Option<String>,
 }
 
 enum XtaskMode {
@@ -70,7 +73,11 @@ enum XtaskMode {
 }
 
 impl XtaskProcessAdapter {
-    pub fn discover_for(repo_root: PathBuf, xtask_manifest: Option<PathBuf>) -> Result<Self> {
+    pub fn discover_for(
+        repo_root: PathBuf,
+        xtask_manifest: Option<PathBuf>,
+        task_open_base_branch: Option<String>,
+    ) -> Result<Self> {
         let mode = if let Some(path) = xtask_manifest {
             XtaskMode::Manifest(path)
         } else if let Ok(path) = env::var("QCOLD_XTASK_MANIFEST") {
@@ -89,7 +96,11 @@ impl XtaskProcessAdapter {
                 ),
             }
         };
-        Ok(Self { repo_root, mode })
+        Ok(Self {
+            repo_root,
+            mode,
+            task_open_base_branch,
+        })
     }
 
     fn run(&self, args: &[OsString]) -> Result<u8> {
@@ -180,7 +191,12 @@ impl TaskAdapter for XtaskProcessAdapter {
         let mut args = os_args(&["task", "open", task_slug]);
         push_optional(&mut args, profile);
         let mut command = self.command(&args)?;
-        apply_task_open_env(&mut command, task_sequence, task_prompt);
+        apply_task_open_env(
+            &mut command,
+            task_sequence,
+            task_prompt,
+            self.task_open_base_branch.as_deref(),
+        );
         self.run_command(command, &args)
     }
 
@@ -316,6 +332,7 @@ fn apply_task_open_env(
     command: &mut Command,
     task_sequence: Option<u64>,
     task_prompt: Option<&str>,
+    task_open_base_branch: Option<&str>,
 ) {
     let codex_thread_id = nonempty_env("CODEX_THREAD_ID");
     let codex_rollout_path = crate::rollout::current_codex_rollout_path(codex_thread_id.as_deref());
@@ -325,6 +342,7 @@ fn apply_task_open_env(
         task_prompt,
         codex_thread_id.as_deref(),
         codex_rollout_path.as_deref(),
+        task_open_base_branch,
     );
 }
 
@@ -334,6 +352,7 @@ fn apply_task_open_env_values(
     task_prompt: Option<&str>,
     codex_thread_id: Option<&str>,
     codex_rollout_path: Option<&Path>,
+    task_open_base_branch: Option<&str>,
 ) {
     if let Some(sequence) = task_sequence {
         command.env("QCOLD_TASK_SEQUENCE", sequence.to_string());
@@ -347,6 +366,12 @@ fn apply_task_open_env_values(
     }
     if let Some(path) = codex_rollout_path {
         command.env("CODEX_ROLLOUT_PATH", path);
+    }
+    if let Some(branch) = task_open_base_branch
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        command.env("QCOLD_TASK_OPEN_BASE_BRANCH", branch);
     }
 }
 
@@ -375,6 +400,7 @@ mod tests {
             Some("first line\nsecond line"),
             Some("019e2a5a-96d5-72d0-9eaa-530232011047"),
             Some(Path::new("/tmp/rollout.jsonl")),
+            Some("developer"),
         );
 
         let sequence = command
@@ -432,12 +458,24 @@ mod tests {
                 })
             })
             .unwrap();
+        let base_branch = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "QCOLD_TASK_OPEN_BASE_BRANCH").then(|| {
+                    value
+                        .and_then(std::ffi::OsStr::to_str)
+                        .unwrap_or_default()
+                        .to_string()
+                })
+            })
+            .unwrap();
 
         assert_eq!(sequence, "42");
         assert_eq!(prompt, "first line\nsecond line");
         assert_eq!(snippet, "first line\nsecond line");
         assert_eq!(thread_id, "019e2a5a-96d5-72d0-9eaa-530232011047");
         assert_eq!(rollout_path, "/tmp/rollout.jsonl");
+        assert_eq!(base_branch, "developer");
     }
 }
 

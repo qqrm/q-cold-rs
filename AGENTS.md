@@ -15,9 +15,10 @@ repo-local code owns it.
 - Keep the primary checkout clean unless the current task is actively changing
   tracked files.
 - When a managed task-flow environment is available for this checkout, start
-  tracked work from the primary checkout with
+  tracked work from a clean primary checkout on `main` with
   `cargo qcold task open <task-slug> [profile]` and complete it through the
-  task closeout surface.
+  task closeout surface. The self-hosted adapter rejects new task opens from
+  any other base branch.
 - During incubation, task, verify, ci, compat, ffi, build, and install
   commands delegate through the explicit xtask process adapter. Q-COLD owns a
   repository-local self adapter under `xtask/` for dogfooding its own flow. If
@@ -78,7 +79,8 @@ repo-local code owns it.
 - `qcold guard -- <command>...`
 - `qcold task pause --reason "<reason>"`
 - `qcold repo list`
-- `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>] [--set-active]`
+- `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>]`
+  with optional `--default-branch <branch>` and `--set-active`
 - `qcold repo set-active <id>`
 - `cargo qcold --help`
 - `cargo qcold --version`
@@ -116,7 +118,8 @@ repo-local code owns it.
 - `cargo qcold task orphan-clear-stale [--max-age-hours <hours>]`
 - `cargo qcold bundle`
 - `cargo qcold repo list`
-- `cargo qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>] [--set-active]`
+- `cargo qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>]`
+  with optional `--default-branch <branch>` and `--set-active`
 - `cargo qcold repo set-active <id>`
 - `cargo qcold verify ...`
 - `cargo qcold ci ...`
@@ -168,8 +171,10 @@ fixture or debugging task explicitly needs them.
 - During incubation, a local commit is not a substitute for managed task-flow
   closeout when that closeout surface is available. For Q-COLD self-development,
   prefer the self-hosted `QCOLD_REPO_ROOT=$PWD cargo qcold task open
-  <task-slug>` flow from a clean primary checkout unless this repository is
-  already the active registered repo, and close out from the managed worktree.
+  <task-slug>` flow from a clean primary checkout on `main` unless this
+  repository is already the active registered repo, and close out from the
+  managed worktree. Do not start Q-COLD self tasks from topic, queue, or task
+  branches.
   If managed task-flow prerequisites are absent or failing, commit after normal
   Cargo validation and report that task-flow closeout was not applicable.
 - `task pause` is non-terminal: it records why the attempt is waiting and keeps

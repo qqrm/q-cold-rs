@@ -37,6 +37,35 @@ mod tests {
     }
 
     #[test]
+    fn task_open_base_branch_defaults_overrides_and_rejects_mismatch() {
+        let _guard = EnvVarGuard::capture(TASK_OPEN_BASE_BRANCH_ENV);
+        let root = unique_test_dir("qcold-task-open-base-branch");
+
+        std::env::remove_var(TASK_OPEN_BASE_BRANCH_ENV);
+        assert_eq!(task_open_base_branch(&root), "main");
+
+        run_git_in(&root, ["init"]);
+        run_git_in(&root, ["config", "taskflow.base-branch", "developer"]);
+        assert_eq!(task_open_base_branch(&root), "developer");
+
+        std::env::set_var(TASK_OPEN_BASE_BRANCH_ENV, " developer ");
+        assert_eq!(task_open_base_branch(&root), "developer");
+
+        std::env::set_var(TASK_OPEN_BASE_BRANCH_ENV, "  ");
+        assert_eq!(task_open_base_branch(&root), "developer");
+        std::env::set_var(TASK_OPEN_BASE_BRANCH_ENV, "main");
+
+        assert!(ensure_task_open_base_branch(Path::new("/workspace/repo"), "main").is_ok());
+        let error =
+            ensure_task_open_base_branch(Path::new("/workspace/repo"), "queue-ui-e2e-fix")
+                .unwrap_err()
+                .to_string();
+        assert!(error.contains("task open must start from branch \"main\""));
+        assert!(error.contains("queue-ui-e2e-fix"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn stale_paused_task_uses_updated_at_then_started_at() {
         let mut task = test_task_env();
         task.updated_at = "100".into();

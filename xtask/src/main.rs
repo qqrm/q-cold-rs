@@ -18,6 +18,8 @@ mod rollout;
 
 const DEFAULT_PAUSED_TASK_TTL_HOURS: u64 = 2;
 const DEFAULT_BUNDLE_RETENTION_HOURS: u64 = 24;
+const DEFAULT_TASK_OPEN_BASE_BRANCH: &str = "main";
+const TASK_OPEN_BASE_BRANCH_ENV: &str = "QCOLD_TASK_OPEN_BASE_BRANCH";
 
 fn main() -> ExitCode {
     match run() {
@@ -179,8 +181,9 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         }
     }
     ensure_clean(&repo, "primary checkout")?;
-    let base_head = git_output(&repo, ["rev-parse", "HEAD"])?;
     let base_branch = git_output(&repo, ["branch", "--show-current"])?;
+    ensure_task_open_base_branch(&repo, &base_branch)?;
+    let base_head = git_output(&repo, ["rev-parse", "HEAD"])?;
     let branch = format!("task/{task_slug}");
     let task_sequence = qcold_task_sequence();
     let execution_anchor = task_sequence
@@ -241,6 +244,36 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     println!("task-opened\t{task_slug}\t{}", worktree.display());
     println!("TASK_WORKTREE={}", worktree.display());
     Ok(0)
+}
+
+fn ensure_task_open_base_branch(repo: &Path, branch: &str) -> Result<()> {
+    let expected = task_open_base_branch(repo);
+    if branch == expected {
+        return Ok(());
+    }
+    let current = if branch.is_empty() {
+        "<detached>"
+    } else {
+        branch
+    };
+    bail!(
+        "task open must start from branch {expected:?}; current branch is {current:?} in {}",
+        repo.display()
+    );
+}
+
+fn task_open_base_branch(repo: &Path) -> String {
+    std::env::var(TASK_OPEN_BASE_BRANCH_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            git_output(repo, ["config", "--get", "taskflow.base-branch"])
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+        })
+        .unwrap_or_else(|| DEFAULT_TASK_OPEN_BASE_BRANCH.to_string())
 }
 
 fn task_open_description(task_slug: &str) -> String {

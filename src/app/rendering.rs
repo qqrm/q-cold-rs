@@ -627,5 +627,9 @@ fn repository_adapter_for(repo: &RepositoryConfig) -> Result<adapter::XtaskProce
             repo.adapter
         );
     }
-    adapter::xtask_process_for(&repo.root, repo.xtask_manifest.as_deref())
+    adapter::xtask_process_for(
+        &repo.root,
+        repo.xtask_manifest.as_deref(),
+        repo.default_branch.as_deref(),
+    )
 }
