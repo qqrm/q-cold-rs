@@ -151,6 +151,15 @@ pub fn run(args: AgentArgs) -> Result<u8> {
     match args.command {
         AgentCommand::Start(args) => {
             let record = if args.terminal || args.attach {
+                if args.attach {
+                    if let Some(name) = clean_zellij_pane_name(args.name.as_deref())? {
+                        if let Some(record) = running_named_terminal_record(&args.track, &name)? {
+                            println!("{}", snapshot_line(&record));
+                            attach_terminal(&record)?;
+                            return Ok(0);
+                        }
+                    }
+                }
                 start_terminal_agent(
                     args.id,
                     &args.track,
@@ -472,6 +481,34 @@ fn selected_terminal_backend() -> Result<TerminalBackend> {
         }
         Ok(value) => bail!("unsupported QCOLD_TERMINAL_BACKEND={value}; use tmux or zellij"),
         Err(_) => Ok(TerminalBackend::Tmux),
+    }
+}
+
+fn running_named_terminal_record(track: &str, requested_name: &str) -> Result<Option<AgentRecord>> {
+    let metadata = terminal_metadata_by_target()?;
+    let requested_name = normalize_display_name(requested_name);
+    let matches = AgentState::load()?
+        .records
+        .into_iter()
+        .filter(|record| record.track == track)
+        .filter(|record| process_state(record.pid) == "running")
+        .filter(|record| terminal_target(record).is_some())
+        .filter(|record| {
+            terminal_display_name(record, &metadata)
+                .is_some_and(|name| normalize_display_name(name) == requested_name)
+        })
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [record] => Ok(Some(record.clone())),
+        records => bail!(
+            "terminal name {requested_name:?} is ambiguous for track {track:?}; matched {}",
+            records
+                .iter()
+                .map(|record| record.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
     }
 }
 

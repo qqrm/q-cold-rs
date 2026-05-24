@@ -19,8 +19,18 @@ mod zellij_name_tests {
         assert!(terminal_title_sequence("\x1b\t").is_none());
         assert_eq!(
             terminal_title_shell_prefix(Some("flow")),
-            "printf %s '\u{1b}]0;flow\u{7}'; "
+            "printf '\\033]0;%s\\007' 'flow'; "
         );
+    }
+
+    #[test]
+    fn zellij_layout_title_prefix_avoids_control_escape_values() {
+        let wrapped = format!("{}cc1", terminal_title_shell_prefix(Some("atomic")));
+        let layout = zellij_layout("atomic", &wrapped).unwrap();
+
+        assert!(layout.contains("033]0;%s"));
+        assert!(!layout.contains("\\u001b"));
+        assert!(!layout.contains("\\u0007"));
     }
 
     #[test]

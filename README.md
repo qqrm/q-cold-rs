@@ -384,9 +384,11 @@ With the zellij backend, `qcold agent start --terminal --name "<pane name>" ...`
 sets the zellij pane title and the Q-COLD terminal display name. It does not
 send Codex TUI `/rename`. Q-COLD also emits a host terminal title escape while
 attaching, so terminal tabs show the short display name instead of the wrapper
-command. A later plain named Codex launch, such as `cc1 --name atomic`, resumes
-the latest exited same-track named Codex chat when Q-COLD has imported that
-prior session id; otherwise it starts a fresh chat.
+command. If `--attach --name "<pane name>"` matches one running same-track
+Q-COLD terminal display name, Q-COLD attaches to that terminal instead of
+starting a duplicate session. A later plain named Codex launch, such as
+`cc1 --name atomic`, resumes the latest exited same-track named Codex chat when
+Q-COLD has imported that prior session id; otherwise it starts a fresh chat.
 Plain processes started in a non-multiplexed console are visible as host
 processes but are not safely attachable after the fact. Start agents with
 `qcold agent start --terminal --attach --track <track> -- <command>...` to see

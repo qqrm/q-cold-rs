@@ -532,19 +532,23 @@ fn terminal_host_title(
 
 fn terminal_title_shell_prefix(title: Option<&str>) -> String {
     title
-        .and_then(terminal_title_sequence)
-        .map(|sequence| format!("printf %s {}; ", shell_quote(&sequence)))
+        .and_then(clean_terminal_title_text)
+        .map(|title| format!("printf '\\033]0;%s\\007' {}; ", shell_quote(&title)))
         .unwrap_or_default()
 }
 
 fn terminal_title_sequence(title: &str) -> Option<String> {
+    clean_terminal_title_text(title).map(|title| format!("\x1b]0;{title}\x07"))
+}
+
+fn clean_terminal_title_text(title: &str) -> Option<String> {
     let mut title = title
         .chars()
         .filter(|ch| !ch.is_control())
         .collect::<String>();
     crate::prompt::truncate_chars(&mut title, 80);
     let title = title.trim();
-    (!title.is_empty()).then(|| format!("\x1b]0;{title}\x07"))
+    (!title.is_empty()).then(|| title.to_string())
 }
 
 fn terminate_terminal_target(target: &TerminalTarget) -> Result<()> {
