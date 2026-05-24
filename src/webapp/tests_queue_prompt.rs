@@ -34,7 +34,7 @@ mod queue_prompt_tests {
         assert!(instruction.contains("repo_root: /workspace/repo"));
         assert!(instruction.contains("task_slug: task-run-01"));
         assert!(instruction.contains("selected_command: c1"));
-        assert!(instruction.contains("do not run cargo qcold task open"));
+        assert!(instruction.contains("do not run qcold task open"));
         assert!(instruction.contains("task_env: .task/task.env"));
         assert!(instruction.contains("task_logs: .task/logs/"));
         assert!(instruction.contains("pause_or_blocked_only_for: business decision"));

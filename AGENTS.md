@@ -22,7 +22,7 @@ repo-local code owns it.
   it and keep the primary-checkout access limited to that control action.
 - When a managed task-flow environment is available for this checkout, start
   tracked work from a clean primary checkout on `main` with
-  `cargo qcold task open <task-slug> [profile]` and complete it through the
+  `qcold task open <task-slug> [profile]` and complete it through the
   task closeout surface. The self-hosted adapter rejects new task opens from
   any other base branch.
 - During incubation, task, verify, ci, compat, ffi, build, and install
@@ -32,8 +32,8 @@ repo-local code owns it.
   use normal Cargo validation and report that task-flow closeout was not
   applicable.
 - Do not bypass the public command surface when the task is explicitly about
-  Q-COLD command behavior. Exercise `cargo qcold ...` through the compiled
-  binary or `cargo run -- ...` as appropriate.
+  Q-COLD command behavior. Exercise `qcold ...` through the installed binary
+  or the compiled local binary as appropriate.
 - If resuming after interruption, reread this file and any task-local logs
   before touching code.
 - Treat the system prompt, developer prompt, `.codex/config.toml`, this file,
@@ -63,9 +63,10 @@ repo-local code owns it.
 
 ## Public Command Surface
 
-- `cargo install --path . --locked`
 - `qcold --version`
 - `qcold --help`
+- `qcold build ...`
+- `qcold install ...`
 - `qcold status`
 - `qcold task-record list`
 - `qcold task-record audit [--repo-root <path>] [--top <n>] [--record-limit <n>]`
@@ -88,52 +89,14 @@ repo-local code owns it.
 - `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>]`
   with optional `--default-branch <branch>` and `--set-active`
 - `qcold repo set-active <id>`
-- `cargo qcold --help`
-- `cargo qcold --version`
-- `cargo qcold status`
-- `cargo qcold task-record list`
-- `cargo qcold task-record audit [--repo-root <path>] [--top <n>] [--record-limit <n>]`
-- `cargo qcold task-record create --description "<task description>"`
-- `cargo qcold task-record show <task-id>`
-- `cargo qcold task-record update <task-id> [--title "<title>"] [--description "<description>"] [--status <status>]`
-- `cargo qcold task-record close <task-id> [--outcome success|blocked|failed]`
-- `cargo qcold task-record delete <task-id>`
-- `cargo qcold agent list`
-- `cargo qcold agent attach <agent-id|terminal-target|session|name>`
-- `cargo qcold agent start [--name <zellij-pane-name>] --track <track> -- <command>...`
-- `cargo qcold telegram poll`
-- `cargo qcold wsl autostart install [--listen <addr>] [--repo-root <path>] [--qcold-bin <path>]`
-- `cargo qcold wsl autostart status`
-- `cargo qcold wsl autostart remove`
-- `cargo qcold guard -- <command>...`
-- `cargo qcold task inspect [topic]`
-- `cargo qcold task open <task-slug> [profile]`
-- `cargo qcold task enter`
-- `cargo qcold task list`
-- `cargo qcold task terminal-check`
-- `cargo qcold task iteration-notify --message "<handoff update>"`
-- `cargo qcold task pause --reason "<reason>"`
-- `cargo qcold task finalize --message "<message>"`
-- `cargo qcold task closeout --outcome success --message "<commit message>"`
-- `cargo qcold task closeout --outcome blocked --reason "<reason>"`
-- `cargo qcold task closeout --outcome failed --reason "<reason>"`
-- `cargo qcold task clean <task-slug>`
-- `cargo qcold task clear <task-slug>`
-- `cargo qcold task clear-all`
-- `cargo qcold task orphan-list`
-- `cargo qcold task orphan-clear-stale [--max-age-hours <hours>]`
-- `cargo qcold bundle`
-- `cargo qcold repo list`
-- `cargo qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>]`
-  with optional `--default-branch <branch>` and `--set-active`
-- `cargo qcold repo set-active <id>`
-- `cargo qcold verify ...`
-- `cargo qcold ci ...`
-- `cargo qcold compat ...`
-- `cargo qcold ffi ...`
+- `qcold verify ...`
+- `qcold ci ...`
+- `qcold compat ...`
+- `qcold ffi ...`
 
 The standalone `qcold` binary is the primary operator-facing surface.
-`cargo qcold` remains supported as Cargo subcommand compatibility. Direct
+`cargo qcold <command>` remains supported only as Cargo subcommand
+compatibility for tests and legacy callers. Direct
 calls into a repository adapter are implementation details unless a test
 fixture or debugging task explicitly needs them.
 
@@ -176,7 +139,7 @@ fixture or debugging task explicitly needs them.
   generated logs, or unrelated user edits.
 - During incubation, a local commit is not a substitute for managed task-flow
   closeout when that closeout surface is available. For Q-COLD self-development,
-  prefer the self-hosted `QCOLD_REPO_ROOT=$PWD cargo qcold task open
+  prefer the self-hosted `QCOLD_REPO_ROOT=$PWD qcold task open
   <task-slug>` flow from a clean primary checkout on `main` unless this
   repository is already the active registered repo, and close out from the
   managed worktree. Do not start Q-COLD self tasks from topic, queue, or task
@@ -205,7 +168,7 @@ fixture or debugging task explicitly needs them.
 
 - Every non-trivial iteration should pass `cargo xtask verify fast` locally
   before terminal closeout. The repository-local `xtask` implementation is the
-  local preflight entry point, and Q-COLD self-hosted `cargo qcold verify` plus
+  local preflight entry point, and Q-COLD self-hosted `qcold verify` plus
   successful task closeout invoke it through the same adapter boundary.
 - The self-hosted fast gate enforces tracked text hygiene before heavier
   validation: new tracked text files must stay at or below 1,000 lines, all
@@ -214,12 +177,12 @@ fixture or debugging task explicitly needs them.
 - For Rust code changes, run `cargo fmt --check` and `cargo test --locked`
   unless the task is too narrow or the environment blocks them.
 - For command-surface changes, include targeted help or invocation checks such
-  as `cargo run --bin qcold -- --help`, `cargo run --bin qcold -- task --help`,
-  or the specific command being changed.
+  as `qcold --help`, `qcold task --help`, or the specific command being
+  changed.
 - For task-flow control-plane changes, run the relevant regression tests:
   `cargo test --test task_flow_control_plane --locked` and/or
   `cargo test --test task_flow_regression --locked`.
-- `cargo qcold task closeout --outcome success` is terminal task completion
+- `qcold task closeout --outcome success` is terminal task completion
   only when the managed task-flow prerequisites are present and the command
   reaches terminal success. Green local Cargo tests are not task-flow closeout.
 - If a validation command is skipped or fails for environmental reasons, say so

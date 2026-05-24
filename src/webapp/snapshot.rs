@@ -143,7 +143,7 @@ fn agent_start_template(root: &str) -> String {
     format!(
         "/agent_start --cwd {cwd} <track> :: codex exec \"Use the launched host-side agent \
          workspace as your home base for {root}; do not enter a devcontainer from \
-         $QCOLD_AGENT_WORKTREE. Start managed task <slug> with cargo qcold task open <slug>, enter \
+         $QCOLD_AGENT_WORKTREE. Start managed task <slug> with qcold task open <slug>, enter \
          that managed task worktree and its devcontainer if the task flow provides one, reread \
          AGENTS.md and task logs, then do: <task>. Shape broad searches before reading raw output; \
          use qcold guard -- <command> for risky commands. Drive the task to terminal closeout unless \

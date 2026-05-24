@@ -10,11 +10,11 @@ proof, validation, and closeout semantics behind explicit adapter traits. The
 first adapter is a generic xtask process adapter, so Q-COLD can build without
 a Cargo path dependency on any target repository. Q-COLD also ships its own
 repository-local `xtask` adapter so Q-COLD development can dogfood the same
-`qcold task ...`, `qcold verify ...`, and `qcold ci ...` surfaces. Install the
-standalone operator binary plus Cargo subcommand compatibility locally with:
+`qcold task ...`, `qcold verify ...`, and `qcold ci ...` surfaces. Install or
+refresh the standalone operator binary locally with:
 
 ```bash
-cargo install --path . --locked
+qcold install
 ```
 
 Then register repository connections in Q-COLD state and run adapter-backed
@@ -43,14 +43,13 @@ qcold task open my-task
 qcold task pause --reason "waiting for operator decision"
 ```
 
-`cargo qcold <command>` remains supported for Cargo subcommand compatibility,
-but `qcold <command>` is the primary operator interface.
-Use `qcold --version` or `cargo qcold --version` to check the installed
-operator binary. The reported version includes the Cargo package version, a
-monotonic Git commit-count build number, and the Git commit hash embedded when
-that binary was built. A dirty local rebuild reports the next build number so
-changed-but-uncommitted operator binaries are distinguishable from the last
-clean commit build.
+Legacy `cargo qcold <command>` remains supported for compatibility, but
+`qcold <command>` is the primary operator interface.
+Use `qcold --version` to check the installed operator binary. The reported
+version includes the Cargo package version, a monotonic Git commit-count build
+number, and the Git commit hash embedded when that binary was built. A dirty
+local rebuild reports the next build number so changed-but-uncommitted operator
+binaries are distinguishable from the last clean commit build.
 
 ## Local iteration checks
 
@@ -66,7 +65,7 @@ for production binaries, and stable integration suites that do not require the
 external task-flow fixture adapter. Tracked text files must stay at or below
 1,000 lines and 120
 characters per line unless `xtask` carries an explicit reviewed exception for
-pre-existing split debt. `cargo qcold verify` and successful managed task
+pre-existing split debt. `qcold verify` and successful managed task
 closeout run the same repository-local `xtask` implementation through the
 adapter boundary. Optional heavier profiles are available when the local
 environment has the required fixtures:
@@ -202,10 +201,10 @@ the same listen address. Queue task opening tolerates replacing the installed
 `qcold` binary while the daemon is running by falling back to the current
 `qcold` on `PATH` when the daemon's original executable path is no longer
 runnable. The web assets are embedded in the Q-COLD binary, so rerun the daemon
-command after `cargo install --path . --locked` or another Q-COLD rebuild to
-serve the same binary/assets version that was just installed. Without
-`--daemon`, `telegram serve` stays in the foreground for systemd or other
-external supervisors.
+command after `qcold install` or another Q-COLD rebuild to serve the same
+binary/assets version that was just installed. Without `--daemon`,
+`qcold telegram serve` stays in the foreground for systemd or other external
+supervisors.
 
 On WSL 2 with user systemd available, install a user service that starts the
 dashboard automatically when the WSL user manager starts:
@@ -243,7 +242,7 @@ Direct terminal agents started from a repository through Q-COLD wrappers are
 also valid task entry points. Those agents run from
 `../WT/<repo>/agents/<agent>` worktrees with `QCOLD_REPO_ROOT` pointing at the
 primary checkout, and active-repository commands such as `qcold status` and
-`cargo qcold task open <slug>` continue to target that primary checkout.
+`qcold task open <slug>` continue to target that primary checkout.
 By default, Queue execution remains ordered and starts only the first unfinished
 row. Enabling Graph execution changes the draft into explicit waves from top
 to bottom: Wave 1 runs first, Wave 2 waits for Wave 1, and so on. Cards inside
@@ -484,14 +483,14 @@ Adapter-backed commands run from a target repository checkout with
 `cargo xtask`, or through `QCOLD_XTASK_MANIFEST` when an explicit xtask
 manifest path is needed. In the Q-COLD checkout itself, `.cargo/config.toml`
 defines `cargo xtask` as the self-hosted adapter in `xtask/`, so normal
-development can start with `QCOLD_REPO_ROOT=$PWD cargo qcold task open <slug>`
-from a clean primary checkout, or with plain `cargo qcold task open <slug>` when
+development can start with `QCOLD_REPO_ROOT=$PWD qcold task open <slug>`
+from a clean primary checkout, or with plain `qcold task open <slug>` when
 the Q-COLD repository is the active registered repo. The Q-COLD self-hosted
 adapter requires new task opens to start from `main`; it fails before creating
 a task worktree when the primary checkout is on another branch. Registered
 repositories may set `--default-branch <branch>`, which Q-COLD forwards to the
 process adapter as `QCOLD_TASK_OPEN_BASE_BRANCH`; repository adapters may also
-set `taskflow.base-branch` in git config. `cargo qcold task pause --reason "<reason>"`
+set `taskflow.base-branch` in git config. `qcold task pause --reason "<reason>"`
 records a non-terminal pause for work that needs operator
 input or an external unblock while preserving the managed worktree for direct
 resume. Technical validation blockers that are small, mechanical, and within

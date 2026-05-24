@@ -18,9 +18,9 @@ status.
    `AGENTS.md`, and `.task/task.env` when present.
 2. Check `git status --short --branch` in the active worktree.
 3. Use the public surface for task and agent state:
-   `cargo qcold task list`, `cargo qcold task terminal-check`,
-   `cargo qcold task-record list`, `cargo qcold task-record audit`,
-   and `cargo qcold agent list` when applicable.
+   `qcold task list`, `qcold task terminal-check`,
+   `qcold task-record list`, `qcold task-record audit`,
+   and `qcold agent list` when applicable.
 4. If the user shows an agent launch command such as `cc1 name="meta"`, verify
    whether that value is Q-COLD metadata, a terminal pane title, or merely an
    argument passed into the wrapped agent. Do not assume it renamed the

@@ -327,7 +327,7 @@ fn app_message(message: &TelegramMessage, config: &TelegramConfig) -> SendMessag
     let Some(url) = config.webapp_url.as_deref() else {
         return message.reply(
             concat!(
-                "Q-COLD Mini App URL is not configured. Start `cargo qcold telegram serve ",
+                "Q-COLD Mini App URL is not configured. Start `qcold telegram serve ",
                 "--listen 127.0.0.1:8787 --daemon`, expose it through HTTPS, then set ",
                 "QCOLD_TELEGRAM_WEBAPP_URL."
             )

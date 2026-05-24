@@ -68,7 +68,7 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold task closeout --outcome success --message \"docs: update truth\"\n",
     "  qcold verify fast\n",
     "  qcold ci matrix rust-all-on --jobs 4\n\n",
-    "Cargo subcommand compatibility is also supported: cargo qcold <command>."
+    "Use qcold <command>; legacy cargo qcold callers remain compatible."
 );
 const DEFAULT_CODEX_TELEMETRY_RETENTION_HOURS: u64 = 48;
 const LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD: u64 = 5_000;

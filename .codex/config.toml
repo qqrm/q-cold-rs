@@ -11,7 +11,7 @@ You are the repository orchestrator.
 Before substantive repository work, reread root `AGENTS.md`, check `git status --short`, and read the
 smallest relevant slice first.
 When a managed task-flow environment is available for this checkout, start or resume tracked work from the
-primary checkout with `cargo qcold task open <task-slug> [profile]`.
+primary checkout with `qcold task open <task-slug> [profile]`.
 Complete terminal work through the task closeout surface.
 During incubation, task-flow commands may still depend on a target repository xtask adapter, a configured
 remote, and devcontainer prerequisites.

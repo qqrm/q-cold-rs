@@ -926,7 +926,7 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let _ = writeln!(packet, "selected_command: {}", item.agent_command);
     let _ = writeln!(packet, "launch_context: backend-opened managed task worktree");
     let _ = writeln!(packet, "required_flow:");
-    let _ = writeln!(packet, "  - do not run cargo qcold task open; Q-COLD already opened it");
+    let _ = writeln!(packet, "  - do not run qcold task open; Q-COLD already opened it");
     let _ = writeln!(packet, "  - confirm pwd contains .task/task.env");
     let _ = writeln!(packet, "  - reread AGENTS.md and available task logs");
     let _ = writeln!(packet, "state_pointers:");
@@ -936,7 +936,7 @@ fn queue_task_instruction(item: &state::QueueItemRow) -> String {
     let _ = writeln!(packet, "  expect: run relevant validation, then terminal closeout");
     let _ = writeln!(
         packet,
-        "  success: cargo qcold task closeout --outcome success --message \"<message>\""
+        "  success: qcold task closeout --outcome success --message \"<message>\""
     );
     let _ = writeln!(packet, "blocker_boundary:");
     let _ = writeln!(packet, "  pause_or_blocked_only_for: business decision or external resource");
