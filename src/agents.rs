@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::env;
+use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
@@ -216,29 +217,43 @@ pub fn running_snapshot() -> Result<String> {
 }
 
 pub fn available_agent_commands() -> Vec<AvailableAgentCommand> {
+    let path_env = env::var_os("PATH");
+    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    available_agent_commands_from(path_env.as_deref(), &home)
+}
+
+fn available_agent_commands_from(path_env: Option<&OsStr>, home: &Path) -> Vec<AvailableAgentCommand> {
     let mut commands = Vec::new();
     let mut seen = HashSet::new();
     for (command, label, invocation) in KNOWN_AGENT_COMMANDS {
-        if let Some(path) = command_path(command) {
+        let account = agent_account_key(command);
+        if !agent_account_authenticated_in_home(&account, home) {
+            continue;
+        }
+        if let Some(path) = command_path_in_paths(command, path_env) {
             seen.insert((*command).to_string());
             commands.push(AvailableAgentCommand {
                 command: (*command).to_string(),
                 label: (*label).to_string(),
                 invocation: invocation.as_str(),
                 path: path.display().to_string(),
-                account: agent_account_key(command),
+                account,
                 status_command: status_probe_command(command),
             });
         }
     }
-    for command in discover_numbered_codex_commands() {
+    for command in discover_numbered_codex_commands_in_paths(path_env) {
         if !seen.insert(command.clone()) {
             continue;
         }
-        if let Some(path) = command_path(&command) {
+        let account = agent_account_key(&command);
+        if !agent_account_authenticated_in_home(&account, home) {
+            continue;
+        }
+        if let Some(path) = command_path_in_paths(&command, path_env) {
             commands.push(AvailableAgentCommand {
                 label: format!("Codex account {}", command.trim_start_matches("codex")),
-                account: agent_account_key(&command),
+                account,
                 status_command: status_probe_command(&command),
                 command,
                 invocation: AgentInvocation::Exec.as_str(),
@@ -248,6 +263,11 @@ pub fn available_agent_commands() -> Vec<AvailableAgentCommand> {
     }
     commands.sort_by_key(|left| agent_command_sort_key(&left.command));
     commands
+}
+
+pub(crate) fn agent_auth_file(account: &str) -> PathBuf {
+    let home = env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    agent_auth_file_in_home(account, &home)
 }
 
 fn render_snapshot(records: &[AgentRecord], scope: SnapshotScope) -> String {
@@ -684,12 +704,12 @@ fn is_codex_agent_command(name: &str) -> bool {
             .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
 }
 
-fn command_path(command: &str) -> Option<PathBuf> {
+fn command_path_in_paths(command: &str, path_env: Option<&OsStr>) -> Option<PathBuf> {
     let path = Path::new(command);
     if path.components().count() > 1 {
         return executable_file(path).then(|| path.to_path_buf());
     }
-    env::var_os("PATH")
+    path_env
         .into_iter()
         .flat_map(|paths| env::split_paths(&paths).collect::<Vec<_>>())
         .map(|dir| dir.join(command))
@@ -714,9 +734,9 @@ fn executable_file(path: &Path) -> bool {
     }
 }
 
-fn discover_numbered_codex_commands() -> Vec<String> {
+fn discover_numbered_codex_commands_in_paths(path_env: Option<&OsStr>) -> Vec<String> {
     let mut commands = HashSet::new();
-    if let Some(paths) = env::var_os("PATH") {
+    if let Some(paths) = path_env {
         for dir in env::split_paths(&paths) {
             let Ok(entries) = fs::read_dir(dir) else {
                 continue;
@@ -736,6 +756,17 @@ fn discover_numbered_codex_commands() -> Vec<String> {
         }
     }
     commands.into_iter().collect()
+}
+
+fn agent_auth_file_in_home(account: &str, home: &Path) -> PathBuf {
+    if account == "default" {
+        return home.join(".codex/auth.json");
+    }
+    home.join(".codex-accounts").join(account).join("auth.json")
+}
+
+fn agent_account_authenticated_in_home(account: &str, home: &Path) -> bool {
+    agent_auth_file_in_home(account, home).is_file()
 }
 
 fn agent_command_sort_key(command: &str) -> (u8, String) {
@@ -798,3 +829,4 @@ include!("agents/output_guard_tests.rs");
 include!("agents/terminal_metadata_tests.rs");
 include!("agents/zellij_name_tests.rs");
 include!("agents/resume_tests.rs");
+include!("agents/available_commands_tests.rs");

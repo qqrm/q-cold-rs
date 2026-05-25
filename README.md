@@ -259,7 +259,8 @@ The dashboard opens to the Queue view and keeps repository/task/agent overview
 state in a compact always-visible status strip. Its Queue view accepts
 one task prompt at a time, appends it to a visible ordered queue, shows a
 dropdown of registered repositories plus one preferred Codex-like command per
-available account (`c1`, `c2`, or `codexN`) with auth/readiness status, and starts
+authenticated available account (`c1`, `c2`, or `codexN`) with readiness
+status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
 For repositories whose root `AGENTS.md` declares the approved remote dev
@@ -392,8 +393,9 @@ available for debugging, but terminal readiness ignores task worktrees whose
 task env has already reached a `closed:*` status. It streams state updates with
 server-sent events and includes an `Auto`/`Dark`/`Light` theme switch stored in
 browser local storage. The Agents view shows
-detected local agent commands and their account/auth/readiness probe status before
-the running-process sections. Readiness probes run through a cached
+detected local agent commands only when their account `auth.json` exists, then
+shows account/readiness probe status before the running-process sections.
+Readiness probes run through a cached
 `/api/agent-limits` request when the Agents view is opened or refreshed. Q-COLD
 uses each account's base command such as `c1`, `c2`, or `codexN` with
 `--version`, retries transient failures, and avoids compact `cc*` wrappers so

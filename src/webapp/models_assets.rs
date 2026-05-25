@@ -593,14 +593,7 @@ fn unchecked_agent_limit(
 }
 
 fn agent_auth_file(account: &str) -> PathBuf {
-    let home = env::var("HOME").unwrap_or_default();
-    if account == "default" {
-        return PathBuf::from(home).join(".codex/auth.json");
-    }
-    PathBuf::from(home)
-        .join(".codex-accounts")
-        .join(account)
-        .join("auth.json")
+    agents::agent_auth_file(account)
 }
 
 #[derive(Serialize)]
