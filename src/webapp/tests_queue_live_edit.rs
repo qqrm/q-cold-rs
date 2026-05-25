@@ -29,6 +29,7 @@ mod queue_live_edit_tests {
                     repo_root: None,
                     repo_name: None,
                     agent_command: None,
+                    remote_launcher: None,
                 }],
             },
         );
@@ -67,6 +68,7 @@ mod queue_live_edit_tests {
                     repo_root: None,
                     repo_name: None,
                     agent_command: None,
+                    remote_launcher: None,
                 }],
             },
         );
@@ -103,6 +105,7 @@ mod queue_live_edit_tests {
                     repo_root: None,
                     repo_name: None,
                     agent_command: None,
+                    remote_launcher: None,
                 }],
             },
         );
@@ -133,6 +136,7 @@ mod queue_live_edit_tests {
                     repo_root: None,
                     repo_name: None,
                     agent_command: None,
+                    remote_launcher: None,
                 }],
             },
         );
@@ -170,6 +174,7 @@ mod queue_live_edit_tests {
                     repo_root: None,
                     repo_name: None,
                     agent_command: None,
+                    remote_launcher: None,
                 }],
             },
         );
@@ -210,6 +215,7 @@ mod queue_live_edit_tests {
             status: status.to_string(),
             execution_mode: "sequence".to_string(),
             selected_agent_command: "c1".to_string(),
+            remote_launcher: None,
             selected_repo_root: None,
             selected_repo_name: None,
             track: "queue-run".to_string(),
@@ -238,6 +244,7 @@ mod queue_live_edit_tests {
             repo_root: None,
             repo_name: None,
             agent_command: "c1".to_string(),
+            remote_launcher: None,
             agent_id: agent_id.map(str::to_string),
             status: status.to_string(),
             message: String::new(),

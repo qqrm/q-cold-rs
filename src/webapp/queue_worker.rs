@@ -452,54 +452,71 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             return Ok(QueueItemOutcome::Stopped);
         }
 
-        if let Some(limit) = queue_agent_limit_for_command(&item.agent_command) {
-            if limit.state != "ok" {
-                if limit.state == "unauthenticated"
-                    || retry_index(retries) >= WEB_QUEUE_RETRY_DELAYS.len()
-                {
+        if item.remote_launcher.is_none() {
+            if let Some(limit) = queue_agent_limit_for_command(&item.agent_command) {
+                if limit.state != "ok" {
+                    if limit.state == "unauthenticated"
+                        || retry_index(retries) >= WEB_QUEUE_RETRY_DELAYS.len()
+                    {
+                        let message = format!(
+                            "{} is {}: {}",
+                            item.agent_command, limit.state, limit.summary
+                        );
+                        state::update_web_queue_item(
+                            run_id,
+                            &item.id,
+                            "failed",
+                            &message,
+                            None,
+                            retries,
+                            None,
+                        )?;
+                        return Ok(QueueItemOutcome::failed(message));
+                    }
+                    let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(retries)];
+                    retries += 1;
+                    let next_attempt_at = unix_now().saturating_add(delay);
                     let message = format!(
-                        "{} is {}: {}",
-                        item.agent_command, limit.state, limit.summary
+                        "{} is {}: {}; retry {}/{} in {}s",
+                        item.agent_command,
+                        limit.state,
+                        limit.summary,
+                        retries,
+                        WEB_QUEUE_RETRY_DELAYS.len(),
+                        delay
                     );
                     state::update_web_queue_item(
                         run_id,
                         &item.id,
-                        "failed",
+                        "waiting",
                         &message,
                         None,
                         retries,
-                        None,
+                        Some(next_attempt_at),
                     )?;
-                    return Ok(QueueItemOutcome::failed(message));
+                    if !sleep_queue_retry(run_id, delay)? {
+                        pause_web_queue_item(run_id, item, None, retries)?;
+                        return Ok(QueueItemOutcome::Stopped);
+                    }
+                    continue;
                 }
-                let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(retries)];
-                retries += 1;
-                let next_attempt_at = unix_now().saturating_add(delay);
-                let message = format!(
-                    "{} is {}: {}; retry {}/{} in {}s",
-                    item.agent_command,
-                    limit.state,
-                    limit.summary,
-                    retries,
-                    WEB_QUEUE_RETRY_DELAYS.len(),
-                    delay
-                );
+            } else {
+                let message = format!("unknown queue agent command: {}", item.agent_command);
                 state::update_web_queue_item(
                     run_id,
                     &item.id,
-                    "waiting",
+                    "failed",
                     &message,
                     None,
                     retries,
-                    Some(next_attempt_at),
+                    None,
                 )?;
-                if !sleep_queue_retry(run_id, delay)? {
-                    pause_web_queue_item(run_id, item, None, retries)?;
-                    return Ok(QueueItemOutcome::Stopped);
-                }
-                continue;
+                return Ok(QueueItemOutcome::failed(message));
             }
-        } else {
+        } else if !agents::available_agent_commands()
+            .iter()
+            .any(|agent| agent.command == item.agent_command)
+        {
             let message = format!("unknown queue agent command: {}", item.agent_command);
             state::update_web_queue_item(
                 run_id,
@@ -598,11 +615,12 @@ fn start_web_queue_item(
             return Ok(QueueItemOutcome::failed(message));
         }
     };
+    let command = queue_agent_launch_command(item, &task);
     let request = AgentStartRequest {
         id: Some(queue_agent_id(item)),
-        cwd: Some(task.worktree),
+        cwd: Some(task.worktree.clone()),
         track: queue_track(run_id),
-        command: item.agent_command.clone(),
+        command,
     };
     let agent = match start_web_agent(&request) {
         Ok(agent) => agent,
@@ -646,7 +664,8 @@ fn start_web_queue_item(
             ));
         }
     }
-    if let Err(err) = send_terminal_text_to_target(&target, &queue_task_instruction(item)) {
+    let instruction = queue_task_instruction_with_task(item, &task);
+    if let Err(err) = send_terminal_text_to_target(&target, &instruction) {
         return Ok(retry_after_queue_agent_launch_failure(
             &agent.id,
             &format!("{err:#}"),
@@ -878,6 +897,9 @@ fn retry_index(retries: i64) -> usize {
 }
 
 fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
+    if item.remote_launcher.is_some() {
+        let _ = sync_remote_queue_task_records(item);
+    }
     let task_id = format!("task/{}", item.slug);
     let Some(record) = state::get_task_record(&task_id)? else {
         return Ok(None);
@@ -929,58 +951,4 @@ fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
         slept += step;
     }
     Ok(true)
-}
-
-fn queue_task_instruction(item: &state::QueueItemRow) -> String {
-    let root = item.repo_root.as_deref().unwrap_or("<repo>");
-    let prompt_snippet = prompt::prompt_snippet(&item.prompt);
-    let mut packet = String::new();
-    let _ = writeln!(packet, "Q-COLD_TASK_PACKET");
-    let _ = writeln!(packet, "repo_root: {root}");
-    let _ = writeln!(packet, "task_slug: {}", item.slug);
-    let _ = writeln!(packet, "selected_command: {}", item.agent_command);
-    let _ = writeln!(packet, "launch_context: backend-opened managed task worktree");
-    let _ = writeln!(packet, "required_flow:");
-    let _ = writeln!(packet, "  - do not run qcold task open; Q-COLD already opened it");
-    let _ = writeln!(packet, "  - confirm pwd contains .task/task.env");
-    let _ = writeln!(packet, "  - reread AGENTS.md and available task logs");
-    let _ = writeln!(packet, "state_pointers:");
-    let _ = writeln!(packet, "  task_env: .task/task.env");
-    let _ = writeln!(packet, "  task_logs: .task/logs/");
-    let _ = writeln!(packet, "validation_closeout:");
-    let _ = writeln!(packet, "  expect: run relevant validation, then terminal closeout");
-    let _ = writeln!(
-        packet,
-        "  success: qcold task closeout --outcome success --message \"<message>\""
-    );
-    let _ = writeln!(packet, "blocker_boundary:");
-    let _ = writeln!(packet, "  pause_or_blocked_only_for: business decision or external resource");
-    let _ = writeln!(packet, "output_guard:");
-    let _ = writeln!(
-        packet,
-        "  - shape broad searches first with rg -l, rg --count, wc, git diff --stat, or head/tail"
-    );
-    let _ = writeln!(
-        packet,
-        "  - Q-COLD-started agents automatically guard configured broad-output commands"
-    );
-    let _ = writeln!(
-        packet,
-        "  - if a command reports qcold-guard status=blocked, rerun a narrower command"
-    );
-    let _ = writeln!(
-        packet,
-        "  - if output is blocked or too large, rerun a narrower query or inspect a focused slice"
-    );
-    let _ = writeln!(packet, "operator_request_snippet: |");
-    for line in prompt_snippet.lines() {
-        let _ = writeln!(packet, "  {line}");
-    }
-    let _ = writeln!(packet, "operator_request: |");
-    for line in item.prompt.trim().lines() {
-        let _ = writeln!(packet, "  {line}");
-    }
-    let _ = writeln!(packet, "after_closeout: stop; the queue backend owns the executor lifecycle");
-    let _ = writeln!(packet, "END_Q-COLD_TASK_PACKET");
-    packet
 }

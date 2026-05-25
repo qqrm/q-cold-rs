@@ -47,6 +47,7 @@ static DASHBOARD_STATE_REFRESHING: OnceLock<Mutex<bool>> = OnceLock::new();
 static DASHBOARD_STATE_REFRESHER: OnceLock<()> = OnceLock::new();
 static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WEB_QUEUE_ITEM_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static WEB_QUEUE_REMOTE_SYNC_AT: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
 
 #[derive(Args, Clone)]
 pub struct ServeArgs {
@@ -568,6 +569,7 @@ where
 
 include!("webapp/queue_api.rs");
 include!("webapp/queue_worker.rs");
+include!("webapp/queue_worker_task_packet.rs");
 include!("webapp/queue_worker_reconcile.rs");
 include!("webapp/queue_worker_taskflow.rs");
 include!("webapp/terminal_chat.rs");

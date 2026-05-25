@@ -262,6 +262,14 @@ dropdown of registered repositories plus one preferred Codex-like command per
 available account (`c1`, `c2`, or `codexN`) with auth/readiness status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
+For repositories whose root `AGENTS.md` declares the approved remote dev
+environment as the default substantive execution environment, the Queue
+automatically stores `remote_launcher=remote-dev-env`, opens each row with
+`qcold task open-remote`, starts the terminal executor through that launcher in
+the remote managed task worktree, and periodically syncs remote task records
+back into the local dashboard. Set `QCOLD_QUEUE_REMOTE_LAUNCHER=local` to force
+local queue execution for diagnostics, or set it to another single executable
+launcher name/path to override the default.
 Direct terminal agents started from a repository through Q-COLD wrappers are
 also valid task entry points. Those agents run from
 `../WT/<repo>/agents/<agent>` worktrees with `QCOLD_REPO_ROOT` pointing at the

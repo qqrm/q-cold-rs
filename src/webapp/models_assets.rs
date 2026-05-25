@@ -701,6 +701,7 @@ pub(crate) struct QueueRunRequest {
     pub(crate) run_id: Option<String>,
     pub(crate) execution_mode: Option<String>,
     pub(crate) selected_agent_command: String,
+    pub(crate) selected_remote_launcher: Option<String>,
     pub(crate) selected_repo_root: Option<String>,
     pub(crate) selected_repo_name: Option<String>,
     pub(crate) items: Vec<QueueRunItemRequest>,
@@ -715,6 +716,7 @@ pub(crate) struct QueueRunItemRequest {
     pub(crate) repo_root: Option<String>,
     pub(crate) repo_name: Option<String>,
     pub(crate) agent_command: Option<String>,
+    pub(crate) remote_launcher: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -738,6 +740,7 @@ struct QueueUpdateItemRequest {
     repo_root: Option<String>,
     repo_name: Option<String>,
     agent_command: Option<String>,
+    remote_launcher: Option<String>,
 }
 
 #[derive(Deserialize)]

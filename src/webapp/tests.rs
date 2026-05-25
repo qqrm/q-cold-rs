@@ -140,6 +140,7 @@ mod tests {
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
             agent_command: "c1".to_string(),
+            remote_launcher: None,
             agent_id: None,
             status: "pending".to_string(),
             message: String::new(),
@@ -164,6 +165,7 @@ mod tests {
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
             agent_command: "c1".to_string(),
+            remote_launcher: None,
             agent_id: None,
             status: "pending".to_string(),
             message: String::new(),
@@ -306,9 +308,11 @@ mod tests {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
-        let run = queue_run_fixture("run-contract", "running", 1);
+        let mut run = queue_run_fixture("run-contract", "running", 1);
+        run.remote_launcher = Some("remote-dev-env".to_string());
         let mut third = queue_item_fixture("run-contract", "third", 3, "pending", None);
         third.depends_on = vec!["first".to_string()];
+        third.remote_launcher = Some("remote-dev-env".to_string());
         let items = vec![
             third,
             queue_item_fixture("run-contract", "first", 1, "success", Some("agent-1")),
@@ -318,8 +322,11 @@ mod tests {
         state::replace_web_queue(&run, &items).unwrap();
         let (stored_run, stored_items) = state::load_web_queue_run("run-contract").unwrap();
 
-        assert_eq!(stored_run.unwrap().id, "run-contract");
+        let stored_run = stored_run.unwrap();
+        assert_eq!(stored_run.id, "run-contract");
+        assert_eq!(stored_run.remote_launcher.as_deref(), Some("remote-dev-env"));
         assert_eq!(stored_items[2].depends_on, vec!["first".to_string()]);
+        assert_eq!(stored_items[2].remote_launcher.as_deref(), Some("remote-dev-env"));
         assert_eq!(
             stored_items
                 .iter()
@@ -755,6 +762,7 @@ mod tests {
             status: status.to_string(),
             execution_mode: "sequence".to_string(),
             selected_agent_command: "c1".to_string(),
+            remote_launcher: None,
             selected_repo_root: None,
             selected_repo_name: None,
             track: "queue-run".to_string(),
@@ -783,6 +791,7 @@ mod tests {
             repo_root: None,
             repo_name: None,
             agent_command: "c1".to_string(),
+            remote_launcher: None,
             agent_id: agent_id.map(str::to_string),
             status: status.to_string(),
             message: String::new(),

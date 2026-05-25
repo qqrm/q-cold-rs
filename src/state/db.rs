@@ -103,6 +103,7 @@ fn open_db() -> Result<Connection> {
                  status text not null,
                  execution_mode text not null default 'sequence',
                  selected_agent_command text not null,
+                 remote_launcher text,
                  selected_repo_root text,
                  selected_repo_name text,
                  track text not null,
@@ -122,6 +123,7 @@ fn open_db() -> Result<Connection> {
                  repo_root text,
                  repo_name text,
                  agent_command text not null,
+                 remote_launcher text,
                  agent_id text,
                  status text not null,
                  message text not null,
@@ -184,12 +186,14 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
         "execution_mode",
         "text not null default 'sequence'",
     )?;
+    ensure_column(connection, "web_queue_runs", "remote_launcher", "text")?;
     ensure_column(
         connection,
         "web_queue_items",
         "depends_on_json",
         "text not null default '[]'",
     )?;
+    ensure_column(connection, "web_queue_items", "remote_launcher", "text")?;
     ensure_schema_migrations(connection)?;
     connection
         .execute(
@@ -223,6 +227,7 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  status text not null,
                  execution_mode text not null default 'sequence',
                  selected_agent_command text not null,
+                 remote_launcher text,
                  selected_repo_root text,
                  selected_repo_name text,
                  track text not null,
@@ -242,6 +247,7 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  repo_root text,
                  repo_name text,
                  agent_command text not null,
+                 remote_launcher text,
                  agent_id text,
                  status text not null,
                  message text not null,
@@ -630,22 +636,23 @@ fn queue_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueRunRow> 
         status: row.get(1)?,
         execution_mode: row.get(2)?,
         selected_agent_command: row.get(3)?,
-        selected_repo_root: row.get(4)?,
-        selected_repo_name: row.get(5)?,
-        track: row.get(6)?,
-        current_index: row.get(7)?,
-        stop_requested: row.get::<_, i64>(8)? != 0,
-        message: row.get(9)?,
-        created_at: row.get(10)?,
-        updated_at: row.get(11)?,
+        remote_launcher: row.get(4)?,
+        selected_repo_root: row.get(5)?,
+        selected_repo_name: row.get(6)?,
+        track: row.get(7)?,
+        current_index: row.get(8)?,
+        stop_requested: row.get::<_, i64>(9)? != 0,
+        message: row.get(10)?,
+        created_at: row.get(11)?,
+        updated_at: row.get(12)?,
     })
 }
 
 fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow> {
-    let depends_on_json = row.get::<_, Option<String>>(15)?.unwrap_or_default();
+    let depends_on_json = row.get::<_, Option<String>>(16)?.unwrap_or_default();
     let depends_on = serde_json::from_str(&depends_on_json).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(
-            15,
+            16,
             rusqlite::types::Type::Text,
             Box::new(err),
         )
@@ -660,13 +667,14 @@ fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow
         repo_root: row.get(5)?,
         repo_name: row.get(6)?,
         agent_command: row.get(7)?,
-        agent_id: row.get(8)?,
-        status: row.get(9)?,
-        message: row.get(10)?,
-        attempts: row.get(11)?,
-        next_attempt_at: row.get(12)?,
-        started_at: row.get(13)?,
-        updated_at: row.get(14)?,
+        remote_launcher: row.get(8)?,
+        agent_id: row.get(9)?,
+        status: row.get(10)?,
+        message: row.get(11)?,
+        attempts: row.get(12)?,
+        next_attempt_at: row.get(13)?,
+        started_at: row.get(14)?,
+        updated_at: row.get(15)?,
     })
 }
 

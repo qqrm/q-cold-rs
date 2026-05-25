@@ -15,7 +15,7 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     if webapp_write_token_required() {
         require_write_token(headers)?;
     }
-    let selected_agent_command = payload.selected_agent_command.trim();
+    let selected_agent_command = payload.selected_agent_command.trim().to_string();
     if selected_agent_command.is_empty() {
         bail!("queue agent command is empty");
     }
@@ -25,14 +25,6 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     {
         bail!("unknown queue agent command: {selected_agent_command}");
     }
-    let prompts = payload
-        .items
-        .into_iter()
-        .filter(|item| !item.prompt.trim().is_empty())
-        .collect::<Vec<_>>();
-    if prompts.is_empty() {
-        bail!("queue has no runnable items");
-    }
     let fallback_run_id = base36_time_id();
     let run_id = clean_queue_run_id(
         payload
@@ -41,70 +33,19 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(&fallback_run_id),
     );
-    let now = unix_now();
-    let track = queue_track(&run_id);
     let execution_mode = clean_queue_execution_mode(payload.execution_mode.as_deref());
-    let run = state::QueueRunRow {
-        id: run_id.clone(),
-        status: "running".to_string(),
-        execution_mode,
-        selected_agent_command: selected_agent_command.to_string(),
-        selected_repo_root: payload.selected_repo_root.filter(|value| !value.trim().is_empty()),
-        selected_repo_name: payload.selected_repo_name.filter(|value| !value.trim().is_empty()),
-        track,
-        current_index: -1,
-        stop_requested: false,
-        message: "queued".to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-    let mut used_slugs = HashSet::new();
-    let mut items = prompts
+    let now = unix_now();
+    let run = queue_run_from_request(&run_id, &payload, &selected_agent_command, execution_mode, now);
+    let prompts = payload
+        .items
         .into_iter()
-        .enumerate()
-        .map(|(index, item)| {
-            let fallback_slug = queue_slug(&run_id, index);
-            let slug = clean_queue_slug(
-                item.slug
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or(&fallback_slug),
-                &run_id,
-                index,
-                &mut used_slugs,
-            );
-            state::QueueItemRow {
-                id: item
-                    .id
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| format!("queue-{run_id}-{}", index + 1)),
-                run_id: run_id.clone(),
-                position: i64::try_from(index).unwrap_or(i64::MAX),
-                depends_on: item.depends_on.unwrap_or_default(),
-                prompt: item.prompt.trim().to_string(),
-                slug,
-                repo_root: item
-                    .repo_root
-                    .or_else(|| run.selected_repo_root.clone())
-                    .filter(|value| !value.trim().is_empty()),
-                repo_name: item
-                    .repo_name
-                    .or_else(|| run.selected_repo_name.clone())
-                    .filter(|value| !value.trim().is_empty()),
-                agent_command: item
-                    .agent_command
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| selected_agent_command.to_string()),
-                agent_id: None,
-                status: "pending".to_string(),
-                message: String::new(),
-                attempts: 0,
-                next_attempt_at: None,
-                started_at: now,
-                updated_at: now,
-            }
-        })
+        .filter(|item| !item.prompt.trim().is_empty())
         .collect::<Vec<_>>();
+    if prompts.is_empty() {
+        bail!("queue has no runnable items");
+    }
+    let mut used_slugs = HashSet::new();
+    let mut items = queue_items_from_requests(&run, prompts, 0, &mut used_slugs, now);
     normalize_queue_dependencies(&run.execution_mode, &mut items)?;
     state::replace_web_queue(&run, &items)?;
     spawn_web_queue_worker(run_id.clone());
@@ -158,55 +99,7 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
         .max()
         .unwrap_or(-1)
         .saturating_add(1);
-    let mut items = prompts
-        .into_iter()
-        .enumerate()
-        .map(|(offset, item)| {
-            let index = usize::try_from(start_position)
-                .unwrap_or(0)
-                .saturating_add(offset);
-            let fallback_slug = queue_slug(&run_id, index);
-            let slug = clean_queue_slug(
-                item.slug
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or(&fallback_slug),
-                &run_id,
-                index,
-                &mut used_slugs,
-            );
-            state::QueueItemRow {
-                id: item
-                    .id
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| format!("queue-{run_id}-{}", index + 1)),
-                run_id: run_id.clone(),
-                position: start_position.saturating_add(i64::try_from(offset).unwrap_or(0)),
-                depends_on: item.depends_on.unwrap_or_default(),
-                prompt: item.prompt.trim().to_string(),
-                slug,
-                repo_root: item
-                    .repo_root
-                    .or_else(|| run.selected_repo_root.clone())
-                    .filter(|value| !value.trim().is_empty()),
-                repo_name: item
-                    .repo_name
-                    .or_else(|| run.selected_repo_name.clone())
-                    .filter(|value| !value.trim().is_empty()),
-                agent_command: item
-                    .agent_command
-                    .filter(|value| !value.trim().is_empty())
-                    .unwrap_or_else(|| run.selected_agent_command.clone()),
-                agent_id: None,
-                status: "pending".to_string(),
-                message: String::new(),
-                attempts: 0,
-                next_attempt_at: None,
-                started_at: now,
-                updated_at: now,
-            }
-        })
-        .collect::<Vec<_>>();
+    let mut items = queue_items_from_requests(&run, prompts, start_position, &mut used_slugs, now);
     let mut all_items = existing_items;
     all_items.extend(items.clone());
     normalize_queue_dependencies(&run.execution_mode, &mut all_items)?;
@@ -292,6 +185,12 @@ fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) 
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| run.selected_agent_command.clone());
+        item.remote_launcher = update_queue_item_remote_launcher(
+            request.remote_launcher.as_deref(),
+            item.remote_launcher.clone(),
+            run.remote_launcher.clone(),
+            item.repo_root.as_deref(),
+        );
         updated_ids.insert(item.id.clone());
     }
     if updated_ids.len() != requested.len() {
@@ -362,6 +261,224 @@ fn clean_queue_execution_mode(value: Option<&str>) -> String {
         Some("graph") => "graph".to_string(),
         _ => "sequence".to_string(),
     }
+}
+
+fn queue_run_from_request(
+    run_id: &str,
+    payload: &QueueRunRequest,
+    selected_agent_command: &str,
+    execution_mode: String,
+    now: u64,
+) -> state::QueueRunRow {
+    let selected_repo_root = payload
+        .selected_repo_root
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let selected_repo_name = payload
+        .selected_repo_name
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let remote_launcher = resolve_queue_remote_launcher(
+        payload.selected_remote_launcher.as_deref(),
+        selected_repo_root.as_deref(),
+    );
+    state::QueueRunRow {
+        id: run_id.to_string(),
+        status: "running".to_string(),
+        execution_mode,
+        selected_agent_command: selected_agent_command.to_string(),
+        remote_launcher,
+        selected_repo_root,
+        selected_repo_name,
+        track: queue_track(run_id),
+        current_index: -1,
+        stop_requested: false,
+        message: "queued".to_string(),
+        created_at: now,
+        updated_at: now,
+    }
+}
+
+fn queue_items_from_requests(
+    run: &state::QueueRunRow,
+    requests: Vec<QueueRunItemRequest>,
+    start_position: i64,
+    used_slugs: &mut HashSet<String>,
+    now: u64,
+) -> Vec<state::QueueItemRow> {
+    requests
+        .into_iter()
+        .enumerate()
+        .map(|(offset, request)| {
+            let position = start_position.saturating_add(i64::try_from(offset).unwrap_or(0));
+            queue_item_from_request(run, request, position, used_slugs, now)
+        })
+        .collect()
+}
+
+fn queue_item_from_request(
+    run: &state::QueueRunRow,
+    request: QueueRunItemRequest,
+    position: i64,
+    used_slugs: &mut HashSet<String>,
+    now: u64,
+) -> state::QueueItemRow {
+    let index = usize::try_from(position).unwrap_or(usize::MAX);
+    let fallback_slug = queue_slug(&run.id, index);
+    let slug = clean_queue_slug(
+        request
+            .slug
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(&fallback_slug),
+        &run.id,
+        index,
+        used_slugs,
+    );
+    let repo_root = request
+        .repo_root
+        .or_else(|| run.selected_repo_root.clone())
+        .filter(|value| !value.trim().is_empty());
+    let repo_name = request
+        .repo_name
+        .or_else(|| run.selected_repo_name.clone())
+        .filter(|value| !value.trim().is_empty());
+    let remote_launcher = resolve_queue_item_remote_launcher(
+        request.remote_launcher.as_deref(),
+        run.remote_launcher.clone(),
+        repo_root.as_deref(),
+    );
+    state::QueueItemRow {
+        id: request
+            .id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("queue-{}-{}", run.id, position.saturating_add(1))),
+        run_id: run.id.clone(),
+        position,
+        depends_on: request.depends_on.unwrap_or_default(),
+        prompt: request.prompt.trim().to_string(),
+        slug,
+        repo_root,
+        repo_name,
+        agent_command: request
+            .agent_command
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| run.selected_agent_command.clone()),
+        remote_launcher,
+        agent_id: None,
+        status: "pending".to_string(),
+        message: String::new(),
+        attempts: 0,
+        next_attempt_at: None,
+        started_at: now,
+        updated_at: now,
+    }
+}
+
+fn resolve_queue_remote_launcher(requested: Option<&str>, repo_root: Option<&str>) -> Option<String> {
+    if let Some(setting) = queue_remote_launcher_setting(requested) {
+        return setting.into_launcher();
+    }
+    let env_launcher = env::var("QCOLD_QUEUE_REMOTE_LAUNCHER").ok();
+    if let Some(setting) = queue_remote_launcher_setting(env_launcher.as_deref()) {
+        return setting.into_launcher();
+    }
+    default_queue_remote_launcher(repo_root)
+}
+
+fn resolve_queue_item_remote_launcher(
+    requested: Option<&str>,
+    inherited: Option<String>,
+    repo_root: Option<&str>,
+) -> Option<String> {
+    if let Some(setting) = queue_remote_launcher_setting(requested) {
+        return setting.into_launcher();
+    }
+    inherited.or_else(|| default_queue_remote_launcher(repo_root))
+}
+
+fn update_queue_item_remote_launcher(
+    requested: Option<&str>,
+    current: Option<String>,
+    inherited: Option<String>,
+    repo_root: Option<&str>,
+) -> Option<String> {
+    if let Some(setting) = queue_remote_launcher_setting(requested) {
+        return setting.into_launcher();
+    }
+    current.or(inherited).or_else(|| default_queue_remote_launcher(repo_root))
+}
+
+enum QueueRemoteLauncherSetting {
+    Local,
+    Remote(String),
+}
+
+impl QueueRemoteLauncherSetting {
+    fn into_launcher(self) -> Option<String> {
+        match self {
+            Self::Local => None,
+            Self::Remote(value) => Some(value),
+        }
+    }
+}
+
+fn queue_remote_launcher_setting(value: Option<&str>) -> Option<QueueRemoteLauncherSetting> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if matches!(value, "local" | "none" | "off" | "false" | "0") {
+        return Some(QueueRemoteLauncherSetting::Local);
+    }
+    Some(QueueRemoteLauncherSetting::Remote(value.to_string()))
+}
+
+fn default_queue_remote_launcher(repo_root: Option<&str>) -> Option<String> {
+    default_queue_remote_launcher_from(repo_root, env::var_os("PATH").as_deref())
+}
+
+fn default_queue_remote_launcher_from(
+    repo_root: Option<&str>,
+    path: Option<&std::ffi::OsStr>,
+) -> Option<String> {
+    const DEFAULT_LAUNCHER: &str = "remote-dev-env";
+    if repo_prefers_remote_queue(repo_root) && launcher_available(DEFAULT_LAUNCHER, path) {
+        return Some(DEFAULT_LAUNCHER.to_string());
+    }
+    None
+}
+
+fn repo_prefers_remote_queue(repo_root: Option<&str>) -> bool {
+    const REMOTE_POLICY_MARKER: &str =
+        "default substantive execution environment is the approved remote dev environment";
+    let Some(repo_root) = repo_root.map(str::trim).filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    fs::read_to_string(Path::new(repo_root).join("AGENTS.md")).is_ok_and(|content| {
+        normalize_policy_text(&content).contains(REMOTE_POLICY_MARKER)
+    })
+}
+
+fn normalize_policy_text(content: &str) -> String {
+    content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
+}
+
+fn launcher_available(launcher: &str, path: Option<&std::ffi::OsStr>) -> bool {
+    let launcher_path = Path::new(launcher);
+    if launcher_path.components().count() > 1 {
+        return executable_file(launcher_path);
+    }
+    let Some(path) = path else {
+        return false;
+    };
+    env::split_paths(path)
+        .map(|directory| directory.join(launcher))
+        .any(|candidate| executable_file(&candidate))
 }
 
 fn normalize_queue_dependencies(
