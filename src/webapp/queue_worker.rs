@@ -526,6 +526,28 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             QueueItemOutcome::Failed {
                 message,
                 retryable: true,
+            } if queue_failure_retries_immediately(&message)
+                && retry_index(retries) < WEB_QUEUE_RETRY_DELAYS.len() =>
+            {
+                retries += 1;
+                let retry_message = format!(
+                    "{message}; retry {}/{} now",
+                    retries,
+                    WEB_QUEUE_RETRY_DELAYS.len()
+                );
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "waiting",
+                    &retry_message,
+                    None,
+                    retries,
+                    None,
+                )?;
+            }
+            QueueItemOutcome::Failed {
+                message,
+                retryable: true,
             } if retry_index(retries) < WEB_QUEUE_RETRY_DELAYS.len() =>
             {
                 let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(retries)];
@@ -612,11 +634,17 @@ fn start_web_queue_item(
         attempts,
         None,
     )?;
-    if !wait_for_agent_terminal_ready(&agent.id) {
-        return Ok(retry_after_queue_agent_launch_failure(
-            &agent.id,
-            "agent terminal did not become ready for input",
-        ));
+    match wait_for_agent_terminal_ready(&agent.id) {
+        QueueTerminalReadiness::Ready => {}
+        QueueTerminalReadiness::RestartAfterUpdate => {
+            return Ok(retry_after_queue_agent_launch_update(&agent.id));
+        }
+        QueueTerminalReadiness::Failed => {
+            return Ok(retry_after_queue_agent_launch_failure(
+                &agent.id,
+                "agent terminal did not become ready for input",
+            ));
+        }
     }
     if let Err(err) = send_terminal_text_to_target(&target, &queue_task_instruction(item)) {
         return Ok(retry_after_queue_agent_launch_failure(
@@ -636,11 +664,6 @@ fn start_web_queue_item(
         None,
     )?;
     wait_for_queue_item_closeout(run_id, item, &agent.id, attempts)
-}
-
-fn retry_after_queue_agent_launch_failure(agent_id: &str, message: &str) -> QueueItemOutcome {
-    let cleanup = cleanup_queue_agent(agent_id);
-    QueueItemOutcome::retryable_failure(format!("{message}; {cleanup}"))
 }
 
 fn set_queue_terminal_scope(target: &str, item: &state::QueueItemRow) -> Result<()> {
@@ -789,14 +812,6 @@ fn update_successful_queue_item(
         attempts,
         None,
     )
-}
-
-fn cleanup_queue_agent(agent_id: &str) -> String {
-    match agents::terminate_agent(agent_id) {
-        Ok(true) => "agent terminal closed".to_string(),
-        Ok(false) => "agent already stopped".to_string(),
-        Err(err) => format!("agent cleanup failed: {err:#}"),
-    }
 }
 
 fn reconcile_stale_web_queue_run() -> Result<()> {

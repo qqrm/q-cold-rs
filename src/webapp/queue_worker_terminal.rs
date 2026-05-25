@@ -40,7 +40,13 @@ fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
     Ok(true)
 }
 
-fn wait_for_agent_terminal_ready(agent_id: &str) -> bool {
+enum QueueTerminalReadiness {
+    Ready,
+    RestartAfterUpdate,
+    Failed,
+}
+
+fn wait_for_agent_terminal_ready(agent_id: &str) -> QueueTerminalReadiness {
     let mut accepted_update_prompt = false;
     for _ in 0..240 {
         if let Some(output) = agent_terminal_output(agent_id) {
@@ -50,16 +56,19 @@ fn wait_for_agent_terminal_ready(agent_id: &str) -> bool {
                     let _ = send_terminal_key(&target, TerminalKey::Enter);
                 }
             }
+            if terminal_output_has_codex_update_restart_notice(&output) {
+                return QueueTerminalReadiness::RestartAfterUpdate;
+            }
             if terminal_output_ready_for_queue_input(&output) {
-                return true;
+                return QueueTerminalReadiness::Ready;
             }
         }
         if !agent_running(agent_id) {
-            return false;
+            return QueueTerminalReadiness::Failed;
         }
         thread::sleep(Duration::from_millis(500));
     }
-    false
+    QueueTerminalReadiness::Failed
 }
 
 fn terminal_output_ready_for_queue_input(output: &str) -> bool {
@@ -88,6 +97,17 @@ fn terminal_output_has_codex_update_prompt(output: &str) -> bool {
         .iter()
         .any(|line| line.contains("Press enter to continue"));
     has_update_notice && has_update_action && awaits_enter
+}
+
+fn terminal_output_has_codex_update_restart_notice(output: &str) -> bool {
+    let recent = output.lines().rev().take(32).map(str::trim).collect::<Vec<_>>();
+    let update_succeeded = recent
+        .iter()
+        .any(|line| line.contains("Update ran successfully"));
+    let restart_required = recent
+        .iter()
+        .any(|line| line.contains("Please restart Codex"));
+    update_succeeded && restart_required
 }
 
 fn terminal_line_has_idle_prompt(line: &str) -> bool {

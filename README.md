@@ -292,8 +292,10 @@ validation and closeout expectation, blocker boundary, state pointers such as
 `.task/task.env` and task logs, an output guard policy, a bounded
 operator-request snippet, and the full operator request for the executor.
 If the Codex CLI presents its interactive update menu during queue launch,
-the backend accepts the default update action and keeps waiting for the real
-idle agent prompt before sending the task packet.
+the backend accepts the default update action. When Codex exits after a
+successful self-update and asks to restart, the backend removes that stale
+executor record and retries the launch immediately before sending the task
+packet.
 Queue launcher agents use slug/repository-derived display labels and short
 session ids rather than prompt-derived labels. They are internal transport and do not create
 separate ad-hoc task records; the visible task state belongs to the managed

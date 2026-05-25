@@ -57,4 +57,16 @@ mod terminal_send_tests {
         assert!(!terminal_output_ready_for_queue_input(prompt));
         assert!(!terminal_output_has_codex_update_prompt("gpt-5.5 high · ~/repo"));
     }
+
+    #[test]
+    fn queue_worker_detects_codex_update_restart_notice() {
+        let output = "\nchanged 2 packages in 3s\n\
+                      Update ran successfully! Please restart Codex.\n\
+                      [Q-COLD terminal command exited with status 0]\n";
+
+        assert!(terminal_output_has_codex_update_restart_notice(output));
+        assert!(!terminal_output_has_codex_update_restart_notice(
+            "Update available! Press enter to continue"
+        ));
+    }
 }
