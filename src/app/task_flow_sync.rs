@@ -103,7 +103,14 @@ fn sync_task_flow_record_for_worktree(
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
-    let suppress_live_queue_telemetry = live_web_queue_task(&metadata, task_is_live);
+    let suppress_live_queue_telemetry =
+        live_web_queue_task(&metadata, task_is_live, task_slug.as_deref());
+    if suppress_live_queue_telemetry {
+        metadata.insert(
+            "opened_by".to_string(),
+            Value::String("web-queue".to_string()),
+        );
+    }
     let explicit_rollout_paths = explicit_codex_rollout_paths_from_env(&env);
     let explicit_thread_id = env
         .get("CODEX_THREAD_ID")
@@ -220,12 +227,30 @@ fn task_flow_record_needs_terminal_sync(record: &state::TaskRecordRow) -> bool {
     record.source == "task-flow" && task_record_terminal_status(&record.status).is_none()
 }
 
-fn live_web_queue_task(metadata: &serde_json::Map<String, Value>, task_is_live: bool) -> bool {
-    task_is_live
-        && metadata
-            .get("opened_by")
-            .and_then(Value::as_str)
-            .is_some_and(|value| value == "web-queue")
+fn live_web_queue_task(
+    metadata: &serde_json::Map<String, Value>,
+    task_is_live: bool,
+    task_slug: Option<&str>,
+) -> bool {
+    if !task_is_live {
+        return false;
+    }
+    if metadata
+        .get("opened_by")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "web-queue")
+    {
+        return true;
+    }
+    task_slug.is_some_and(live_web_queue_item_slug)
+}
+
+fn live_web_queue_item_slug(task_slug: &str) -> bool {
+    state::load_web_queue().is_ok_and(|(_, items)| {
+        items
+            .iter()
+            .any(|item| item.slug == task_slug && item.status != "success")
+    })
 }
 
 fn terminal_task_bundles_for_records(

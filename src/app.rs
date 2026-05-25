@@ -674,6 +674,7 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
 
 include!("app/codex_metadata.rs");
 include!("app/task_flow_sync.rs");
+include!("app/tests_task_flow_sync.rs");
 include!("app/remote_task_records.rs");
 include!("app/codex_sessions.rs");
 include!("app/rendering.rs");
