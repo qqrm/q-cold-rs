@@ -659,6 +659,38 @@ fn terminate_terminal_target(target: &TerminalTarget) -> Result<()> {
     Ok(())
 }
 
+fn terminal_target_has_clients(target: &TerminalTarget) -> Result<bool> {
+    match target {
+        TerminalTarget::Tmux { session } => {
+            let output = Command::new("tmux")
+                .args(["list-clients", "-t", session])
+                .output()
+                .with_context(|| format!("failed to inspect tmux clients for session {session}"))?;
+            Ok(output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty())
+        }
+        TerminalTarget::Zellij { session, .. } => {
+            let output = Command::new("zellij")
+                .args(["--session", session, "action", "list-clients"])
+                .output()
+                .with_context(|| format!("failed to inspect zellij clients for session {session}"))?;
+            if !output.status.success() {
+                bail!("zellij action list-clients failed with {}", output.status);
+            }
+            Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .skip(1)
+                .any(|line| !line.trim().is_empty()))
+        }
+    }
+}
+
+fn terminal_target_key_for_metadata(target: &TerminalTarget) -> String {
+    match target {
+        TerminalTarget::Tmux { session } => format!("{session}:0.0"),
+        TerminalTarget::Zellij { session, pane } => format!("zellij:{session}:{pane}"),
+    }
+}
+
 #[cfg(unix)]
 fn terminate_process(pid: u32) -> Result<()> {
     let pid = i32::try_from(pid).context("agent pid is too large")?;

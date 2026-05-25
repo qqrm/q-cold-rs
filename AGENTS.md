@@ -79,6 +79,7 @@ repo-local code owns it.
 - `qcold task-record close <task-id> [--outcome success|blocked|failed]`
 - `qcold task-record delete <task-id>`
 - `qcold agent list`
+- `qcold agent prune-stale [--max-age-hours <n>] [--include-attached] [--dry-run] [--verbose]`
 - `qcold agent attach <agent-id|terminal-target|session|name>`
 - `qcold agent start [--name <zellij-pane-name>] --track <track> -- <command>...`
 - `qcold telegram poll`

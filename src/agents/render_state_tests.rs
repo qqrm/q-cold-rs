@@ -829,6 +829,41 @@ mod tests {
     }
 
     #[test]
+    fn stale_agent_prune_keeps_recent_records() {
+        let decision = stale_agent_decision("exited", true, Some(false), 200, 120, 100, false);
+
+        assert_eq!(decision, StaleAgentDecision::SkipRecent);
+    }
+
+    #[test]
+    fn stale_agent_prune_deletes_old_exited_records() {
+        let decision = stale_agent_decision("exited", true, Some(false), 300, 120, 100, false);
+
+        assert_eq!(decision, StaleAgentDecision::DeleteExited);
+    }
+
+    #[test]
+    fn stale_agent_prune_skips_attached_terminal_by_default() {
+        let decision = stale_agent_decision("running", true, Some(true), 300, 120, 100, false);
+
+        assert_eq!(decision, StaleAgentDecision::SkipAttached);
+    }
+
+    #[test]
+    fn stale_agent_prune_can_include_attached_terminal() {
+        let decision = stale_agent_decision("running", true, Some(true), 300, 120, 100, true);
+
+        assert_eq!(decision, StaleAgentDecision::TerminateAttached);
+    }
+
+    #[test]
+    fn stale_agent_prune_terminates_unattached_terminal() {
+        let decision = stale_agent_decision("running", true, Some(false), 300, 120, 100, false);
+
+        assert_eq!(decision, StaleAgentDecision::TerminateUnattached);
+    }
+
+    #[test]
     fn start_shell_agent_records_process() {
         let _guard = crate::test_support::env_guard();
         let temp = tempdir().unwrap();

@@ -39,6 +39,7 @@ const KNOWN_AGENT_COMMANDS: &[(&str, &str, AgentInvocation)] = &[
     ("cc2", "Codex account 2 compact", AgentInvocation::Direct),
     ("codex", "Codex default", AgentInvocation::Exec),
 ];
+const DEFAULT_AGENT_STALE_TTL_HOURS: u64 = 2;
 
 #[derive(Clone, Copy)]
 enum AgentInvocation {
@@ -113,6 +114,8 @@ enum AgentCommand {
     Attach(AttachArgs),
     #[command(about = "List tracked agent processes")]
     List,
+    #[command(about = "Prune stale terminal agents and ad-hoc task records")]
+    PruneStale(PruneStaleArgs),
 }
 
 #[derive(Args)]
@@ -137,6 +140,18 @@ struct StartArgs {
     attach: bool,
     #[arg(required = true, trailing_var_arg = true)]
     command: Vec<String>,
+}
+
+#[derive(Args)]
+struct PruneStaleArgs {
+    #[arg(long, help = "Age threshold in hours; defaults to QCOLD_AGENT_STALE_TTL_HOURS or 2")]
+    max_age_hours: Option<u64>,
+    #[arg(long, help = "Also terminate terminal agents that still have attached clients")]
+    include_attached: bool,
+    #[arg(long, help = "Show what would be pruned without mutating state")]
+    dry_run: bool,
+    #[arg(long, help = "Print one row per pruned or candidate agent")]
+    verbose: bool,
 }
 
 pub fn run(args: AgentArgs) -> Result<u8> {
@@ -172,18 +187,30 @@ pub fn run(args: AgentArgs) -> Result<u8> {
         }
         AgentCommand::Attach(args) => attach_tracked_terminal(&args.selector)?,
         AgentCommand::List => print!("{}", snapshot()?),
+        AgentCommand::PruneStale(args) => {
+            let max_age_hours = args.max_age_hours.map_or_else(agent_stale_ttl_hours, Ok)?;
+            let summary = prune_stale_agents(max_age_hours, args.include_attached, args.dry_run)?;
+            println!("{}", summary.render());
+            if args.verbose {
+                for event in summary.events {
+                    println!("{}", event.render());
+                }
+            }
+        }
     }
     Ok(0)
 }
 
 pub fn snapshot() -> Result<String> {
     let _ = crate::sync_codex_task_records();
+    prune_stale_agents_best_effort();
     let state = AgentState::load()?;
     Ok(render_snapshot(&state.records, SnapshotScope::All))
 }
 
 pub fn running_snapshot() -> Result<String> {
     let _ = crate::sync_codex_task_records();
+    prune_stale_agents_best_effort();
     let state = AgentState::load()?;
     Ok(render_snapshot(&state.records, SnapshotScope::RunningOnly))
 }
@@ -256,6 +283,7 @@ pub fn snapshot_line(record: &AgentRecord) -> String {
 
 pub fn terminal_contexts() -> Result<Vec<TerminalAgentContext>> {
     let _ = crate::sync_codex_task_records();
+    prune_stale_agents_best_effort();
     Ok(AgentState::load()?
         .records
         .into_iter()
@@ -296,6 +324,8 @@ pub fn terminate_agent(id: &str) -> Result<bool> {
     terminate_process(record.pid)?;
     Ok(true)
 }
+
+include!("agents/stale_prune.rs");
 
 pub fn start_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
     if command.trim().is_empty() {

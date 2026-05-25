@@ -34,6 +34,7 @@ qcold task-record sync-remote --via remote-dev-env \
   --local-repo-root /path/to/local/target-repo \
   --remote-repo-root /path/to/remote/target-repo
 qcold agent list
+qcold agent prune-stale
 qcold agent start --track audit -- codex exec "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
 qcold telegram poll
@@ -382,6 +383,13 @@ agent programs: native `codex` processes plus the Q-COLD web control daemon.
 Exited Q-COLD agent records remain available through the CLI registry surface,
 but the dashboard omits them as historical noise. Task-flow helper programs
 such as `xtask` are not counted as agents.
+Q-COLD prunes stale agent registry noise before agent snapshots: exited agent
+rows and stale terminal agents older than `QCOLD_AGENT_STALE_TTL_HOURS`
+(default `2`) are removed with their ad-hoc `agent`/`codex-session` task
+records. Running terminal agents are terminated only when their tmux/zellij
+session has no attached clients. Run `qcold agent prune-stale --dry-run` to
+inspect the same cleanup, or pass `--include-attached` for an explicit manual
+cleanup that also closes old attached terminal sessions.
 The Terminals view exposes attachable terminal panes for agent programs,
 captures the recent pane scrollback with ANSI color/style attributes, sends
 prompt composer text through backend-native paste plus a submit key, and can
