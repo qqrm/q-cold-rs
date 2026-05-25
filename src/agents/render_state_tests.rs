@@ -487,6 +487,49 @@ mod tests {
         git_ok(path, &["commit", "-m", "seed"]);
     }
 
+    fn git_init_bare(path: &Path) {
+        assert!(
+            Command::new("git")
+                .arg("init")
+                .arg("--bare")
+                .arg(path)
+                .status()
+                .unwrap()
+                .success(),
+            "git init --bare failed for {}",
+            path.display()
+        );
+    }
+
+    fn git_clone(remote: &Path, workdir: &Path) {
+        assert!(
+            Command::new("git")
+                .arg("clone")
+                .arg(remote)
+                .arg(workdir)
+                .status()
+                .unwrap()
+                .success(),
+            "git clone failed from {} to {}",
+            remote.display(),
+            workdir.display()
+        );
+    }
+
+    fn seed_bare_remote(temp: &Path, name: &str) -> PathBuf {
+        let remote = temp.join(format!("{name}.git"));
+        let workdir = temp.join(format!("{name}-work"));
+        git_init_bare(&remote);
+        git_clone(&remote, &workdir);
+        git_ok(&workdir, &["config", "user.name", "tester"]);
+        git_ok(&workdir, &["config", "user.email", "tester@example.com"]);
+        fs::write(workdir.join("README.md"), format!("{name}\n")).unwrap();
+        git_ok(&workdir, &["add", "README.md"]);
+        git_ok(&workdir, &["commit", "-m", "seed"]);
+        git_ok(&workdir, &["push", "-u", "origin", "HEAD"]);
+        remote
+    }
+
     #[test]
     fn records_round_trip() {
         let record = AgentRecord {
@@ -570,6 +613,85 @@ mod tests {
 
         let context = open_agent_worktree("c1-submodule", "c1", 456, &primary).unwrap();
         assert!(context.cwd.join("json11/README.md").is_file());
+    }
+
+    #[test]
+    fn agent_worktree_initializes_nested_local_cache_submodules() {
+        let temp = tempdir().unwrap();
+        let nested_remote = seed_bare_remote(temp.path(), "cpp-btree");
+
+        let parent_remote = temp.path().join("vitalif-vitastor.git");
+        let parent_workdir = temp.path().join("vitalif-vitastor-work");
+        git_init_bare(&parent_remote);
+        git_clone(&parent_remote, &parent_workdir);
+        git_ok(&parent_workdir, &["config", "user.name", "tester"]);
+        git_ok(&parent_workdir, &["config", "user.email", "tester@example.com"]);
+        let nested_relative_url = format!(
+            "../{}",
+            nested_remote
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap()
+        );
+        git_ok(
+            &parent_workdir,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &nested_relative_url,
+                "cpp-btree",
+            ],
+        );
+        git_ok(&parent_workdir, &["commit", "-m", "add nested submodule"]);
+        git_ok(&parent_workdir, &["push", "-u", "origin", "HEAD"]);
+
+        let primary = temp.path().join("repo");
+        seed_git_repo(&primary);
+        let parent_remote_arg = parent_remote.display().to_string();
+        git_ok(
+            &primary,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                &parent_remote_arg,
+                "legacy/vitalif-vitastor",
+            ],
+        );
+        git_ok(&primary, &["commit", "-m", "add parent submodule"]);
+        git_ok(
+            &primary,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+            ],
+        );
+        let parent_cache = primary.join(".git/modules/legacy/vitalif-vitastor");
+        let nested_cache = parent_cache.join("modules/cpp-btree");
+        assert!(nested_cache.is_dir());
+        let parent_cache_arg = parent_cache.display().to_string();
+        git_ok(
+            &primary,
+            &[
+                "config",
+                "submodule.legacy/vitalif-vitastor.url",
+                &parent_cache_arg,
+            ],
+        );
+
+        let context = open_agent_worktree("c1-nested-submodule", "c1", 789, &primary).unwrap();
+
+        assert!(context
+            .cwd
+            .join("legacy/vitalif-vitastor/cpp-btree/README.md")
+            .is_file());
     }
 
     #[test]

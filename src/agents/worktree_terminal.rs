@@ -25,7 +25,7 @@ fn open_agent_worktree(
     if !status.success() {
         bail!("failed to create agent worktree {agent_slug}: {status}");
     }
-    ensure_worktree_submodules(&worktree)?;
+    ensure_worktree_submodules(&worktree, &primary_root)?;
     let cwd = worktree.join(relative_cwd);
     let cwd = if cwd.is_dir() {
         cwd
@@ -39,20 +39,27 @@ fn open_agent_worktree(
     })
 }
 
-fn ensure_worktree_submodules(worktree: &Path) -> Result<()> {
+fn ensure_worktree_submodules(worktree: &Path, primary_root: &Path) -> Result<()> {
     if !worktree.join(".gitmodules").is_file() {
         return Ok(());
     }
+    seed_local_submodule_urls(worktree, primary_root)?;
+    run_submodule_update(worktree, &["--init"])?;
+    seed_local_submodule_urls(worktree, primary_root)?;
+    run_submodule_update(worktree, &["--init", "--recursive"])
+}
+
+fn run_submodule_update(worktree: &Path, update_args: &[&str]) -> Result<()> {
+    let mut args = vec![
+        "-c",
+        "protocol.file.allow=always",
+        "submodule",
+        "update",
+    ];
+    args.extend(update_args.iter().copied());
     let output = Command::new("git")
         .current_dir(worktree)
-        .args([
-            "-c",
-            "protocol.file.allow=always",
-            "submodule",
-            "update",
-            "--init",
-            "--recursive",
-        ])
+        .args(&args)
         .output()
         .with_context(|| format!("failed to initialize submodules in {}", worktree.display()))?;
     if output.status.success() {
@@ -66,6 +73,153 @@ fn ensure_worktree_submodules(worktree: &Path) -> Result<()> {
         output.status,
         format_command_output(&stdout, &stderr)
     );
+}
+
+fn seed_local_submodule_urls(repo: &Path, primary_root: &Path) -> Result<()> {
+    let cache_root = primary_root.join(".git/modules");
+    seed_local_submodule_urls_from_cache_root(repo, &cache_root, primary_root)
+}
+
+fn seed_local_submodule_urls_from_cache_root(
+    repo: &Path,
+    cache_root: &Path,
+    relative_base: &Path,
+) -> Result<()> {
+    if !repo.join(".gitmodules").is_file() {
+        return Ok(());
+    }
+    for (name, path) in submodule_entries(repo)? {
+        let module_dir = cache_root.join(&path);
+        if module_dir.is_dir() {
+            set_submodule_url(repo, &name, &module_dir)?;
+            continue;
+        }
+        let url = submodule_url_from_gitmodules(repo, &name)?;
+        if url.starts_with("./") || url.starts_with("../") {
+            let url_path = Path::new(&url);
+            let resolved_base =
+                relative_base.join(url_path.parent().unwrap_or_else(|| Path::new(".")));
+            let resolved_dir = normalize_path(&resolved_base);
+            let resolved = resolved_dir.join(
+                url_path
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or_default(),
+            );
+            if resolved.exists() {
+                set_submodule_url(repo, &name, &resolved)?;
+            }
+        }
+    }
+    for submodule in materialized_submodule_paths(repo)? {
+        let submodule_repo = repo.join(&submodule);
+        if !submodule_repo.join(".gitmodules").is_file() {
+            continue;
+        }
+        let nested_cache_root = cache_root.join(&submodule).join("modules");
+        seed_local_submodule_urls_from_cache_root(
+            &submodule_repo,
+            &nested_cache_root,
+            &relative_base.join(&submodule),
+        )?;
+    }
+    Ok(())
+}
+
+fn submodule_entries(repo: &Path) -> Result<Vec<(String, String)>> {
+    let gitmodules = repo.join(".gitmodules");
+    if !gitmodules.is_file() {
+        return Ok(Vec::new());
+    }
+    let output = Command::new("git")
+        .current_dir(repo)
+        .arg("config")
+        .arg("--file")
+        .arg(&gitmodules)
+        .args(["--get-regexp", "^submodule\\..*\\.path$"])
+        .output()
+        .with_context(|| format!("failed to read submodules in {}", repo.display()))?;
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let entries = stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let key = parts.next()?;
+            let path = parts.next()?;
+            let name = key
+                .strip_prefix("submodule.")
+                .and_then(|rest| rest.strip_suffix(".path"))?;
+            Some((name.to_string(), path.to_string()))
+        })
+        .collect();
+    Ok(entries)
+}
+
+fn materialized_submodule_paths(repo: &Path) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    for (_, path) in submodule_entries(repo)? {
+        let submodule = repo.join(&path);
+        if !submodule.is_dir() {
+            continue;
+        }
+        let materialized = submodule.join(".git").exists()
+            || fs::read_dir(&submodule).is_ok_and(|mut entries| entries.next().is_some());
+        if materialized {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
+
+fn submodule_url_from_gitmodules(repo: &Path, name: &str) -> Result<String> {
+    let gitmodules = repo.join(".gitmodules");
+    let output = Command::new("git")
+        .current_dir(repo)
+        .arg("config")
+        .arg("--file")
+        .arg(&gitmodules)
+        .arg("--get")
+        .arg(format!("submodule.{name}.url"))
+        .output()
+        .with_context(|| format!("failed to read submodule URL in {}", repo.display()))?;
+    if !output.status.success() {
+        return Ok(String::new());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn set_submodule_url(repo: &Path, name: &str, url: &Path) -> Result<()> {
+    let status = Command::new("git")
+        .current_dir(repo)
+        .arg("config")
+        .arg(format!("submodule.{name}.url"))
+        .arg(url)
+        .status()
+        .with_context(|| format!("failed to configure submodule URL in {}", repo.display()))?;
+    if !status.success() {
+        bail!(
+            "failed to configure submodule {name} URL in {}: {status}",
+            repo.display()
+        );
+    }
+    Ok(())
+}
+
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
 }
 
 fn agent_worktree_slug(id: &str, track: &str, started_at: u64) -> String {
