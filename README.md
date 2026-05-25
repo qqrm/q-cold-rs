@@ -51,9 +51,10 @@ Legacy `cargo qcold <command>` remains supported for compatibility, but
 `qcold <command>` is the primary operator interface.
 Use `qcold --version` to check the installed operator binary. The reported
 version includes the Cargo package version, a monotonic Git commit-count build
-number, and the Git commit hash embedded when that binary was built. A dirty
-local rebuild reports the next build number so changed-but-uncommitted operator
-binaries are distinguishable from the last clean commit build.
+number, and the Git commit hash embedded when that binary was built. The build
+number is commit-derived so the same clean commit reports the same version on
+local and remote installs. A tracked-dirty local rebuild appends `-dirty` to the
+hash so changed-but-uncommitted operator binaries remain distinguishable.
 
 ## Local iteration checks
 
