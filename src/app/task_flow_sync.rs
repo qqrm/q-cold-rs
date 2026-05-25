@@ -1,7 +1,17 @@
+const TERMINAL_BUNDLE_SCAN_LIMIT: usize = 250;
+
+#[derive(Clone, Debug)]
+struct TerminalTaskBundle {
+    status: String,
+    duration_seconds: Option<u64>,
+    bundle_path: PathBuf,
+}
+
 fn sync_task_flow_records(records: &[state::TaskRecordRow]) -> Result<usize> {
     let mut worktrees = std::collections::BTreeMap::new();
-    for root in task_flow_scan_roots(records) {
-        for worktree in task_flow_worktrees_for_repo(&root)? {
+    let roots = task_flow_scan_roots(records);
+    for root in &roots {
+        for worktree in task_flow_worktrees_for_repo(root)? {
             worktrees.entry(worktree).or_insert(None);
         }
     }
@@ -13,11 +23,23 @@ fn sync_task_flow_records(records: &[state::TaskRecordRow]) -> Result<usize> {
         let Some(worktree) = task_flow_worktree_for_record(record) else {
             continue;
         };
-        worktrees.insert(worktree, Some(record.status.clone()));
+        let status_override = task_record_terminal_status(&record.status).map(ToString::to_string);
+        worktrees.insert(worktree, status_override);
     }
     for (worktree, status_override) in worktrees {
         if sync_task_flow_record_for_worktree(&worktree, status_override.as_deref())? {
             synced += 1;
+        }
+    }
+    let terminal_bundles = terminal_task_bundles_for_records(records, &roots)?;
+    for record in records {
+        if !task_flow_record_needs_terminal_sync(record) {
+            continue;
+        }
+        if let Some(bundle) = terminal_bundles.get(&record.id) {
+            if sync_task_flow_record_from_terminal_bundle(record, bundle)? {
+                synced += 1;
+            }
         }
     }
     Ok(synced)
@@ -158,7 +180,7 @@ fn sync_task_flow_record_for_worktree(
     if let Some(status) = status_override {
         record.status = status.to_string();
     } else if let Some(status) = env.get("STATUS") {
-        record.status.clone_from(status);
+        record.status = task_record_status_from_task_flow_status(status);
     }
     let metadata = Value::Object(metadata);
     if original_status == record.status
@@ -174,6 +196,194 @@ fn sync_task_flow_record_for_worktree(
     record.metadata_json = Some(metadata.to_string());
     record.updated_at = unix_now();
     state::upsert_task_record(&record)?;
+    Ok(true)
+}
+
+fn task_record_terminal_status(status: &str) -> Option<&str> {
+    status.starts_with("closed:").then_some(status)
+}
+
+fn task_record_status_from_task_flow_status(status: &str) -> String {
+    match status {
+        "success" | "blocked" | "failed" => format!("closed:{status}"),
+        _ => status.to_string(),
+    }
+}
+
+fn task_flow_record_needs_terminal_sync(record: &state::TaskRecordRow) -> bool {
+    record.source == "task-flow" && task_record_terminal_status(&record.status).is_none()
+}
+
+fn terminal_task_bundles_for_records(
+    records: &[state::TaskRecordRow],
+    roots: &[PathBuf],
+) -> Result<std::collections::BTreeMap<String, TerminalTaskBundle>> {
+    let mut wanted_by_root = std::collections::BTreeMap::<PathBuf, std::collections::BTreeSet<String>>::new();
+    for record in records {
+        if !task_flow_record_needs_terminal_sync(record) {
+            continue;
+        }
+        let Some(root) = record.repo_root.as_deref().map(PathBuf::from) else {
+            continue;
+        };
+        wanted_by_root.entry(root).or_default().insert(record.id.clone());
+    }
+    for root in roots {
+        wanted_by_root.entry(root.clone()).or_default();
+    }
+
+    let mut found = std::collections::BTreeMap::new();
+    for (root, wanted) in wanted_by_root {
+        if wanted.is_empty() {
+            continue;
+        }
+        found.extend(terminal_task_bundles_for_root(&root, &wanted)?);
+    }
+    Ok(found)
+}
+
+fn terminal_task_bundles_for_root(
+    root: &Path,
+    wanted: &std::collections::BTreeSet<String>,
+) -> Result<std::collections::BTreeMap<String, TerminalTaskBundle>> {
+    let mut found = std::collections::BTreeMap::new();
+    for bundle in terminal_bundle_candidates(root)? {
+        if found.len() == wanted.len() {
+            break;
+        }
+        let Some(receipt) = unzip_env_entry(&bundle, "metadata/terminal-receipt.env") else {
+            continue;
+        };
+        let Some(task_id) = receipt.get("TASK_ID").cloned() else {
+            continue;
+        };
+        if !wanted.contains(&task_id) || found.contains_key(&task_id) {
+            continue;
+        }
+        let Some(status) = receipt
+            .get("OUTCOME")
+            .map(String::as_str)
+            .map(task_record_status_from_task_flow_status)
+            .filter(|status| task_record_terminal_status(status).is_some())
+        else {
+            continue;
+        };
+        let bundle_env = unzip_env_entry(&bundle, "metadata/bundle.env").unwrap_or_default();
+        let duration_seconds = bundle_env
+            .get("TASK_DURATION_SECONDS")
+            .and_then(|value| value.parse::<u64>().ok());
+        found.insert(
+            task_id,
+            TerminalTaskBundle {
+                status,
+                duration_seconds,
+                bundle_path: bundle,
+            },
+        );
+    }
+    Ok(found)
+}
+
+fn terminal_bundle_candidates(root: &Path) -> Result<Vec<PathBuf>> {
+    let bundles_dir = root.join("bundles");
+    let entries = match fs::read_dir(&bundles_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read {}", bundles_dir.display()));
+        }
+    };
+    let mut bundles = Vec::new();
+    for entry in entries {
+        let entry = entry
+            .with_context(|| format!("failed to read entry in {}", bundles_dir.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("zip") {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        bundles.push((modified, path));
+    }
+    bundles.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    Ok(bundles
+        .into_iter()
+        .map(|(_, path)| path)
+        .take(TERMINAL_BUNDLE_SCAN_LIMIT)
+        .collect())
+}
+
+fn unzip_env_entry(
+    bundle: &Path,
+    entry: &str,
+) -> Option<std::collections::BTreeMap<String, String>> {
+    let output = Command::new("unzip")
+        .arg("-p")
+        .arg(bundle)
+        .arg(entry)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let content = String::from_utf8_lossy(&output.stdout);
+    Some(parse_task_env_content(&content))
+}
+
+fn sync_task_flow_record_from_terminal_bundle(
+    record: &state::TaskRecordRow,
+    bundle: &TerminalTaskBundle,
+) -> Result<bool> {
+    let mut updated = record.clone();
+    let original_status = updated.status.clone();
+    let original_metadata_json = updated.metadata_json.clone();
+    let mut metadata = updated
+        .metadata_json
+        .as_deref()
+        .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    if let Some(task_slug) = updated.id.strip_prefix("task/") {
+        metadata.insert("task_slug".to_string(), Value::String(task_slug.to_string()));
+    }
+    metadata.insert(
+        "kind".to_string(),
+        Value::String("managed-task-flow".to_string()),
+    );
+    metadata.insert(
+        "task_terminal_bundle".to_string(),
+        Value::String(bundle.bundle_path.display().to_string()),
+    );
+    if let Some(duration) = bundle.duration_seconds {
+        metadata.insert("task_duration_seconds".to_string(), Value::from(duration));
+    }
+    let start = metadata
+        .get("task_started_at")
+        .and_then(Value::as_u64)
+        .unwrap_or(updated.created_at);
+    metadata.insert("task_started_at".to_string(), Value::from(start));
+    let finish = bundle
+        .duration_seconds
+        .map_or(updated.updated_at.max(updated.created_at), |duration| {
+            start.saturating_add(duration)
+        });
+    metadata.insert("task_finished_at".to_string(), Value::from(finish));
+    updated.status.clone_from(&bundle.status);
+    updated.updated_at = finish;
+    let metadata = Value::Object(metadata);
+    if original_status == updated.status
+        && original_metadata_json
+            .as_deref()
+            .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
+            .is_some_and(|existing| task_flow_metadata_equivalent(&existing, &metadata))
+    {
+        return Ok(false);
+    }
+    updated.metadata_json = Some(metadata.to_string());
+    state::upsert_task_record(&updated)?;
     Ok(true)
 }
 
@@ -313,6 +523,10 @@ fn task_record_id_from_worktree(worktree: &Path) -> Option<String> {
 fn parse_task_env(path: &Path) -> Result<std::collections::BTreeMap<String, String>> {
     let content =
         fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(parse_task_env_content(&content))
+}
+
+fn parse_task_env_content(content: &str) -> std::collections::BTreeMap<String, String> {
     let mut entries = std::collections::BTreeMap::new();
     for line in content.lines() {
         let Some((key, raw)) = line.split_once('=') else {
@@ -325,7 +539,7 @@ fn parse_task_env(path: &Path) -> Result<std::collections::BTreeMap<String, Stri
         };
         entries.insert(key.to_string(), value);
     }
-    Ok(entries)
+    entries
 }
 
 fn managed_root_for(primary_root: &Path) -> PathBuf {

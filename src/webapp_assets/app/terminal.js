@@ -250,6 +250,7 @@
       const closed = records.filter((task) => task.status.startsWith('closed'));
       const withTelemetry = records.filter((task) => task.token_usage);
       const closedWithTelemetry = closed.filter((task) => task.token_usage);
+      const closedWithRuntime = closed.filter((task) => task.duration_seconds);
       const lastDayCutoff = Math.floor(Date.now() / 1000) - 86400;
       const lastDay = records.filter((task) => (task.updated_at || 0) >= lastDayCutoff);
       const lastDayTokens = sumTokens(lastDay);
@@ -263,6 +264,7 @@
         ['With telemetry', withTelemetry.length],
         ['Displayed tokens', formatNumber(snapshot.total_displayed_tokens || 0)],
         ['Avg closed tokens', formatNumber(averageClosedTokens)],
+        ['Avg runtime', averageRuntime(closedWithRuntime)],
         ['Last 24h records', lastDay.length],
         ['Last 24h tokens', formatNumber(lastDayTokens)],
         ['Output tokens', formatNumber(snapshot.total_output_tokens || 0)],
@@ -358,10 +360,25 @@
       }
       const dates = document.createElement('div');
       dates.className = 'task-path';
-      dates.textContent = `created ${formatTime(task.created_at)} / updated ${formatTime(task.updated_at)}`;
+      const runtime = task.duration_seconds ? ` / runtime ${formatDuration(task.duration_seconds)}` : '';
+      dates.textContent = `created ${formatTime(task.created_at)} / updated ${formatTime(task.updated_at)}${runtime}`;
       meta.appendChild(dates);
       node.append(title, stateCell, meta, usage);
       return node;
+    }
+
+    function averageRuntime(records) {
+      if (!records.length) return '-';
+      const seconds = records.reduce((sum, task) => sum + Number(task.duration_seconds || 0), 0);
+      return formatDuration(Math.round(seconds / records.length));
+    }
+
+    function formatDuration(seconds) {
+      const total = Math.max(0, Number(seconds || 0));
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      if (hours) return `${hours}h ${minutes}m`;
+      return `${minutes}m`;
     }
 
     function compactTaskDescription(description) {

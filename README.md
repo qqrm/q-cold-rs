@@ -113,6 +113,10 @@ treated as Codex account `2`.
 The refresh path reconciles managed task-flow records from `.task/task.env`
 before importing ad-hoc Codex sessions, preserving `TASK_ID`,
 `TASK_SEQUENCE`, and the managed worktree as the authoritative task identity.
+If a repository closes a managed task through its own task-flow command and the
+worktree is gone before Q-COLD refreshes, Q-COLD also reconciles terminal
+status and recorded runtime from recent `metadata/terminal-receipt.env`
+closeout bundle receipts under that repository's `bundles/` directory.
 The importer reads Codex `session_meta`, matches sessions to the
 Q-COLD agent start time and active repository cwd, and does not assign a
 claimed `session_path` to another agent. It stores the polished first

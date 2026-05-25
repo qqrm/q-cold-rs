@@ -124,6 +124,7 @@ pub(crate) struct WebTaskRecord {
     pub(crate) kind: Option<String>,
     pub(crate) codex_thread_id: Option<String>,
     pub(crate) session_path: Option<String>,
+    pub(crate) duration_seconds: Option<u64>,
     pub(crate) token_usage: Option<TaskTokenUsage>,
     pub(crate) token_efficiency: Option<TaskTokenEfficiency>,
 }
@@ -160,6 +161,7 @@ impl WebTaskRecord {
             .and_then(|value| value.get("session_path"))
             .and_then(Value::as_str)
             .map(ToString::to_string);
+        let duration_seconds = task_record_duration_seconds(&row, metadata.as_ref());
         let agent = row
             .agent_id
             .as_deref()
@@ -182,10 +184,31 @@ impl WebTaskRecord {
             kind,
             codex_thread_id,
             session_path,
+            duration_seconds,
             token_usage,
             token_efficiency,
         }
     }
+}
+
+fn task_record_duration_seconds(row: &state::TaskRecordRow, metadata: Option<&Value>) -> Option<u64> {
+    metadata
+        .and_then(|value| value.get("task_duration_seconds"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            let start = metadata
+                .and_then(|value| value.get("task_started_at"))
+                .and_then(Value::as_u64)?;
+            let finish = metadata
+                .and_then(|value| value.get("task_finished_at"))
+                .and_then(Value::as_u64)?;
+            (finish >= start).then_some(finish - start)
+        })
+        .or_else(|| {
+            row.status
+                .starts_with("closed:")
+                .then_some(row.updated_at.saturating_sub(row.created_at))
+        })
 }
 
 #[allow(
