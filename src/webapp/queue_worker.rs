@@ -601,6 +601,21 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                     return Ok(QueueItemOutcome::Stopped);
                 }
             }
+            QueueItemOutcome::Failed {
+                message,
+                retryable: true,
+            } => {
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "failed",
+                    &message,
+                    item.agent_id.as_deref(),
+                    retries,
+                    None,
+                )?;
+                return Ok(QueueItemOutcome::failed(message));
+            }
             outcome => return Ok(outcome),
         }
     }
