@@ -8,7 +8,7 @@ mod tests {
         guard_command, parse_codex_session_summary, parse_rfc3339_unix, polish_task_text,
         prompt_from_agent_command, repo_root_for_agent_cwd_from_repositories,
         render_task_record_audit, render_token_efficiency, render_token_usage,
-        render_top_tool_outputs,
+        render_top_tool_outputs, sync_task_flow_record_for_worktree,
         should_skip_stale_codex_agent_import, slug_from_title, task_flow_metadata_equivalent,
         unix_now, GuardArgs,
     };
@@ -766,6 +766,66 @@ mod tests {
             },
         });
         assert!(!task_flow_metadata_equivalent(&left, &changed));
+    }
+
+    #[test]
+    fn task_flow_sync_drops_live_web_queue_transcript_while_open() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let worktree = temp.path().join("WT/qcold/001-queue-task");
+        fs::create_dir_all(worktree.join(".task")).unwrap();
+        fs::write(
+            worktree.join(".task/task.env"),
+            format!(
+                "TASK_ID=task/queue-task\n\
+                 TASK_NAME=queue-task\n\
+                 TASK_SEQUENCE=1\n\
+                 TASK_WORKTREE={}\n\
+                 TASK_DESCRIPTION=queue task\n\
+                 PRIMARY_REPO_PATH={}\n\
+                 STARTED_AT=1\n\
+                 STATUS=open\n",
+                worktree.display(),
+                temp.path().join("qcold").display(),
+            ),
+        )
+        .unwrap();
+        let metadata = serde_json::json!({
+            "opened_by": "web-queue",
+            "session_path": "/tmp/creator.jsonl",
+            "session_paths": ["/tmp/creator.jsonl"],
+            "session_ids": ["creator"],
+            "token_usage": {"total_tokens": 1},
+            "token_efficiency": {"session_count": 1},
+        });
+        let mut record = state::new_task_record(
+            "task/queue-task".to_string(),
+            "task-flow".to_string(),
+            "Queue Task".to_string(),
+            "queue task".to_string(),
+            "open".to_string(),
+            Some(temp.path().join("qcold").display().to_string()),
+            Some(worktree.display().to_string()),
+            None,
+            Some(metadata.to_string()),
+        );
+        record.agent_id = Some("qa-task-queue".to_string());
+        state::upsert_task_record(&record)
+        .unwrap();
+
+        assert!(sync_task_flow_record_for_worktree(&worktree, None).unwrap());
+        let record = state::get_task_record("task/queue-task").unwrap().unwrap();
+        let metadata: serde_json::Value =
+            serde_json::from_str(record.metadata_json.as_deref().unwrap()).unwrap();
+
+        assert_eq!(metadata["opened_by"].as_str(), Some("web-queue"));
+        assert!(metadata.get("session_path").is_none());
+        assert!(metadata.get("session_paths").is_none());
+        assert!(metadata.get("session_ids").is_none());
+        assert!(metadata.get("token_usage").is_none());
+        assert!(metadata.get("token_efficiency").is_none());
+        assert_eq!(record.agent_id.as_deref(), Some("qa-task-queue"));
     }
 
     #[test]

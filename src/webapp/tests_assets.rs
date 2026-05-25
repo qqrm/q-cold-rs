@@ -30,6 +30,21 @@ mod asset_tests {
     }
 
     #[test]
+    fn queue_open_target_requires_executor_before_transcript() {
+        let target_start = APP_JS.find("function queueItemContextTarget").unwrap();
+        let target = &APP_JS[target_start..];
+        let terminal_index = target
+            .find("const terminal = terminalForQueueItem(item, task);")
+            .unwrap();
+        let transcript_index = target.find("queueTaskTranscriptAvailable(item, task)").unwrap();
+
+        assert!(terminal_index < transcript_index);
+        assert!(APP_JS.contains("function queueTaskTranscriptAvailable(item, task)"));
+        assert!(APP_JS.contains("return Boolean(task.status?.startsWith('closed'));"));
+        assert!(APP_JS.contains("if (task?.id) {\n        return null;"));
+    }
+
+    #[test]
     fn graph_queue_active_run_prunes_empty_non_final_waves() {
         assert!(APP_JS.contains("function pruneEmptyBackendQueueWaves(waves, items)"));
         assert!(APP_JS.contains("{ pruneBackendEmpty: true }"));

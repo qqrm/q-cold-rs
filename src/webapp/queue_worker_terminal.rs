@@ -41,8 +41,15 @@ fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
 }
 
 fn wait_for_agent_terminal_ready(agent_id: &str) -> bool {
-    for _ in 0..60 {
+    let mut accepted_update_prompt = false;
+    for _ in 0..240 {
         if let Some(output) = agent_terminal_output(agent_id) {
+            if !accepted_update_prompt && terminal_output_has_codex_update_prompt(&output) {
+                accepted_update_prompt = true;
+                if let Some(target) = agent_terminal_target(agent_id) {
+                    let _ = send_terminal_key(&target, TerminalKey::Enter);
+                }
+            }
             if terminal_output_ready_for_queue_input(&output) {
                 return true;
             }
@@ -69,11 +76,36 @@ fn terminal_output_ready_for_queue_input(output: &str) -> bool {
     has_prompt && !has_busy_indicator
 }
 
+fn terminal_output_has_codex_update_prompt(output: &str) -> bool {
+    let recent = output.lines().rev().take(32).map(str::trim).collect::<Vec<_>>();
+    let has_update_notice = recent
+        .iter()
+        .any(|line| line.contains("Update available!"));
+    let has_update_action = recent
+        .iter()
+        .any(|line| line.contains("Update now") && line.contains("@openai/codex"));
+    let awaits_enter = recent
+        .iter()
+        .any(|line| line.contains("Press enter to continue"));
+    has_update_notice && has_update_action && awaits_enter
+}
+
 fn terminal_line_has_idle_prompt(line: &str) -> bool {
-    line.starts_with('›')
+    terminal_line_starts_with_interactive_prompt(line)
         || line.starts_with('>')
         || line.starts_with("gpt-")
         || line.contains(" gpt-")
+}
+
+fn terminal_line_starts_with_interactive_prompt(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix('›') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    !rest
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_digit() || ch == '.')
 }
 
 fn terminal_line_has_busy_indicator(line: &str) -> bool {

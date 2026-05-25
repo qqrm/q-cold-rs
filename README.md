@@ -291,6 +291,9 @@ the repository root, task slug, selected command, required task-flow commands,
 validation and closeout expectation, blocker boundary, state pointers such as
 `.task/task.env` and task logs, an output guard policy, a bounded
 operator-request snippet, and the full operator request for the executor.
+If the Codex CLI presents its interactive update menu during queue launch,
+the backend accepts the default update action and keeps waiting for the real
+idle agent prompt before sending the task packet.
 Queue launcher agents use slug/repository-derived display labels and short
 session ids rather than prompt-derived labels. They are internal transport and do not create
 separate ad-hoc task records; the visible task state belongs to the managed
@@ -355,9 +358,11 @@ the tab does not stop the active run. Queue rows, task cards, agent cards, and
 terminal cards share the same terminal agent display name when one is known, with
 short technical ids kept as secondary diagnostics. Queue executor terminals use
 their terminal scope for the managed `task/<slug>` id, so the Terminals view
-keeps both the agent name and the task anchor visible. When Codex telemetry has
-captured a session path, task records expose the saved chat transcript from the
-Tasks view even after the terminal agent has exited. Q-COLD assigns Codex
+keeps both the agent name and the task anchor visible. Open queue tasks route
+only to the known executor terminal; saved Codex transcripts are exposed for
+queue tasks after terminal closeout, not while the row is still live. When
+Codex telemetry has captured a session path, task records expose the saved chat
+transcript from the Tasks view even after the terminal agent has exited. Q-COLD assigns Codex
 sessions to managed tasks only through the session id plus structured
 `session_meta.cwd` or tool-call `workdir`/`cwd` fields under the managed task
 worktree; arbitrary task-id text in prompts or tool output is not enough to

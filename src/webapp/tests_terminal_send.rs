@@ -44,4 +44,17 @@ mod terminal_send_tests {
                              gpt-5.5 high · ~/repo\n";
         assert!(!terminal_output_ready_for_queue_input(pending_paste));
     }
+
+    #[test]
+    fn queue_worker_detects_codex_update_prompt() {
+        let prompt = "\n✨ Update available! 0.130.0 -> 0.133.0\n\n\
+                      › 1. Update now (runs `npm install -g @openai/codex`)\n\
+                      2. Skip\n\
+                      3. Skip until next version\n\n\
+                      Press enter to continue\n";
+
+        assert!(terminal_output_has_codex_update_prompt(prompt));
+        assert!(!terminal_output_ready_for_queue_input(prompt));
+        assert!(!terminal_output_has_codex_update_prompt("gpt-5.5 high · ~/repo"));
+    }
 }

@@ -97,27 +97,31 @@ fn sync_task_flow_record_for_worktree(
             .unwrap_or_else(unix_now)
     };
     let task_slug = record_id.strip_prefix("task/").map(str::to_string);
-    let explicit_rollout_paths = explicit_codex_rollout_paths_from_env(&env);
-    let explicit_thread_id = env
-        .get("CODEX_THREAD_ID")
-        .map(String::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    let telemetry = codex_task_telemetry_for_worktree(
-        worktree,
-        task_slug.as_deref(),
-        start,
-        finish,
-        &explicit_rollout_paths,
-        explicit_thread_id,
-    )?;
-
     let mut metadata = record
         .metadata_json
         .as_deref()
         .and_then(|raw| serde_json::from_str::<Value>(raw).ok())
         .and_then(|value| value.as_object().cloned())
         .unwrap_or_default();
+    let suppress_live_queue_telemetry = live_web_queue_task(&metadata, task_is_live);
+    let explicit_rollout_paths = explicit_codex_rollout_paths_from_env(&env);
+    let explicit_thread_id = env
+        .get("CODEX_THREAD_ID")
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let telemetry = if suppress_live_queue_telemetry {
+        None
+    } else {
+        codex_task_telemetry_for_worktree(
+            worktree,
+            task_slug.as_deref(),
+            start,
+            finish,
+            &explicit_rollout_paths,
+            explicit_thread_id,
+        )?
+    };
     metadata.insert(
         "kind".to_string(),
         Value::String("managed-task-flow".to_string()),
@@ -169,7 +173,9 @@ fn sync_task_flow_record_for_worktree(
             "token_efficiency".to_string(),
             telemetry.efficiency_json(unix_now(), start, finish),
         );
-    } else if !metadata_session_path_matches_worktree(&metadata, worktree) {
+    } else if suppress_live_queue_telemetry
+        || !metadata_session_path_matches_worktree(&metadata, worktree)
+    {
         remove_codex_task_metadata(&mut metadata);
     }
 
@@ -212,6 +218,14 @@ fn task_record_status_from_task_flow_status(status: &str) -> String {
 
 fn task_flow_record_needs_terminal_sync(record: &state::TaskRecordRow) -> bool {
     record.source == "task-flow" && task_record_terminal_status(&record.status).is_none()
+}
+
+fn live_web_queue_task(metadata: &serde_json::Map<String, Value>, task_is_live: bool) -> bool {
+    task_is_live
+        && metadata
+            .get("opened_by")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value == "web-queue")
 }
 
 fn terminal_task_bundles_for_records(

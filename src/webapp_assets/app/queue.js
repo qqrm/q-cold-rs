@@ -795,12 +795,15 @@
       if (!item) return null;
       const task = taskRecordForQueueItem(item);
       const taskId = task?.id || (item.slug ? `task/${item.slug}` : '');
-      if (task?.id && task.session_path) {
-        return { kind: 'transcript', task, terminal: terminalForQueueItem(item, task) };
-      }
       const terminal = terminalForQueueItem(item, task);
       if (task?.id && terminal) {
         return { kind: 'terminal-chat', task, terminal };
+      }
+      if (queueTaskTranscriptAvailable(item, task)) {
+        return { kind: 'transcript', task, terminal };
+      }
+      if (task?.id) {
+        return null;
       }
       if (taskId) {
         return { kind: 'task-modal', taskId, task, terminal };
@@ -815,6 +818,11 @@
       const agentId = item.agentId || task?.agent_id || '';
       if (!agentId) return null;
       return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
+    }
+
+    function queueTaskTranscriptAvailable(item, task) {
+      if (!task?.id || !task.session_path) return false;
+      return Boolean(task.status?.startsWith('closed'));
     }
 
     async function openTaskTranscript(taskId, options = {}) {

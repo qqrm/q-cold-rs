@@ -350,6 +350,9 @@ fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
     crate::sync_codex_task_records().ok();
     let record = state::get_task_record(task_id)?
         .with_context(|| format!("unknown task record: {task_id}"))?;
+    if live_web_queue_task_without_closed_status(&record) {
+        bail!("live queue tasks are available through their executor terminal only");
+    }
     let session_path = codex_session_path_from_metadata(record.metadata_json.as_deref())
         .context("task record has no Codex session transcript")?;
     let path = PathBuf::from(&session_path);
@@ -375,10 +378,20 @@ fn task_record_chat_available(record: &state::TaskRecordRow) -> bool {
         && codex_resume_session_id(record).is_some()
 }
 
+fn live_web_queue_task_without_closed_status(record: &state::TaskRecordRow) -> bool {
+    !record.status.starts_with("closed:")
+        && task_metadata_string(record.metadata_json.as_deref(), "opened_by")
+            .is_some_and(|value| value == "web-queue")
+}
+
 fn codex_session_path_from_metadata(metadata_json: Option<&str>) -> Option<String> {
+    task_metadata_string(metadata_json, "session_path")
+}
+
+fn task_metadata_string(metadata_json: Option<&str>, key: &str) -> Option<String> {
     let metadata = serde_json::from_str::<Value>(metadata_json?).ok()?;
     metadata
-        .get("session_path")
+        .get(key)
         .and_then(Value::as_str)
         .map(ToString::to_string)
 }
