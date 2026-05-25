@@ -267,8 +267,9 @@ environment as the default substantive execution environment, the Queue
 automatically stores `remote_launcher=remote-dev-env`, opens each row with
 `qcold task open-remote`, starts the selected Codex-like executor locally for
 auth/VPN/chat access, passes the remote launcher and remote task worktree in
-the task packet, and periodically syncs remote task records back into the local
-dashboard. Set `QCOLD_QUEUE_REMOTE_LAUNCHER=local` to force
+the task packet, tells the executor that local state is orchestration-only,
+and periodically syncs remote task records back into the local dashboard. Set
+`QCOLD_QUEUE_REMOTE_LAUNCHER=local` to force
 local queue execution for diagnostics, or set it to another single executable
 launcher name/path to override the default.
 Direct terminal agents started from a repository through Q-COLD wrappers are

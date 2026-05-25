@@ -27,14 +27,9 @@ fn queue_task_instruction_inner(
     let _ = writeln!(packet, "required_flow:");
     write_queue_required_flow(&mut packet, remote_launcher.is_some());
     let _ = writeln!(packet, "state_pointers:");
-    let _ = writeln!(packet, "  task_env: .task/task.env");
-    let _ = writeln!(packet, "  task_logs: .task/logs/");
+    write_queue_state_pointers(&mut packet, remote_launcher.is_some());
     let _ = writeln!(packet, "validation_closeout:");
-    let _ = writeln!(packet, "  expect: run relevant validation, then terminal closeout");
-    let _ = writeln!(
-        packet,
-        "  success: qcold task closeout --outcome success --message \"<message>\""
-    );
+    write_queue_validation_closeout(&mut packet, remote_launcher.is_some());
     let _ = writeln!(packet, "blocker_boundary:");
     let _ = writeln!(packet, "  pause_or_blocked_only_for: business decision or external resource");
     let _ = writeln!(packet, "output_guard:");
@@ -78,13 +73,54 @@ fn write_queue_required_flow(packet: &mut String, remote: bool) {
             "  - do not open a local task; Q-COLD already opened the remote task"
         );
         let _ = writeln!(packet, "  - keep this Codex executor local for auth, VPN, and chat access");
-        let _ = writeln!(packet, "  - run repository commands through the remote launcher");
+        let _ = writeln!(packet, "  - treat local repo_root as orchestration and dashboard state only");
+        let _ = writeln!(
+            packet,
+            "  - run repository reads, edits, builds, tests, and validation through the remote launcher"
+        );
         let _ = writeln!(packet, "  - use remote_task_worktree as the remote cwd for repository work");
+        let _ = writeln!(
+            packet,
+            "  - enter the existing remote task devcontainer before substantive work if the repo requires it"
+        );
+        let _ = writeln!(
+            packet,
+            "  - reread AGENTS.md and available task logs from remote_task_worktree"
+        );
     } else {
         let _ = writeln!(packet, "  - do not run qcold task open; Q-COLD already opened it");
         let _ = writeln!(packet, "  - confirm pwd contains .task/task.env");
+        let _ = writeln!(packet, "  - reread AGENTS.md and available task logs");
     }
-    let _ = writeln!(packet, "  - reread AGENTS.md and available task logs");
+}
+
+fn write_queue_validation_closeout(packet: &mut String, remote: bool) {
+    if remote {
+        let _ = writeln!(
+            packet,
+            "  expect: run relevant validation remotely, then terminal closeout from remote_task_worktree"
+        );
+        let _ = writeln!(
+            packet,
+            "  success: use the repository task-flow closeout surface through the remote launcher"
+        );
+    } else {
+        let _ = writeln!(packet, "  expect: run relevant validation, then terminal closeout");
+        let _ = writeln!(
+            packet,
+            "  success: qcold task closeout --outcome success --message \"<message>\""
+        );
+    }
+}
+
+fn write_queue_state_pointers(packet: &mut String, remote: bool) {
+    if remote {
+        let _ = writeln!(packet, "  task_env: remote_task_worktree/.task/task.env");
+        let _ = writeln!(packet, "  task_logs: remote_task_worktree/.task/logs/");
+    } else {
+        let _ = writeln!(packet, "  task_env: .task/task.env");
+        let _ = writeln!(packet, "  task_logs: .task/logs/");
+    }
 }
 
 fn write_queue_output_guard_policy(packet: &mut String) {

@@ -81,7 +81,16 @@ mod queue_prompt_tests {
         assert!(instruction.contains("backend-opened remote managed task worktree"));
         assert!(instruction.contains("do not open a local task"));
         assert!(instruction.contains("keep this Codex executor local"));
-        assert!(instruction.contains("run repository commands through the remote launcher"));
+        assert!(instruction.contains("treat local repo_root as orchestration and dashboard state only"));
+        let remote_command_flow =
+            "run repository reads, edits, builds, tests, and validation through the remote launcher";
+        assert!(instruction.contains(remote_command_flow));
+        assert!(instruction.contains("enter the existing remote task devcontainer"));
+        assert!(instruction.contains("reread AGENTS.md and available task logs from remote_task_worktree"));
+        assert!(instruction.contains("task_env: remote_task_worktree/.task/task.env"));
+        assert!(instruction.contains("task_logs: remote_task_worktree/.task/logs/"));
+        assert!(instruction.contains("run relevant validation remotely"));
+        assert!(instruction.contains("repository task-flow closeout surface through the remote launcher"));
     }
 
     #[test]
