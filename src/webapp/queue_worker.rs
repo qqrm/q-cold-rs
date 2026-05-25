@@ -377,6 +377,35 @@ impl QueueItemOutcome {
     }
 }
 
+fn queue_task_open_failure_outcome(message: String) -> QueueItemOutcome {
+    if queue_task_open_failure_retryable(&message) {
+        QueueItemOutcome::retryable_failure(message)
+    } else {
+        QueueItemOutcome::failed(message)
+    }
+}
+
+fn queue_task_open_failure_retryable(message: &str) -> bool {
+    if !message.contains("failed to open remote managed task") {
+        return false;
+    }
+    let lower = message.to_ascii_lowercase();
+    [
+        "ssh:",
+        "connection timed out",
+        "operation timed out",
+        "connection reset",
+        "connection refused",
+        "no route to host",
+        "network is unreachable",
+        "could not resolve hostname",
+        "temporary failure in name resolution",
+        "broken pipe",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
 #[allow(clippy::too_many_lines, reason = "existing queue runner split debt")]
 fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueItemOutcome> {
     if let Some(status) = queue_task_status(item)? {
@@ -586,16 +615,25 @@ fn start_web_queue_item(
         Ok(task) => task,
         Err(err) => {
             let message = format!("{err:#}");
-            state::update_web_queue_item(
-                run_id,
-                &item.id,
-                "failed",
-                &message,
-                None,
-                attempts,
-                None,
-            )?;
-            return Ok(QueueItemOutcome::failed(message));
+            let outcome = queue_task_open_failure_outcome(message.clone());
+            if matches!(
+                outcome,
+                QueueItemOutcome::Failed {
+                    retryable: false,
+                    ..
+                }
+            ) {
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "failed",
+                    &message,
+                    None,
+                    attempts,
+                    None,
+                )?;
+            }
+            return Ok(outcome);
         }
     };
     let command = queue_agent_launch_command(item, &task);

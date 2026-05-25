@@ -328,8 +328,9 @@ persisted run state before reporting the run state. If the selected agent accoun
 unavailable, the
 backend waits and retries the next launch three times after roughly 1, 5, and
 10 minutes before failing the row; unauthenticated accounts fail immediately.
-Launch and terminal setup failures before a managed task record exists are
-retryable on the same schedule. Once the matching `task/<slug>` record exists,
+Remote `task open-remote` transport failures and launcher setup failures before
+a managed task record exists are retryable on the same schedule. Once the
+matching `task/<slug>` record exists,
 Q-COLD will not start a second executor for that row; non-success closeout or a
 prematurely exited executor stops the row for operator diagnostics. If the
 operator later resumes a blocked task chat and that managed task reaches

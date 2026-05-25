@@ -52,6 +52,29 @@ mod queue_taskflow_tests {
         assert_eq!(shell_env_value("task-run-01"), "task-run-01");
     }
 
+    #[test]
+    fn queue_remote_task_open_transport_failure_is_retryable() {
+        let message = "failed to open remote managed task bs-meta3-perf-observability through \
+                       remote-dev-env: exit status: 255\nssh: connect to host 10.253.244.101 \
+                       port 22: Connection timed out";
+
+        match queue_task_open_failure_outcome(message.to_string()) {
+            QueueItemOutcome::Failed { retryable, .. } => assert!(retryable),
+            _ => panic!("expected failed outcome"),
+        }
+    }
+
+    #[test]
+    fn queue_local_task_open_configuration_failure_is_not_retryable() {
+        match queue_task_open_failure_outcome("queue item has no repository root".to_string()) {
+            QueueItemOutcome::Failed { message, retryable } => {
+                assert_eq!(message, "queue item has no repository root");
+                assert!(!retryable);
+            }
+            _ => panic!("expected failed outcome"),
+        }
+    }
+
     #[cfg(unix)]
     fn make_executable(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
