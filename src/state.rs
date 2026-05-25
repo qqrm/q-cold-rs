@@ -5,7 +5,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 
@@ -34,7 +34,7 @@ pub struct TaskTopicRow {
     pub topic_name: String,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TaskRecordRow {
     pub id: String,
     pub source: String,

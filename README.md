@@ -30,6 +30,9 @@ qcold status
 qcold task-record create --description "Add task CRUD and automatic capture"
 qcold task-record list
 qcold task-record audit --top 10
+qcold task-record sync-remote --via remote-dev-env \
+  --local-repo-root /path/to/local/target-repo \
+  --remote-repo-root /path/to/remote/target-repo
 qcold agent list
 qcold agent start --track audit -- codex exec "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
@@ -40,6 +43,7 @@ qcold bundle
 qcold guard -- rg -n "needle" src
 qcold task inspect runtime-audit
 qcold task open my-task
+qcold task open-remote --via remote-dev-env my-remote-task
 qcold task pause --reason "waiting for operator decision"
 ```
 
@@ -150,6 +154,20 @@ coverage gaps, cost by source/outcome, and the noisiest task records by total
 tokens and tool-output tokens. It is a metadata audit, not a quality score:
 missing `token_efficiency`, high large-output ratios, or expensive blocked
 records are surfaced as operator review targets.
+When work runs on a remote task host, keep the operator machine as the canonical
+Q-COLD state owner. Start new remote work with
+`qcold task open-remote --via remote-dev-env <task-slug> [profile]`; this
+creates the local task record first, reserves the local repo-scoped sequence,
+and passes that sequence to the remote task adapter as `QCOLD_TASK_SEQUENCE`.
+Refresh local monitoring with
+`qcold task-record sync-remote --via remote-dev-env --local-repo-root <local>
+--remote-repo-root <remote>`. The sync imports remote task-flow records into the
+local SQLite DB, maps them to the local repository root for common numbering and
+dashboard filtering, preserves remote paths and remote sequence values in
+metadata, and imports exported token telemetry when the remote Q-COLD binary
+provides it. `qcold task-record export` is the full-record JSONL surface used by
+that sync path; it is primarily for Q-COLD-to-Q-COLD replication rather than
+manual dashboards.
 Read-only task-record commands keep serving the last stored records if a
 concurrent dashboard or agent process temporarily blocks the telemetry refresh;
 they print a warning instead of failing the read. SQLite lock waits default to

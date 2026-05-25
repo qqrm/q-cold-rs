@@ -208,6 +208,15 @@ enum TaskRecordSubcommand {
     Show { id: String },
     #[command(about = "Audit task-record telemetry coverage and tool-output noise")]
     Audit(TaskRecordAuditArgs),
+    #[command(about = "Export full task records as JSON lines")]
+    Export {
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
+    #[command(about = "Import remote task-flow records into the local canonical task-record DB")]
+    SyncRemote(TaskRecordRemoteSyncArgs),
     #[command(about = "Create or update a Q-COLD-owned task record")]
     Create(TaskRecordCreateArgs),
     #[command(about = "Update title, description, or status for a task record")]
@@ -230,6 +239,18 @@ struct TaskRecordAuditArgs {
     top: usize,
     #[arg(long, default_value_t = 10_000)]
     record_limit: usize,
+}
+
+#[derive(Args)]
+struct TaskRecordRemoteSyncArgs {
+    #[arg(long, default_value = "remote-dev-env")]
+    via: String,
+    #[arg(long)]
+    local_repo_root: Option<PathBuf>,
+    #[arg(long)]
+    remote_repo_root: Option<String>,
+    #[arg(long, default_value_t = 200)]
+    limit: usize,
 }
 
 #[derive(Args)]
@@ -272,6 +293,8 @@ enum TaskSubcommand {
         task_slug: String,
         profile: Option<String>,
     },
+    #[command(about = "Reserve a local task number and open the task through a remote launcher")]
+    OpenRemote(RemoteOpenArgs),
     Enter,
     List,
     TerminalCheck,
@@ -302,6 +325,14 @@ enum TaskSubcommand {
 struct MessageArgs {
     #[arg(long)]
     message: String,
+}
+
+#[derive(Args)]
+struct RemoteOpenArgs {
+    #[arg(long, default_value = "remote-dev-env")]
+    via: String,
+    task_slug: String,
+    profile: Option<String>,
 }
 
 #[derive(Args)]
@@ -351,6 +382,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
                 task_prompt_from_record(&record).as_deref(),
             )
         }
+        TaskSubcommand::OpenRemote(args) => open_remote_task(&args),
         TaskSubcommand::Enter => adapter_for_cwd_sensitive_repo()?.enter(),
         TaskSubcommand::List => adapter_for_task_flow_repo()?.list(),
         TaskSubcommand::TerminalCheck => adapter_for_task_flow_repo()?.terminal_check(),
@@ -459,6 +491,18 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
                 println!("{line}");
             }
         }
+        TaskRecordSubcommand::Export { status, limit } => {
+            sync_codex_task_records_best_effort();
+            let records = state::load_task_records(status.as_deref(), limit)?;
+            println!("task-record-export\tcount={}", records.len());
+            for record in records {
+                println!("task-record-json\t{}", serde_json::to_string(&record)?);
+            }
+        }
+        TaskRecordSubcommand::SyncRemote(args) => {
+            let summary = sync_remote_task_records(&args)?;
+            println!("{}", summary.render());
+        }
         TaskRecordSubcommand::Create(args) => {
             let record = task_record_from_create_args(args);
             let record = state::upsert_task_record(&record)?;
@@ -541,7 +585,7 @@ fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<state::Tas
         "operator_prompt": original_prompt,
         "operator_prompt_snippet": prompt_snippet,
     });
-    let record = state::new_task_record(
+    let mut record = state::new_task_record(
         format!("task/{task_slug}"),
         "task-flow".to_string(),
         title,
@@ -554,7 +598,16 @@ fn record_task_open(task_slug: &str, profile: Option<&str>) -> Result<state::Tas
         None,
         Some(metadata.to_string()),
     );
+    if let Some(sequence) = explicit_task_sequence_from_env() {
+        record.sequence = Some(sequence);
+    }
     state::upsert_task_record(&record)
+}
+
+fn explicit_task_sequence_from_env() -> Option<u64> {
+    std::env::var("QCOLD_TASK_SEQUENCE")
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
 }
 
 fn env_prompt(name: &str) -> Option<String> {
@@ -621,6 +674,7 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
 
 include!("app/codex_metadata.rs");
 include!("app/task_flow_sync.rs");
+include!("app/remote_task_records.rs");
 include!("app/codex_sessions.rs");
 include!("app/rendering.rs");
 include!("app/tests.rs");
