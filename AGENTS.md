@@ -132,6 +132,35 @@ fixture or debugging task explicitly needs them.
   and external resources are honest blockers or pause reasons, not agent
   guesswork.
 
+## Long-Running Work Discipline
+
+- Track elapsed task time from the managed task metadata when present, such as
+  `.task/task.env` `STARTED_AT`, task-flow logs, or Q-COLD task records. If
+  managed metadata is absent, use the wall-clock time since the operator
+  request or task start.
+- When a task has been active for about an hour without closeout, stop normal
+  iteration and reassess before continuing. Summarize the current objective,
+  what has changed, what evidence is missing, the most expensive loop, and the
+  smallest next proof that can retire uncertainty.
+- Treat long or repeated validation as a process smell. Do not rerun a broad
+  suite immediately after a failure unless the failure mode is understood and
+  the expected fix has been applied. Prefer the narrowest failing test,
+  focused logs, smaller profiles, or static checks before returning to a full
+  gate.
+- If a single validation command is likely to run for tens of minutes, explain
+  why that cost is necessary, run cheaper targeted checks first when possible,
+  and keep the command bounded or observable enough to decide whether it is
+  still useful.
+- After two failed expensive attempts, or after another hour without materially
+  reducing uncertainty, change tactics instead of repeating the same loop:
+  narrow the scope, split the task, inspect the harness, delegate a focused
+  review, or pause for operator input when the remaining choice is contractual
+  rather than technical.
+- Do not hide elapsed-time problems behind generic progress notes. Make the
+  reassessment visible in the agent's status updates, including whether the
+  next action is a narrower proof, a changed implementation approach, a task
+  split, or an honest pause/blocker.
+
 ## Iteration Closeout Discipline
 
 - Unless the user explicitly asks to stop before persistence, non-blocked work
