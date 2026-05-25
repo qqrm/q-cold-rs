@@ -77,7 +77,9 @@ fn write_queue_required_flow(packet: &mut String, remote: bool) {
             packet,
             "  - do not open a local task; Q-COLD already opened the remote task"
         );
-        let _ = writeln!(packet, "  - confirm pwd is the remote task worktree");
+        let _ = writeln!(packet, "  - keep this Codex executor local for auth, VPN, and chat access");
+        let _ = writeln!(packet, "  - run repository commands through the remote launcher");
+        let _ = writeln!(packet, "  - use remote_task_worktree as the remote cwd for repository work");
     } else {
         let _ = writeln!(packet, "  - do not run qcold task open; Q-COLD already opened it");
         let _ = writeln!(packet, "  - confirm pwd contains .task/task.env");
@@ -104,17 +106,6 @@ fn write_queue_output_guard_policy(packet: &mut String) {
     );
 }
 
-fn queue_agent_launch_command(item: &state::QueueItemRow, task: &QueueManagedTask) -> String {
-    let Some(launcher) = task.remote_launcher.as_deref() else {
-        return item.agent_command.clone();
-    };
-    let Some(remote_worktree) = task.remote_worktree.as_deref() else {
-        return format!("{} {}", shell_quote(launcher), shell_quote(&item.agent_command));
-    };
-    let remote_command = format!(
-        "cd {} && exec {}",
-        shell_quote(remote_worktree),
-        item.agent_command.trim()
-    );
-    format!("{} sh -lc {}", shell_quote(launcher), shell_quote(&remote_command))
+fn queue_agent_launch_command(item: &state::QueueItemRow, _task: &QueueManagedTask) -> String {
+    item.agent_command.clone()
 }

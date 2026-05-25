@@ -80,10 +80,12 @@ mod queue_prompt_tests {
         assert!(instruction.contains("remote_task_worktree: /remote/WT/repo/task-remote-01"));
         assert!(instruction.contains("backend-opened remote managed task worktree"));
         assert!(instruction.contains("do not open a local task"));
+        assert!(instruction.contains("keep this Codex executor local"));
+        assert!(instruction.contains("run repository commands through the remote launcher"));
     }
 
     #[test]
-    fn queue_remote_agent_command_runs_through_launcher() {
+    fn queue_remote_agent_command_stays_local() {
         let item = state::QueueItemRow {
             id: "item".to_string(),
             run_id: "run".to_string(),
@@ -111,10 +113,7 @@ mod queue_prompt_tests {
 
         let command = queue_agent_launch_command(&item, &task);
 
-        assert!(command.starts_with("'remote-dev-env' sh -lc "));
-        assert!(command.contains("/remote/WT/repo/task-remote-01"));
-        assert!(command.contains("exec c1"));
-        assert!(!command.starts_with("c1"));
+        assert_eq!(command, "c1");
     }
 
     #[test]

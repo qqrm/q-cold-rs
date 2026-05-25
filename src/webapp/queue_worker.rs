@@ -452,71 +452,54 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             return Ok(QueueItemOutcome::Stopped);
         }
 
-        if item.remote_launcher.is_none() {
-            if let Some(limit) = queue_agent_limit_for_command(&item.agent_command) {
-                if limit.state != "ok" {
-                    if limit.state == "unauthenticated"
-                        || retry_index(retries) >= WEB_QUEUE_RETRY_DELAYS.len()
-                    {
-                        let message = format!(
-                            "{} is {}: {}",
-                            item.agent_command, limit.state, limit.summary
-                        );
-                        state::update_web_queue_item(
-                            run_id,
-                            &item.id,
-                            "failed",
-                            &message,
-                            None,
-                            retries,
-                            None,
-                        )?;
-                        return Ok(QueueItemOutcome::failed(message));
-                    }
-                    let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(retries)];
-                    retries += 1;
-                    let next_attempt_at = unix_now().saturating_add(delay);
+        if let Some(limit) = queue_agent_limit_for_command(&item.agent_command) {
+            if limit.state != "ok" {
+                if limit.state == "unauthenticated"
+                    || retry_index(retries) >= WEB_QUEUE_RETRY_DELAYS.len()
+                {
                     let message = format!(
-                        "{} is {}: {}; retry {}/{} in {}s",
-                        item.agent_command,
-                        limit.state,
-                        limit.summary,
-                        retries,
-                        WEB_QUEUE_RETRY_DELAYS.len(),
-                        delay
+                        "{} is {}: {}",
+                        item.agent_command, limit.state, limit.summary
                     );
                     state::update_web_queue_item(
                         run_id,
                         &item.id,
-                        "waiting",
+                        "failed",
                         &message,
                         None,
                         retries,
-                        Some(next_attempt_at),
+                        None,
                     )?;
-                    if !sleep_queue_retry(run_id, delay)? {
-                        pause_web_queue_item(run_id, item, None, retries)?;
-                        return Ok(QueueItemOutcome::Stopped);
-                    }
-                    continue;
+                    return Ok(QueueItemOutcome::failed(message));
                 }
-            } else {
-                let message = format!("unknown queue agent command: {}", item.agent_command);
+                let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(retries)];
+                retries += 1;
+                let next_attempt_at = unix_now().saturating_add(delay);
+                let message = format!(
+                    "{} is {}: {}; retry {}/{} in {}s",
+                    item.agent_command,
+                    limit.state,
+                    limit.summary,
+                    retries,
+                    WEB_QUEUE_RETRY_DELAYS.len(),
+                    delay
+                );
                 state::update_web_queue_item(
                     run_id,
                     &item.id,
-                    "failed",
+                    "waiting",
                     &message,
                     None,
                     retries,
-                    None,
+                    Some(next_attempt_at),
                 )?;
-                return Ok(QueueItemOutcome::failed(message));
+                if !sleep_queue_retry(run_id, delay)? {
+                    pause_web_queue_item(run_id, item, None, retries)?;
+                    return Ok(QueueItemOutcome::Stopped);
+                }
+                continue;
             }
-        } else if !agents::available_agent_commands()
-            .iter()
-            .any(|agent| agent.command == item.agent_command)
-        {
+        } else {
             let message = format!("unknown queue agent command: {}", item.agent_command);
             state::update_web_queue_item(
                 run_id,
