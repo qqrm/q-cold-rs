@@ -102,6 +102,14 @@ struct NamedSessionDropEvent {
     account: String,
 }
 
+#[derive(Default)]
+struct NamedSessionDeletion {
+    task_records: usize,
+    agent: usize,
+    metadata: usize,
+    logs: usize,
+}
+
 fn run_named_sessions(args: NamedSessionsArgs) -> Result<()> {
     match args.command {
         NamedSessionsCommand::List(args) => {
@@ -256,6 +264,10 @@ fn named_session_rows(filter: &NamedSessionFilter) -> Result<Vec<NamedSessionRec
         let state = process_state(record.pid);
         let session_id = task_resume_session_for_agent(&tasks, &record.id);
         let exit_status = terminal_exit_status(&record.id);
+        if state != "running" && exit_status == Some(0) {
+            delete_named_session_binding(&record.id, &target)?;
+            continue;
+        }
         let resume_state = named_session_resume_state(state, exit_status, session_id.as_deref());
         rows.push(NamedSessionRecord {
             agent_id: record.id,
@@ -323,13 +335,11 @@ fn drop_named_sessions(
         if running {
             terminate_terminal_target_for_key(&row.target)?;
         }
-        summary.deleted_task_records += state::delete_ad_hoc_task_records_for_agent(&row.agent_id)?;
-        if state::delete_agent_record(&row.agent_id)? {
-            summary.deleted_agents += 1;
-        }
-        state::save_terminal_metadata(&row.target, None, None)?;
-        summary.deleted_metadata += 1;
-        summary.deleted_logs += delete_named_session_logs(&row.agent_id)?;
+        let deletion = delete_named_session_binding(&row.agent_id, &row.target)?;
+        summary.deleted_task_records += deletion.task_records;
+        summary.deleted_agents += deletion.agent;
+        summary.deleted_metadata += deletion.metadata;
+        summary.deleted_logs += deletion.logs;
         summary.dropped += 1;
         summary.events.push(row.drop_event("dropped"));
     }
@@ -360,6 +370,19 @@ fn parse_zellij_target(target: &str) -> Option<(String, String)> {
     let rest = target.strip_prefix("zellij:")?;
     let (session, pane) = rest.rsplit_once(':')?;
     Some((session.to_string(), pane.to_string()))
+}
+
+fn delete_named_session_binding(agent_id: &str, target: &str) -> Result<NamedSessionDeletion> {
+    let task_records = state::delete_ad_hoc_task_records_for_agent(agent_id)?;
+    let agent = usize::from(state::delete_agent_record(agent_id)?);
+    state::save_terminal_metadata(target, None, None)?;
+    let logs = delete_named_session_logs(agent_id)?;
+    Ok(NamedSessionDeletion {
+        task_records,
+        agent,
+        metadata: 1,
+        logs,
+    })
 }
 
 fn named_session_primary_root(cwd: &Path) -> Result<Option<PathBuf>> {

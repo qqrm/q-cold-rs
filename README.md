@@ -512,9 +512,10 @@ Q-COLD terminal display name, Q-COLD attaches to that terminal instead of
 starting a duplicate session. A later plain named Codex launch, such as
 `cc1 --name atomic`, resumes the latest exited same-track named Codex chat when
 Q-COLD has imported that prior session id; otherwise it starts a fresh chat.
-When the newer same-name terminal exited cleanly, such as through Codex `/q`,
-Q-COLD treats that name as intentionally closed and starts fresh instead of
-falling back to older interrupted sessions. Use
+When the newer same-name terminal exited cleanly, such as through Codex `/quit`,
+Q-COLD treats that name as intentionally closed, drops the Q-COLD resume
+binding, and starts fresh instead of falling back to older interrupted
+sessions. Use
 `qcold agent named-sessions list --agent cc1` to inspect Q-COLD's named Codex
 resume bindings, `qcold agent named-sessions drop --agent cc1 --name atomic`
 to drop one stale name, or `qcold agent named-sessions drop-all --agent cc1`
@@ -565,7 +566,7 @@ return to its stable workspace before starting another chat or task. Use
 `--cwd <path>` to choose the launch context explicitly. Set
 `QCOLD_AGENT_MANAGED_WORKTREE=0` only for debugging when this automatic
 isolation should be bypassed.
-When the wrapped agent exits, the terminal session exits too, so `/q` in an
+When the wrapped agent exits, the terminal session exits too, so `/quit` in an
 attached agent returns to the parent terminal without an extra shell prompt.
 That clean exit also prevents the same terminal name from auto-resuming the
 closed Codex chat on the next plain named launch.

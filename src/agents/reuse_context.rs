@@ -5,7 +5,7 @@ struct NamedCodexResumeLaunch {
 
 enum NamedResumeCandidate {
     Resume(PathBuf),
-    CleanExit,
+    CleanExit { target: String },
 }
 
 fn named_codex_resume_launch(
@@ -55,18 +55,23 @@ fn named_codex_resume_launch_for_primary(
         else {
             continue;
         };
-        let NamedResumeCandidate::Resume(cwd) = candidate else {
-            return Ok(None);
-        };
-        if let Some(session_id) = task_resume_session_for_agent(&tasks, &record.id) {
-            return Ok(Some(NamedCodexResumeLaunch {
-                command: format!(
-                    "{} resume {}",
-                    shell_quote(&command_token),
-                    shell_quote(&session_id)
-                ),
-                cwd,
-            }));
+        match candidate {
+            NamedResumeCandidate::Resume(cwd) => {
+                if let Some(session_id) = task_resume_session_for_agent(&tasks, &record.id) {
+                    return Ok(Some(NamedCodexResumeLaunch {
+                        command: format!(
+                            "{} resume {}",
+                            shell_quote(&command_token),
+                            shell_quote(&session_id)
+                        ),
+                        cwd,
+                    }));
+                }
+            }
+            NamedResumeCandidate::CleanExit { target } => {
+                delete_named_session_binding(&record.id, &target)?;
+                return Ok(None);
+            }
         }
     }
     Ok(None)
@@ -124,7 +129,10 @@ fn named_resume_candidate(
         return Ok(None);
     }
     if terminal_exit_status(&record.id) == Some(0) {
-        return Ok(Some(NamedResumeCandidate::CleanExit));
+        let Some(target) = terminal_target_key(record) else {
+            return Ok(None);
+        };
+        return Ok(Some(NamedResumeCandidate::CleanExit { target }));
     }
     Ok(Some(NamedResumeCandidate::Resume(cwd)))
 }

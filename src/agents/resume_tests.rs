@@ -330,6 +330,10 @@ mod resume_tests {
             .unwrap()
             .is_none()
         );
+        let agents = AgentState::load().unwrap().records;
+        assert!(agents.iter().any(|record| record.id == "interrupted"));
+        assert!(agents.iter().all(|record| record.id != "clean"));
+        assert!(!terminal_exit_status_path("clean").unwrap().exists());
     }
 
     #[test]

@@ -122,6 +122,33 @@ mod named_sessions_tests {
     }
 
     #[test]
+    fn named_session_list_prunes_clean_exit_rows() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempdir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        isolate_codex_home(temp.path());
+        let primary = temp.path().join("repo");
+        seed_git_repo(&primary);
+        let context = insert_named_session(&primary, "clean", "Atomic", 100, u32::MAX);
+        insert_codex_session_task(&primary, &context, "clean");
+        write_terminal_exit_status("clean", 0);
+        fs::create_dir_all(temp.path().join("state/logs")).unwrap();
+        fs::write(log_path("clean", "out").unwrap(), "output\n").unwrap();
+
+        let rows = named_session_rows(&agent_filter("cc1", None)).unwrap();
+
+        assert!(rows.is_empty());
+        assert!(AgentState::load().unwrap().records.is_empty());
+        assert!(state::load_terminal_metadata().unwrap().is_empty());
+        let task_records = state::load_task_records(None, 1000).unwrap();
+        assert!(task_records
+            .iter()
+            .all(|record| record.agent_id.as_deref() != Some("clean")));
+        assert!(!terminal_exit_status_path("clean").unwrap().exists());
+        assert!(!log_path("clean", "out").unwrap().exists());
+    }
+
+    #[test]
     fn named_session_drop_removes_exited_binding_only() {
         let _guard = crate::test_support::env_guard();
         let temp = tempdir().unwrap();
