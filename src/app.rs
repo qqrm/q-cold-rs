@@ -57,6 +57,8 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold task-record list\n",
     "  qcold task-record audit\n",
     "  qcold agent list\n",
+    "  qcold agent named-sessions list --agent cc1\n",
+    "  qcold agent named-sessions drop --agent cc1 --name atomic\n",
     "  qcold agent start --track audit -- c1 \"inspect repo\"\n",
     "  qcold telegram poll\n",
     "  qcold wsl autostart install\n",

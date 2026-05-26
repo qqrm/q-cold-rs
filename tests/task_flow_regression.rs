@@ -191,6 +191,10 @@ fn success_closeout_delivers_task_branch_to_primary_and_pushes_base() {
         .success()
         .stdout(contains("task-closeout\tsuccess\tship"));
     let stdout = stdout_text(&closeout);
+    assert!(stdout.contains("task-closeout-phase\tstart\tpre-merge-review"));
+    assert!(stdout.contains("task-closeout-review\tstarted\t"));
+    assert!(stdout.contains("task-closeout-review\tfinished\texit_status=0"));
+    assert!(stdout.contains("task-closeout-phase\tok\tpre-merge-review"));
     assert!(stdout.contains("PRE_MERGE_REVIEW_SUMMARY=Fixture review passed."));
     let bundle = path_from_stdout(&stdout, "BUNDLE_PATH");
     let listing = bundle_listing(&bundle);

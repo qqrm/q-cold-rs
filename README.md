@@ -38,6 +38,9 @@ qcold queue run --from queue.json --agent c1 --repo-root /path/to/target-repo
 qcold queue list
 qcold queue append <run-id> --prompt "follow-up task"
 qcold agent list
+qcold agent named-sessions list --agent cc1
+qcold agent named-sessions drop --agent cc1 --name atomic
+qcold agent named-sessions drop-all --agent cc1
 qcold agent prune-stale
 qcold agent start --track audit -- c1 "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
@@ -504,7 +507,14 @@ starting a duplicate session. A later plain named Codex launch, such as
 Q-COLD has imported that prior session id; otherwise it starts a fresh chat.
 When the newer same-name terminal exited cleanly, such as through Codex `/q`,
 Q-COLD treats that name as intentionally closed and starts fresh instead of
-falling back to older interrupted sessions.
+falling back to older interrupted sessions. Use
+`qcold agent named-sessions list --agent cc1` to inspect Q-COLD's named Codex
+resume bindings, `qcold agent named-sessions drop --agent cc1 --name atomic`
+to drop one stale name, or `qcold agent named-sessions drop-all --agent cc1`
+to clear all named sessions for that agent account and track. These commands
+remove Q-COLD's resume binding records and local terminal logs, but they do not
+delete raw Codex session JSONL transcripts. Running terminals are skipped
+unless `--include-running` is passed.
 Plain processes started in a non-multiplexed console are visible as host
 processes but are not safely attachable after the fact. Start agents with
 `qcold agent start --terminal --attach --track <track> -- <command>...` to see
@@ -670,8 +680,11 @@ closeout before merge/push. Set `QCOLD_CLOSEOUT_REVIEWER_COMMAND` to an
 injectable reviewer command for one process. Q-COLD passes
 `QCOLD_REVIEW_PROMPT` and `QCOLD_REVIEW_OUTPUT`; the command should read the
 prompt and write the final report to the output path. Without that override,
-the self-hosted adapter uses `c1 exec` in read-only mode for the review. After
-a passing review, closeout fast-forwards the primary checkout to the current
+the self-hosted adapter uses `c1 exec` in read-only mode for the review.
+Success closeout prints `task-closeout-phase` `start`/`ok` rows and
+`task-closeout-review` `started`/`finished` rows so long review waits are
+visible before the final terminal receipt. After a passing review, closeout
+fast-forwards the primary checkout to the current
 remote base, rebases the task branch onto that base, pushes the base branch to
 `origin`, and refreshes the remote-tracking ref before terminal cleanup.
 Terminal task bundles are self-contained ZIP archives. They include root

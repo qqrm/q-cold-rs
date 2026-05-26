@@ -22,6 +22,7 @@ const QCOLD_ENV_VARS: &[&str] = &[
     "QCOLD_GUARD_QCOLD",
     "QCOLD_GUARD_REAL_0_RG",
     "QCOLD_GUARD_REAL_1_GIT",
+    "CODEX_HOME",
 ];
 
 pub(crate) struct EnvGuard {

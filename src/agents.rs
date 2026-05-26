@@ -114,6 +114,8 @@ enum AgentCommand {
     Attach(AttachArgs),
     #[command(about = "List tracked agent processes")]
     List,
+    #[command(about = "Inspect or drop named Codex resume sessions")]
+    NamedSessions(NamedSessionsArgs),
     #[command(about = "Prune stale terminal agents and ad-hoc task records")]
     PruneStale(PruneStaleArgs),
 }
@@ -187,6 +189,7 @@ pub fn run(args: AgentArgs) -> Result<u8> {
         }
         AgentCommand::Attach(args) => attach_tracked_terminal(&args.selector)?,
         AgentCommand::List => print!("{}", snapshot()?),
+        AgentCommand::NamedSessions(args) => run_named_sessions(args)?,
         AgentCommand::PruneStale(args) => {
             let max_age_hours = args.max_age_hours.map_or_else(agent_stale_ttl_hours, Ok)?;
             let summary = prune_stale_agents(max_age_hours, args.include_attached, args.dry_run)?;
@@ -345,6 +348,7 @@ pub fn terminate_agent(id: &str) -> Result<bool> {
 }
 
 include!("agents/stale_prune.rs");
+include!("agents/named_sessions.rs");
 
 pub fn start_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
     if command.trim().is_empty() {
@@ -828,4 +832,5 @@ include!("agents/output_guard_tests.rs");
 include!("agents/terminal_metadata_tests.rs");
 include!("agents/zellij_name_tests.rs");
 include!("agents/resume_tests.rs");
+include!("agents/named_sessions_tests.rs");
 include!("agents/available_commands_tests.rs");

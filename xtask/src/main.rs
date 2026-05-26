@@ -578,8 +578,13 @@ fn record_closeout_phase(
     current: &mut &'static str,
     next: &'static str,
 ) -> Result<()> {
+    append_event(&task.task_worktree, "task-closeout-phase", next)?;
+    if *current != "start" {
+        println!("task-closeout-phase\tok\t{}", *current);
+    }
+    println!("task-closeout-phase\tstart\t{next}");
     *current = next;
-    append_event(&task.task_worktree, "task-closeout-phase", next)
+    Ok(())
 }
 
 fn closeout_commit_status_short(task: &TaskEnv) -> Result<String> {

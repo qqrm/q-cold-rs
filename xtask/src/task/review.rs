@@ -21,11 +21,17 @@ fn run_pre_merge_review(task: &TaskEnv) -> Result<()> {
     fs::write(&prompt_path, &prompt)?;
     fs::write(&report_path, "")?;
 
+    println!("task-closeout-review\tstarted\t{}", report_path.display());
     let (reviewer, output) = if let Some(command) = nonempty_env(REVIEWER_COMMAND_ENV) {
         run_injected_reviewer_command(task, &command, &prompt_path, &report_path)?
     } else {
         run_default_reviewer_command(task, &prompt, &report_path)?
     };
+    let exit_status = output
+        .status
+        .code()
+        .map_or_else(|| "signal".to_string(), |code| code.to_string());
+    println!("task-closeout-review\tfinished\texit_status={exit_status}");
     let finished_at = unix_now();
     fs::write(&command_log_path, render_reviewer_command_log(&output))?;
     let after = review_target_fingerprint(task)?;

@@ -93,6 +93,12 @@ repo-local code owns it.
 - `qcold queue continue [<run-id>]`
 - `qcold queue clear [--run-id <run-id>]`
 - `qcold agent list`
+- `qcold agent named-sessions list [--agent <command>] [--track <track>] [--account <account>]`
+  `[--repo-root <path>]`
+- `qcold agent named-sessions drop --name <name> [--agent <command>] [--track <track>]`
+  `[--account <account>] [--repo-root <path>] [--dry-run] [--include-running]`
+- `qcold agent named-sessions drop-all (--agent <command>|--track <track>|--account <account>|--all)`
+  `[--repo-root <path>] [--dry-run] [--include-running]`
 - `qcold agent prune-stale [--max-age-hours <n>] [--include-attached] [--dry-run] [--verbose]`
 - `qcold agent attach <agent-id|terminal-target|session|name>`
 - `qcold agent start [--name <zellij-pane-name>] --track <track> -- <command>...`
