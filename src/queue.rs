@@ -32,7 +32,7 @@ pub(crate) struct QueueArgs {
 enum QueueCommand {
     #[command(about = "Submit a new queue run to the dashboard daemon")]
     Run(QueueRunArgs),
-    #[command(about = "Create an empty queue tab and make it active")]
+    #[command(about = "Create an empty queue tab")]
     Create(QueueCreateArgs),
     #[command(about = "Switch the active queue tab")]
     Switch(QueueSwitchArgs),

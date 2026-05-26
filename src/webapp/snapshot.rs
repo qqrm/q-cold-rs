@@ -235,19 +235,22 @@ fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
         .unwrap_or_default()
         .into_iter()
         .map(|tab| {
-            let run = tab.run_id.as_ref().and_then(|run_id| runs.get(run_id));
-            let status = run.map_or_else(|| "draft".to_string(), |(run, _)| run.status.clone());
-            let running = run.is_some_and(|(run, items)| queue_run_has_live_work(run, items));
+            let run_entry = tab.run_id.as_ref().and_then(|run_id| runs.get(run_id));
+            let status =
+                run_entry.map_or_else(|| "draft".to_string(), |(run, _)| run.status.clone());
+            let running = run_entry.is_some_and(|(run, items)| queue_run_has_live_work(run, items));
             QueueTabSnapshot {
                 id: tab.id,
                 label: tab.label,
                 run_id: tab.run_id,
+                run: run_entry.map(|(run, _)| run.clone()),
+                records: run_entry.map_or_else(Vec::new, |(_, items)| items.clone()),
                 is_default: tab.is_default,
                 active: tab.active,
                 running,
                 status,
-                count: run.map_or(0, |(_, items)| items.len()),
-                message: run.map_or_else(String::new, |(run, _)| run.message.clone()),
+                count: run_entry.map_or(0, |(_, items)| items.len()),
+                message: run_entry.map_or_else(String::new, |(run, _)| run.message.clone()),
                 updated_at: tab.updated_at,
             }
         })

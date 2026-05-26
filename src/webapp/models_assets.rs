@@ -36,6 +36,8 @@ pub(crate) struct QueueTabSnapshot {
     pub(crate) id: String,
     pub(crate) label: String,
     pub(crate) run_id: Option<String>,
+    pub(crate) run: Option<state::QueueRunRow>,
+    pub(crate) records: Vec<state::QueueItemRow>,
     pub(crate) is_default: bool,
     pub(crate) active: bool,
     pub(crate) running: bool,
@@ -751,6 +753,11 @@ struct QueueUpdateItemRequest {
     repo_name: Option<String>,
     agent_command: Option<String>,
     remote_launcher: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct QueueStopRequest {
+    pub(crate) run_id: Option<String>,
 }
 
 #[derive(Deserialize)]

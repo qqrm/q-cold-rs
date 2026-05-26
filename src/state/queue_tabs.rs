@@ -117,9 +117,25 @@ pub fn activate_web_queue_tab(tab_id: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn assign_web_queue_run_to_tab(tab_id: &str, run_id: &str) -> Result<()> {
-    let connection = open_db()?;
-    ensure_default_web_queue_tab(&connection)?;
+fn web_queue_tab_run_id(connection: &Connection, tab_id: &str) -> Result<Option<String>> {
+    ensure_default_web_queue_tab(connection)?;
+    connection
+        .query_row(
+            "select run_id from web_queue_tabs where id = ?1",
+            [tab_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .context("failed to query web queue tab run")?
+        .with_context(|| format!("unknown queue tab: {tab_id}"))
+}
+
+fn assign_web_queue_run_to_tab_in_connection(
+    connection: &Connection,
+    tab_id: &str,
+    run_id: &str,
+) -> Result<()> {
+    ensure_default_web_queue_tab(connection)?;
     let updated = connection
         .execute(
             "update web_queue_tabs set run_id = ?2, updated_at_unix = ?3 where id = ?1",

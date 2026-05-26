@@ -236,11 +236,13 @@ the request. Use `--listen <addr>` to target another local dashboard daemon, or
 
 Queue tabs let one dashboard daemon keep separate task queues for different
 repositories or workstreams. The default `Task Queue` tab is always present.
-`qcold queue create` creates and activates an empty tab, `qcold queue switch`
-changes which tab receives default run/append/stop/continue operations, and
-`qcold queue delete` removes a non-default tab only when it has no running
-queue work. The web dashboard exposes the same tabs above the queue editor.
-Use the dashboard `New queue` button to create and activate another queue tab.
+`qcold queue create` creates an empty tab, `qcold queue switch` changes which
+tab receives CLI default run/append/stop/continue operations, and `qcold queue
+delete` removes a non-default tab only when it has no running queue work. The
+web dashboard exposes the same tabs above the queue editor, but dashboard tab
+selection is browser-local view state rather than a database-backed queue
+mutation. Use the dashboard `New queue` button to create and select another
+queue tab in the current browser.
 
 Prompt packages can be JSON manifests, directories, plain text files, or ZIP
 archives. A JSON manifest may define shared `layers`, optional

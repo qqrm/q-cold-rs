@@ -473,8 +473,12 @@ async fn api_queue_clear(
     no_store((status, Json(response)))
 }
 
-async fn api_queue_stop(headers: HeaderMap) -> impl IntoResponse {
-    let response = handle_queue_stop(&headers);
+async fn api_queue_stop(
+    headers: HeaderMap,
+    payload: Option<Json<QueueStopRequest>>,
+) -> impl IntoResponse {
+    let payload = payload.map_or(QueueStopRequest { run_id: None }, |Json(payload)| payload);
+    let response = handle_queue_stop(&headers, &payload);
     refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {
         StatusCode::OK

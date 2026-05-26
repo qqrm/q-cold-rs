@@ -38,9 +38,6 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
         .as_deref()
         .map(clean_queue_tab_id)
         .filter(|value| !value.is_empty());
-    if let Some(tab_id) = tab_id.as_deref() {
-        state::activate_web_queue_tab(tab_id)?;
-    }
     let execution_mode = clean_queue_execution_mode(payload.execution_mode.as_deref());
     let now = unix_now();
     let run = queue_run_from_request(&run_id, &payload, &selected_agent_command, execution_mode, now);
@@ -55,9 +52,10 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     let mut used_slugs = HashSet::new();
     let mut items = queue_items_from_requests(&run, prompts, 0, &mut used_slugs, now);
     normalize_queue_dependencies(&run.execution_mode, &mut items)?;
-    state::replace_web_queue(&run, &items)?;
     if let Some(tab_id) = tab_id.as_deref() {
-        state::assign_web_queue_run_to_tab(tab_id, &run_id)?;
+        state::replace_web_queue_for_tab(tab_id, &run, &items)?;
+    } else {
+        state::replace_web_queue(&run, &items)?;
     }
     spawn_web_queue_worker(run_id.clone());
     Ok(run_id)
@@ -218,8 +216,8 @@ fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) 
     Ok(count)
 }
 
-fn handle_queue_stop(headers: &HeaderMap) -> TerminalSendResponse {
-    match handle_queue_stop_result(headers) {
+fn handle_queue_stop(headers: &HeaderMap, payload: &QueueStopRequest) -> TerminalSendResponse {
+    match handle_queue_stop_result(headers, payload) {
         Ok(()) => TerminalSendResponse {
             ok: true,
             output: "queue stop requested".to_string(),
@@ -231,11 +229,16 @@ fn handle_queue_stop(headers: &HeaderMap) -> TerminalSendResponse {
     }
 }
 
-fn handle_queue_stop_result(headers: &HeaderMap) -> Result<()> {
+fn handle_queue_stop_result(headers: &HeaderMap, payload: &QueueStopRequest) -> Result<()> {
     if webapp_write_token_required() {
         require_write_token(headers)?;
     }
-    state::request_web_queue_stop(None)
+    let run_id = payload
+        .run_id
+        .as_deref()
+        .map(clean_queue_run_id)
+        .filter(|run_id| !run_id.is_empty());
+    state::request_web_queue_stop(run_id.as_deref())
 }
 
 fn handle_queue_continue(
@@ -300,7 +303,6 @@ fn handle_queue_tab_create_result(
     let tab_id = unique_queue_tab_id(&fallback)?;
     let label = clean_queue_tab_label(raw_label);
     state::create_web_queue_tab(&tab_id, &label)?;
-    state::activate_web_queue_tab(&tab_id)?;
     Ok(tab_id)
 }
 

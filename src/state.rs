@@ -137,12 +137,31 @@ pub fn load_terminal_metadata() -> Result<Vec<TerminalMetadataRow>> {
 include!("state/queue_tabs.rs");
 
 pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()> {
+    replace_web_queue_with_assignment(run, items, None)
+}
+
+pub fn replace_web_queue_for_tab(
+    tab_id: &str,
+    run: &QueueRunRow,
+    items: &[QueueItemRow],
+) -> Result<()> {
+    replace_web_queue_with_assignment(run, items, Some(tab_id))
+}
+
+fn replace_web_queue_with_assignment(
+    run: &QueueRunRow,
+    items: &[QueueItemRow],
+    tab_id: Option<&str>,
+) -> Result<()> {
     let mut connection = open_db()?;
     let tx = connection
         .transaction()
         .context("failed to start web queue transaction")?;
     ensure_default_web_queue_tab(&tx)?;
-    let previous_run_id = active_web_queue_run_id(&tx)?;
+    let previous_run_id = match tab_id {
+        Some(tab_id) => web_queue_tab_run_id(&tx, tab_id)?,
+        None => active_web_queue_run_id(&tx)?,
+    };
     tx.execute("delete from web_queue_items where run_id = ?1", [run.id.as_str()])
         .context("failed to clear web queue items")?;
     tx.execute(
@@ -209,7 +228,10 @@ pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()
         )
         .context("failed to insert web queue item")?;
     }
-    assign_web_queue_run_to_active_tab(&tx, &run.id)?;
+    match tab_id {
+        Some(tab_id) => assign_web_queue_run_to_tab_in_connection(&tx, tab_id, &run.id)?,
+        None => assign_web_queue_run_to_active_tab(&tx, &run.id)?,
+    }
     if let Some(previous_run_id) = previous_run_id.as_deref().filter(|id| *id != run.id) {
         delete_unreferenced_web_queue_run(&tx, previous_run_id)?;
     }

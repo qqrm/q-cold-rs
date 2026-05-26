@@ -710,10 +710,9 @@
         const tabId = String(payload.output || '').split('\t')[1] || '';
         if (tabId) {
           activeQueueTabId = tabId;
-          pinQueueTabSwitch(tabId);
+          localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
         }
         await loadSnapshot();
-        if (tabId) releaseQueueTabSwitch(tabId);
       } catch (err) {
         appendLocalMessage('error', String(err));
       } finally {
@@ -722,36 +721,13 @@
       }
     }
 
-    async function switchQueueTab(tabId) {
+    function switchQueueTab(tabId) {
       if (!tabId || tabId === activeQueueTabId) return;
-      const switchSerial = ++queueTabSwitchSerial;
       if (!queueHasBackendRun()) saveQueueStorage();
-      pinQueueTabSwitch(tabId);
       activeQueueTabId = tabId;
-      loadActiveQueueDraft();
+      localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
+      syncQueueFromSnapshot();
       renderQueue();
-      try {
-        const response = await fetch('/api/queue/tab/switch', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ tab_id: tabId }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (switchSerial !== queueTabSwitchSerial) return;
-        if (!response.ok || payload.ok === false) {
-          clearQueueTabSwitch(tabId);
-          appendLocalMessage('error', payload.output || 'failed to switch queue');
-          await loadSnapshot();
-          return;
-        }
-        await loadSnapshot();
-        releaseQueueTabSwitch(tabId);
-      } catch (err) {
-        if (switchSerial !== queueTabSwitchSerial) return;
-        clearQueueTabSwitch(tabId);
-        appendLocalMessage('error', String(err));
-        await loadSnapshot();
-      }
     }
 
     async function deleteQueueTab(tabId) {
@@ -770,7 +746,11 @@
           return;
         }
         clearQueueDraft(tabId);
-        if (activeQueueTabId === tabId) activeQueueTabId = 'default';
+        if (activeQueueTabId === tabId) {
+          const fallback = queueTabsModel.find((candidate) => candidate.id !== tabId);
+          activeQueueTabId = fallback?.id || 'default';
+          localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
+        }
         await loadSnapshot();
       } catch (err) {
         appendLocalMessage('error', String(err));
@@ -802,10 +782,21 @@
         await continueQueue();
         return;
       }
+      const runId = queueRun.runId || queueItems.find((item) => item.runId)?.runId || '';
+      if (!runId) return;
       queueRun.stop = true;
       appendLocalMessage('status', 'Stop requested');
       try {
-        await fetch('/api/queue/stop', { method: 'POST' });
+        const response = await fetch('/api/queue/stop', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ run_id: runId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to stop queue');
+          return;
+        }
         await loadSnapshot();
       } catch (err) {
         appendLocalMessage('error', String(err));

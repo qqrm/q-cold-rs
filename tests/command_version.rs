@@ -5,6 +5,7 @@
 )]
 
 use assert_cmd::Command as AssertCommand;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::{contains, is_match};
 
 const QCOLD_VERSION_PATTERN: &str = r"qcold \d+\.\d+\.\d+\.\d+ [0-9a-f]{12}(-dirty)?\n";
@@ -52,5 +53,7 @@ fn queue_help_exposes_console_queue_commands() {
         .assert()
         .success()
         .stdout(contains("Submit a new queue run"))
+        .stdout(contains("Create an empty queue tab"))
+        .stdout(contains("make it active").not())
         .stdout(contains("Append prompt items"));
 }

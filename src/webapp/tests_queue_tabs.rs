@@ -53,6 +53,89 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_run_can_target_tab_without_switching_backend_active_tab() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let default_run = queue_run_fixture("default-run", "running", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "pending", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        state::create_web_queue_tab("client", "Client").unwrap();
+        let client_run = queue_run_fixture("client-run", "waiting", -1);
+        let client_item = queue_item_fixture("client-run", "client-item", 0, "pending", None);
+
+        state::replace_web_queue_for_tab("client", &client_run, &[client_item]).unwrap();
+
+        let (active_run, active_items) = state::load_web_queue().unwrap();
+        let default_tab = state::load_web_queue_tab("default").unwrap().unwrap();
+        let client_tab = state::load_web_queue_tab("client").unwrap().unwrap();
+        assert_eq!(active_run.unwrap().id, "default-run");
+        assert_eq!(active_items[0].id, "default-item");
+        assert!(default_tab.active);
+        assert!(!client_tab.active);
+        assert_eq!(default_tab.run_id.as_deref(), Some("default-run"));
+        assert_eq!(client_tab.run_id.as_deref(), Some("client-run"));
+    }
+
+    #[test]
+    fn queue_stop_can_target_visible_tab_without_backend_active_tab() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let default_run = queue_run_fixture("default-run", "running", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "pending", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        state::create_web_queue_tab("client", "Client").unwrap();
+        let client_run = queue_run_fixture("client-run", "running", -1);
+        let client_item = queue_item_fixture("client-run", "client-item", 0, "pending", None);
+        state::replace_web_queue_for_tab("client", &client_run, &[client_item]).unwrap();
+
+        let response = handle_queue_stop(
+            &HeaderMap::new(),
+            &QueueStopRequest {
+                run_id: Some("client-run".to_string()),
+            },
+        );
+
+        let (default_run, _) = state::load_web_queue_run("default-run").unwrap();
+        let (client_run, _) = state::load_web_queue_run("client-run").unwrap();
+        assert!(response.ok);
+        assert_eq!(default_run.unwrap().status, "running");
+        assert_eq!(client_run.unwrap().status, "stopping");
+    }
+
+    #[test]
+    fn queue_tab_snapshot_carries_records_for_each_tab() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let default_run = queue_run_fixture("default-run", "running", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "pending", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        state::create_web_queue_tab("client", "Client").unwrap();
+        let client_run = queue_run_fixture("client-run", "waiting", -1);
+        let client_item = queue_item_fixture("client-run", "client-item", 0, "pending", None);
+        state::replace_web_queue_for_tab("client", &client_run, &[client_item]).unwrap();
+
+        let snapshot = queue_snapshot();
+        let default_tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == "default")
+            .expect("default tab should be present");
+        let client_tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == "client")
+            .expect("client tab should be present");
+
+        assert_eq!(default_tab.run.as_ref().unwrap().id, "default-run");
+        assert_eq!(default_tab.records[0].id, "default-item");
+        assert_eq!(client_tab.run.as_ref().unwrap().id, "client-run");
+        assert_eq!(client_tab.records[0].id, "client-item");
+    }
+
+    #[test]
     fn duplicate_queue_run_tab_reference_is_repaired() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

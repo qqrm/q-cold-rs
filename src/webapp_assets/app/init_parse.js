@@ -38,19 +38,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
     const queueStorageKey = 'qcold-task-queue-v4';
     const queueDraftsStorageKey = 'qcold-task-queue-drafts-v1';
+    const queueActiveTabStorageKey = 'qcold-task-queue-active-tab-v1';
     const queueAgentStorageKey = 'qcold-task-queue-agent-v1';
     const queueRepoStorageKey = 'qcold-task-queue-repo-v1';
     const queueGraphModeStorageKey = 'qcold-task-queue-graph-mode-v1';
     let selectedQueueAgent = localStorage.getItem(queueAgentStorageKey) || '';
     let selectedQueueRepoRoot = localStorage.getItem(queueRepoStorageKey) || '';
-    let activeQueueTabId = 'default';
+    let activeQueueTabId = localStorage.getItem(queueActiveTabStorageKey) || 'default';
     let queueTabsModel = [];
     let queueGraphMode = localStorage.getItem(queueGraphModeStorageKey) === '1';
     let queueTabCreating = false;
-    let queueTabSwitchSerial = 0;
-    let queueTabSwitchPinnedId = '';
-    let queueTabSwitchPinnedUntil = 0;
-    const queueTabSwitchPinMs = 900;
     const queueSaved = loadQueueStorageForTab(activeQueueTabId);
     if (typeof queueSaved.graphMode === 'boolean') queueGraphMode = queueSaved.graphMode;
     let queueItems = (queueSaved.items || [])
@@ -529,25 +526,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function syncQueueFromSnapshot() {
       const nextTabs = queueTabsFromSnapshot();
-      const snapshotActiveTabId = state?.queue?.active_tab_id
-        || nextTabs.find((tab) => tab.active)?.id
-        || activeQueueTabId
-        || 'default';
-      const nextActiveTabId = pinnedQueueTabId(nextTabs) || snapshotActiveTabId;
+      const nextActiveTabId = selectedQueueTabId(nextTabs);
       if (nextActiveTabId !== activeQueueTabId && !queueHasBackendRun()) saveQueueStorage();
       activeQueueTabId = nextActiveTabId;
+      localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
       queueTabsModel = nextTabs;
       const activeTab = queueTabsModel.find((tab) => tab.id === activeQueueTabId) || queueTabsModel[0];
-      if (activeTabSnapshotRunMatches(activeTab) && (state?.queue?.run || state?.queue?.records?.length)) {
-        const nextRunId = state.queue.run?.id || existingQueueRunId();
-        const nextExecutionMode = state.queue.run?.execution_mode || '';
+      if (activeTab?.run) {
+        const nextRunId = activeTab.run.id || activeTab.runId || existingQueueRunId();
+        const nextExecutionMode = activeTab.run.execution_mode || '';
         const preservedWaves = queueRun.runId && queueRun.runId === nextRunId && nextExecutionMode === 'graph'
           ? queueWaves
           : [];
         clearQueueDraft(activeQueueTabId);
         const previousItems = new Map(queueItems.map((item) => [item.id, item]));
         pruneQueueRemovalTombstones();
-        queueItems = (state.queue.records || [])
+        queueItems = (activeTab.records || [])
           .map(queueItemFromServer)
           .map((item) => ({
             ...item,
@@ -556,12 +550,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
           .filter((item) => !queueItemRemovedOrRemoving(item));
         queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });
         queueRun = {
-          running: Boolean(state.queue.running),
-          stopped: state.queue.run?.status === 'stopped',
+          running: Boolean(activeTab.running),
+          stopped: activeTab.run.status === 'stopped',
           stop: false,
-          activeIndex: Number(state.queue.run?.current_index ?? -1),
+          activeIndex: Number(activeTab.run.current_index ?? -1),
           runId: nextRunId,
-          status: state.queue.run?.status || '',
+          status: activeTab.run.status || '',
         };
         queueGraphMode = nextExecutionMode === 'graph';
         return;
@@ -573,34 +567,12 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (queueTaskRecords().length) reconcileDraftQueueItems();
     }
 
-    function activeTabSnapshotRunMatches(activeTab) {
-      if (!activeTab?.runId) return false;
-      return state?.queue?.run?.id === activeTab.runId;
-    }
-
-    function pinnedQueueTabId(tabs) {
-      if (!queueTabSwitchPinnedId) return '';
-      if (Date.now() > queueTabSwitchPinnedUntil) {
-        queueTabSwitchPinnedId = '';
-        return '';
-      }
-      return tabs.some((tab) => tab.id === queueTabSwitchPinnedId) ? queueTabSwitchPinnedId : '';
-    }
-
-    function pinQueueTabSwitch(tabId) {
-      queueTabSwitchPinnedId = tabId;
-      queueTabSwitchPinnedUntil = Date.now() + queueTabSwitchPinMs;
-    }
-
-    function releaseQueueTabSwitch(tabId) {
-      if (queueTabSwitchPinnedId !== tabId) return;
-      queueTabSwitchPinnedUntil = Math.max(queueTabSwitchPinnedUntil, Date.now() + 300);
-    }
-
-    function clearQueueTabSwitch(tabId) {
-      if (tabId && queueTabSwitchPinnedId !== tabId) return;
-      queueTabSwitchPinnedId = '';
-      queueTabSwitchPinnedUntil = 0;
+    function selectedQueueTabId(tabs) {
+      if (!Array.isArray(tabs) || !tabs.length) return 'default';
+      if (tabs.some((tab) => tab.id === activeQueueTabId)) return activeQueueTabId;
+      const savedTabId = localStorage.getItem(queueActiveTabStorageKey) || '';
+      if (tabs.some((tab) => tab.id === savedTabId)) return savedTabId;
+      return tabs.find((tab) => tab.active)?.id || tabs[0].id || 'default';
     }
 
     function queueTabsFromSnapshot() {
@@ -618,6 +590,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         status: tab.status || '',
         count: Number(tab.count || 0),
         message: tab.message || '',
+        run: tab.run || null,
+        records: Array.isArray(tab.records) ? tab.records : [],
       }));
     }
 

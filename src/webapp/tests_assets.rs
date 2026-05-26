@@ -69,10 +69,12 @@ mod asset_tests {
         assert!(QUEUE_CSS.contains(".queue-create"));
         assert!(APP_JS.contains("function renderQueueTabs()"));
         assert!(APP_JS.contains("createQueueTabButton.addEventListener('click', createQueueTab)"));
-        assert!(APP_JS.contains("function activeTabSnapshotRunMatches(activeTab)"));
-        assert!(APP_JS.contains("function pinnedQueueTabId(tabs)"));
-        assert!(APP_JS.contains("const switchSerial = ++queueTabSwitchSerial"));
+        assert!(APP_JS.contains("const queueActiveTabStorageKey"));
+        assert!(APP_JS.contains("function switchQueueTab(tabId)"));
+        assert!(APP_JS.contains("localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId)"));
         assert!(APP_JS.contains("/api/queue/tab/create"));
+        assert!(!APP_JS.contains("/api/queue/tab/switch"));
         assert!(APP_JS.contains("tab_id: activeQueueTabId"));
+        assert!(APP_JS.contains("body: JSON.stringify({ run_id: runId })"));
     }
 }
