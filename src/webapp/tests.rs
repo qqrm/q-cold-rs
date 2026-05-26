@@ -97,6 +97,7 @@ mod tests {
         assert_eq!(key, TerminalKey::Up);
         assert_eq!(key.tmux(), "Up");
         assert_eq!(key.zellij(), "Up");
+        assert_eq!(TerminalKey::LineFeed.tmux(), "C-j");
         assert!(clean_terminal_key("$(touch /tmp/nope)").is_err());
     }
 
@@ -670,13 +671,7 @@ mod tests {
             queue_item_fixture("graph", "second", 1, "pending", None),
             queue_item_fixture("graph", "third", 2, "pending", None),
         ];
-        items[2].depends_on = vec![
-            "first".to_string(),
-            "missing".to_string(),
-            "first".to_string(),
-            "third".to_string(),
-            "second".to_string(),
-        ];
+        items[2].depends_on = ids(&["task-first", "missing", "task-first", "task-third", "second"]);
 
         normalize_queue_dependencies("graph", &mut items).unwrap();
 
@@ -728,8 +723,8 @@ mod tests {
             queue_item_fixture("graph", "first", 0, "pending", None),
             queue_item_fixture("graph", "second", 1, "pending", None),
         ];
-        items[0].depends_on = vec!["second".to_string()];
-        items[1].depends_on = vec!["first".to_string()];
+        items[0].depends_on = vec!["task-second".to_string()];
+        items[1].depends_on = vec!["task-first".to_string()];
 
         assert!(normalize_queue_dependencies("graph", &mut items).is_err());
     }

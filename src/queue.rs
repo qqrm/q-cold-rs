@@ -140,6 +140,7 @@ struct QueuePackage {
     run_id: Option<String>,
     execution_mode: Option<String>,
     selected_agent_command: Option<String>,
+    selected_remote_launcher: Option<String>,
     selected_repo_root: Option<String>,
     selected_repo_name: Option<String>,
     items: Vec<QueuePackageItem>,
@@ -154,6 +155,7 @@ struct QueuePackageItem {
     repo_root: Option<String>,
     repo_name: Option<String>,
     agent_command: Option<String>,
+    remote_launcher: Option<String>,
 }
 
 #[derive(Clone)]
@@ -168,6 +170,7 @@ struct QueueRunRequest {
     tab_id: Option<String>,
     execution_mode: Option<String>,
     selected_agent_command: String,
+    selected_remote_launcher: Option<String>,
     selected_repo_root: Option<String>,
     selected_repo_name: Option<String>,
     items: Vec<QueueRunItemRequest>,
@@ -182,6 +185,7 @@ struct QueueRunItemRequest {
     repo_root: Option<String>,
     repo_name: Option<String>,
     agent_command: Option<String>,
+    remote_launcher: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -249,6 +253,7 @@ fn run_queue(args: QueueRunArgs) -> Result<u8> {
                 .unwrap_or_else(|| args.execution_mode.as_str().to_string()),
         ),
         selected_agent_command,
+        selected_remote_launcher: package.selected_remote_launcher.or_else(queue_remote_launcher_from_env),
         selected_repo_root: Some(selected_repo_root.display().to_string()),
         selected_repo_name,
         items: package.items.into_iter().map(QueueRunItemRequest::from).collect(),
@@ -260,6 +265,10 @@ fn run_queue(args: QueueRunArgs) -> Result<u8> {
 
 fn append_queue(args: QueueAppendArgs) -> Result<u8> {
     let package = load_prompt_package(&args.source)?;
+    let package_remote_launcher = package
+        .selected_remote_launcher
+        .clone()
+        .or_else(queue_remote_launcher_from_env);
     let run_id = args
         .run_id
         .or(package.run_id)
@@ -283,6 +292,9 @@ fn append_queue(args: QueueAppendArgs) -> Result<u8> {
                     .repo_name
                     .clone()
                     .or_else(|| package.selected_repo_name.clone());
+            }
+            if item.remote_launcher.is_none() {
+                item.remote_launcher.clone_from(&package_remote_launcher);
             }
             QueueRunItemRequest::from(item)
         })
@@ -429,6 +441,12 @@ fn default_agent_command() -> Result<String> {
         .context("no supported agent command found on PATH")
 }
 
+fn queue_remote_launcher_from_env() -> Option<String> {
+    let value = std::env::var("QCOLD_QUEUE_REMOTE_LAUNCHER").ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 fn current_queue_run_id() -> Result<String> {
     let (run, _) = state::load_web_queue()?;
     run.map(|run| run.id)
@@ -455,6 +473,7 @@ impl From<QueuePackageItem> for QueueRunItemRequest {
             repo_root: item.repo_root,
             repo_name: item.repo_name,
             agent_command: item.agent_command,
+            remote_launcher: item.remote_launcher,
         }
     }
 }
@@ -747,6 +766,8 @@ fn package_from_json_value(value: Value) -> Result<QueuePackage> {
                 execution_mode: json_string_field(&object, "execution_mode"),
                 selected_agent_command: json_string_field(&object, "selected_agent_command")
                     .or_else(|| json_string_field(&object, "agent_command")),
+                selected_remote_launcher: json_string_field(&object, "selected_remote_launcher")
+                    .or_else(|| json_string_field(&object, "remote_launcher")),
                 selected_repo_root: json_string_field(&object, "selected_repo_root")
                     .or_else(|| json_string_field(&object, "repo_root")),
                 selected_repo_name: json_string_field(&object, "selected_repo_name")
@@ -799,6 +820,7 @@ fn json_item(
                 repo_root: json_string_field(object, "repo_root"),
                 repo_name: json_string_field(object, "repo_name"),
                 agent_command: json_string_field(object, "agent_command"),
+                remote_launcher: json_string_field(object, "remote_launcher"),
             })
         }
         _ => bail!("queue item must be a string or object"),

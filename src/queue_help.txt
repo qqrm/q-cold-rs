@@ -40,5 +40,6 @@ Directory or ZIP package convention:
   queue.json       preferred manifest when present
 
 Graph execution is available with `execution_mode: "graph"` and per-item
-`depends_on` arrays in JSON. Queue items are still executed through managed
+`depends_on` arrays in JSON. Dependencies may reference item ids or slugs and
+are stored as item ids. Queue items are still executed through managed
 `qcold task open` plus terminal closeout; the queue owns the agent lifecycle.

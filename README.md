@@ -245,10 +245,11 @@ Use the dashboard `New queue` button to create and activate another queue tab.
 Prompt packages can be JSON manifests, directories, plain text files, or ZIP
 archives. A JSON manifest may define shared `layers`, optional
 `default_layers`, an `execution_mode` of `sequence` or `graph`, and queued
-`items` with `prompt`, `slug`, and optional `depends_on` fields. Directory and
-ZIP packages use `layers/*.md` as shared prompt layers and `prompts/*.md` or
-`tasks/*.md` as queued task prompts; a root `queue.json` manifest takes
-precedence when present.
+`items` with `prompt`, `slug`, and optional `depends_on` fields. Graph
+`depends_on` entries may name either an item `id` or `slug`; the backend stores
+them as item ids. Directory and ZIP packages use `layers/*.md` as shared prompt
+layers and `prompts/*.md` or `tasks/*.md` as queued task prompts; a root
+`queue.json` manifest takes precedence when present.
 
 ## Web interface
 
@@ -350,11 +351,13 @@ repository root, sends the task slug and prompt, and tells that executor to use
 the repository-native task-flow contract from `AGENTS.md` and the operator
 request. If remote work, a devcontainer, full-QEMU, or another proof
 environment is required, the executor opens or enters that environment itself.
-`QCOLD_QUEUE_REMOTE_LAUNCHER=<launcher>` or an explicit queue payload launcher
-is passed only as an `available_remote_launcher` hint for that executor; it is
-not a selected profile and Q-COLD does not run `qcold task open-remote` on the
-executor's behalf. Set `QCOLD_QUEUE_REMOTE_LAUNCHER=local` to suppress that
-launcher hint.
+`QCOLD_QUEUE_REMOTE_LAUNCHER=<launcher>` from the submitting CLI process,
+`selected_remote_launcher` on a queue JSON payload, or per-item
+`remote_launcher` is passed only as an `available_remote_launcher` hint for that
+executor; it is not a selected profile and Q-COLD does not run
+`qcold task open-remote` on the executor's behalf. Set
+`QCOLD_QUEUE_REMOTE_LAUNCHER=local` or a JSON launcher value of `local` to
+suppress that launcher hint.
 Direct terminal agents started from a repository through Q-COLD wrappers are
 also valid task entry points. Those agents run from
 `../WT/<repo>/agents/<agent>` worktrees with `QCOLD_REPO_ROOT` pointing at the

@@ -616,15 +616,24 @@ fn normalize_queue_dependencies(
         }
         return Ok(());
     }
-    let ids = items
-        .iter()
-        .map(|item| item.id.clone())
-        .collect::<HashSet<_>>();
+    let mut references = HashMap::new();
+    for item in items.iter() {
+        references.insert(item.id.clone(), item.id.clone());
+    }
+    for item in items.iter() {
+        references
+            .entry(item.slug.clone())
+            .or_insert_with(|| item.id.clone());
+    }
     for item in items.iter_mut() {
+        let item_id = item.id.clone();
         let mut seen = HashSet::new();
-        item.depends_on.retain(|dependency| {
-            dependency != &item.id && ids.contains(dependency) && seen.insert(dependency.clone())
-        });
+        item.depends_on = item
+            .depends_on
+            .iter()
+            .filter_map(|dependency| references.get(dependency).cloned())
+            .filter(|dependency_id| dependency_id != &item_id && seen.insert(dependency_id.clone()))
+            .collect();
     }
     if queue_dependency_graph_has_cycle(items) {
         bail!("queue dependency graph contains a cycle");

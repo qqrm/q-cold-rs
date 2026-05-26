@@ -30,6 +30,30 @@ fn json_plan_applies_default_layers() {
 }
 
 #[test]
+fn json_plan_preserves_remote_launcher_hints() {
+    let package = parse_json_package(
+        r#"{
+            "selected_remote_launcher": "remote-dev-env",
+            "items": [
+                {"slug":"remote","prompt":"do remote"},
+                {"slug":"local","prompt":"do local","remote_launcher":"local"}
+            ]
+        }"#,
+        "test",
+    )
+    .unwrap();
+
+    assert_eq!(
+        package.selected_remote_launcher.as_deref(),
+        Some("remote-dev-env")
+    );
+    assert_eq!(
+        package.items[1].remote_launcher.as_deref(),
+        Some("local")
+    );
+}
+
+#[test]
 fn json_item_layers_can_override_defaults() {
     let package = parse_json_package(
         r#"{

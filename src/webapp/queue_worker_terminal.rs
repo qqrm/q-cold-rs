@@ -36,7 +36,7 @@ fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
     let Some(target) = agent_terminal_target(agent_id) else {
         return Ok(false);
     };
-    send_terminal_key(&target, TerminalKey::Enter)?;
+    send_terminal_submit(&target)?;
     Ok(true)
 }
 

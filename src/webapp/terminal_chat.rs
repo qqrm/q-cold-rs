@@ -580,6 +580,7 @@ enum TerminalKey {
     End,
     PageUp,
     PageDown,
+    LineFeed,
 }
 
 impl TerminalKey {
@@ -598,6 +599,7 @@ impl TerminalKey {
             Self::End => "End",
             Self::PageUp => "PageUp",
             Self::PageDown => "PageDown",
+            Self::LineFeed => "C-j",
         }
     }
 
@@ -616,6 +618,7 @@ impl TerminalKey {
             Self::End => "End",
             Self::PageUp => "PageUp",
             Self::PageDown => "PageDown",
+            Self::LineFeed => "Enter",
         }
     }
 }
@@ -699,11 +702,15 @@ fn send_terminal_key(target: &str, key: TerminalKey) -> Result<()> {
     }
 }
 
+fn send_terminal_submit(target: &str) -> Result<()> {
+    send_terminal_key(target, TerminalKey::LineFeed)
+}
+
 fn send_tmux_terminal_paste(target: &str, text: &str, submit: bool) -> Result<()> {
     paste_terminal_text(target, text)?;
     if submit {
         thread::sleep(terminal_paste_submit_delay(text));
-        send_tmux_terminal_key(target, TerminalKey::Enter)?;
+        send_tmux_terminal_key(target, TerminalKey::LineFeed)?;
     }
     Ok(())
 }
@@ -717,7 +724,7 @@ fn send_tmux_terminal_literal(target: &str, text: &str, submit: bool) -> Result<
         bail!("tmux send-keys literal failed with {status}");
     }
     if submit {
-        send_tmux_terminal_key(target, TerminalKey::Enter)?;
+        send_tmux_terminal_key(target, TerminalKey::LineFeed)?;
     }
     Ok(())
 }
