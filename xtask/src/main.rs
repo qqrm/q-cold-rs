@@ -5,8 +5,9 @@
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::{Command, ExitCode, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
@@ -488,22 +489,35 @@ fn closeout_success_inner(
     task.task_head = git_output(&task.task_worktree, ["rev-parse", "HEAD"])
         .context("closeout phase proof-run-index failed")?;
     update_proof_run_index(task).context("closeout phase proof-run-index failed")?;
+    record_closeout_phase(task, phase, "pre-merge-review")?;
+    run_pre_merge_review(task).context("closeout phase pre-merge-review failed")?;
     record_closeout_phase(task, phase, "deliver-to-primary")?;
-    if !git_output(&task.task_worktree, ["status", "--porcelain"])?.is_empty() {
+    if !closeout_commit_status_short(task)?.is_empty() {
         record_closeout_phase(task, phase, "commit-task-worktree")?;
-        run_git(&task.task_worktree, ["add", "-A"])
-            .context("closeout phase commit-task-worktree failed")?;
+        run_git(
+            &task.task_worktree,
+            ["add", "-A", "--", ".", ":(exclude).task"],
+        )
+        .context("closeout phase commit-task-worktree failed")?;
         run_git(&task.task_worktree, ["commit", "-m", message])
             .context("closeout phase commit-task-worktree failed")?;
     }
     *phase = "deliver-to-primary";
     deliver_task_branch_to_primary(task).context("closeout phase deliver-to-primary failed")?;
     task.status = "closed:success".to_string();
+    task.task_head = git_output(&task.task_worktree, ["rev-parse", "HEAD"])
+        .context("closeout phase terminal-bundle failed")?;
     task.updated_at = unix_now().to_string();
     write_task_env(task)?;
     append_event(&task.task_worktree, "task-closeout", "success")?;
+    record_closeout_phase(task, phase, "terminal-bundle")?;
+    let bundle =
+        create_task_archive_bundle(task).context("closeout phase terminal-bundle failed")?;
     let worktree = task.task_worktree.clone();
     let branch = task.task_branch.clone();
+    let task_status = worktree_status_summary(&task.task_worktree)?;
+    let primary_status = worktree_status_summary(&task.primary_repo_path)?;
+    let review_metadata = read_pre_merge_review_metadata(task);
     if let Some(agent_worktree) = agent_worktree {
         record_closeout_phase(task, phase, "agent-return-cleanup")?;
         run_git(&worktree, ["checkout", "--detach"])
@@ -516,7 +530,16 @@ fn closeout_success_inner(
         }
         run_git(&task.primary_repo_path, ["branch", "-d", &branch])
             .context("closeout phase cleanup-agent failed")?;
+        let receipt = success_terminal_receipt(
+            message,
+            review_metadata.as_ref(),
+            primary_status,
+            task_status,
+            false,
+        );
+        warn_if_receipt_append_fails(&bundle, &receipt);
         println!("task-closeout\tsuccess\t{}", task.task_name);
+        println!("BUNDLE_PATH={}", bundle.display());
         println!("task-return\t{}", agent_worktree.display());
         println!("QCOLD_AGENT_WORKTREE={}", agent_worktree.display());
         return Ok(0);
@@ -531,8 +554,23 @@ fn closeout_success_inner(
         ["worktree", "remove", "--force", path_arg(&worktree)],
     )
     .context("closeout phase cleanup-worktree failed")?;
+    let receipt = success_terminal_receipt(
+        message,
+        review_metadata.as_ref(),
+        primary_status,
+        task_status,
+        true,
+    );
+    warn_if_receipt_append_fails(&bundle, &receipt);
     println!("task-closeout\tsuccess\t{}", task.task_name);
+    println!("BUNDLE_PATH={}", bundle.display());
     Ok(0)
+}
+
+fn warn_if_receipt_append_fails(bundle: &Path, receipt: &TerminalReceipt<'_>) {
+    if let Err(err) = add_terminal_receipt_to_bundle(bundle, receipt) {
+        eprintln!("warning: failed to append terminal receipt to bundle: {err:#}");
+    }
 }
 
 fn record_closeout_phase(
@@ -542,6 +580,18 @@ fn record_closeout_phase(
 ) -> Result<()> {
     *current = next;
     append_event(&task.task_worktree, "task-closeout-phase", next)
+}
+
+fn closeout_commit_status_short(task: &TaskEnv) -> Result<String> {
+    let status = git_output(
+        &task.task_worktree,
+        ["status", "--porcelain", "--untracked-files=all"],
+    )?;
+    Ok(status
+        .lines()
+        .filter(|line| !status_path(line).is_some_and(|path| path.starts_with(".task")))
+        .collect::<Vec<_>>()
+        .join("\n"))
 }
 
 fn record_success_closeout_failure(task: &mut TaskEnv, phase: &str, error: &str) -> Result<()> {
@@ -559,14 +609,17 @@ fn record_success_closeout_failure(task: &mut TaskEnv, phase: &str, error: &str)
         .context("failed to create failed-closeout diagnostic bundle")?;
     let task_status = worktree_status_summary(&task.task_worktree)?;
     let primary_status = worktree_status_summary(&task.primary_repo_path)?;
+    let review_metadata = read_pre_merge_review_metadata(task);
     let receipt = TerminalReceipt {
         outcome: "failed-closeout",
+        message: None,
         reason: Some(error),
         closeout_category: closeout_category("failed-closeout", &task_status),
         current_flow_problem: current_flow_problem("failed-closeout"),
         historical_flow_problem: historical_flow_problem(&task_status),
         closeout_failure_phase: Some(phase),
         closeout_failure_error: Some(error),
+        pre_merge_review: review_metadata.as_ref(),
         primary_clean: primary_status.dirty_file_count == 0,
         worktree_removed: false,
         branch_removed: false,
@@ -650,14 +703,17 @@ fn closeout_non_success(
     )?;
     let branch_removed = git_status(&task.primary_repo_path, ["branch", "-D", &task.task_branch])?;
     let closeout_category = closeout_category(outcome, &task_status);
+    let review_metadata = read_pre_merge_review_metadata(task);
     let receipt = TerminalReceipt {
         outcome,
+        message: None,
         reason,
         closeout_category,
         current_flow_problem: current_flow_problem(outcome),
         historical_flow_problem: historical_flow_problem(&task_status),
         closeout_failure_phase: None,
         closeout_failure_error: None,
+        pre_merge_review: review_metadata.as_ref(),
         primary_clean: primary_status.dirty_file_count == 0,
         worktree_removed,
         branch_removed,
@@ -675,17 +731,44 @@ fn closeout_non_success(
 
 struct TerminalReceipt<'a> {
     outcome: &'a str,
+    message: Option<&'a str>,
     reason: Option<&'a str>,
     closeout_category: &'a str,
     current_flow_problem: &'a str,
     historical_flow_problem: &'a str,
     closeout_failure_phase: Option<&'a str>,
     closeout_failure_error: Option<&'a str>,
+    pre_merge_review: Option<&'a PreMergeReviewMetadata>,
     primary_clean: bool,
     worktree_removed: bool,
     branch_removed: bool,
     primary_status: WorktreeStatusSummary,
     task_status: WorktreeStatusSummary,
+}
+
+fn success_terminal_receipt<'a>(
+    message: &'a str,
+    review: Option<&'a PreMergeReviewMetadata>,
+    primary_status: WorktreeStatusSummary,
+    task_status: WorktreeStatusSummary,
+    worktree_removed: bool,
+) -> TerminalReceipt<'a> {
+    TerminalReceipt {
+        outcome: "success",
+        message: Some(message),
+        reason: None,
+        closeout_category: closeout_category("success", &task_status),
+        current_flow_problem: current_flow_problem("success"),
+        historical_flow_problem: historical_flow_problem(&task_status),
+        closeout_failure_phase: None,
+        closeout_failure_error: None,
+        pre_merge_review: review,
+        primary_clean: primary_status.dirty_file_count == 0,
+        worktree_removed,
+        branch_removed: true,
+        primary_status,
+        task_status,
+    }
 }
 
 struct WorktreeStatusSummary {
@@ -729,7 +812,9 @@ fn is_conflict_status(line: &str) -> bool {
 }
 
 fn closeout_category(outcome: &str, task_status: &WorktreeStatusSummary) -> &'static str {
-    if outcome == "failed-closeout" {
+    if outcome == "success" {
+        "success"
+    } else if outcome == "failed-closeout" {
         "success_closeout_failed"
     } else if task_status.conflict_file_count > 0 {
         "task_worktree_conflicts"
@@ -848,6 +933,7 @@ struct BundleCleanup {
 
 include!("task/cleanup.rs");
 include!("task/bundle.rs");
+include!("task/review.rs");
 include!("task/verify.rs");
 include!("task/env_io.rs");
 include!("task/proof_runs.rs");
