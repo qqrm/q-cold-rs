@@ -334,6 +334,7 @@ fn ensure_default_web_queue_tab(connection: &Connection) -> Result<()> {
             )
             .context("failed to activate default web queue tab")?;
     }
+    deduplicate_web_queue_tab_runs(connection)?;
     Ok(())
 }
 
@@ -375,6 +376,14 @@ fn active_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
 
 fn assign_web_queue_run_to_active_tab(connection: &Connection, run_id: &str) -> Result<()> {
     ensure_default_web_queue_tab(connection)?;
+    connection
+        .execute(
+            "update web_queue_tabs
+             set run_id = null, updated_at_unix = ?2
+             where active = 0 and run_id = ?1",
+            params![run_id, unix_now()],
+        )
+        .context("failed to clear duplicate queue run from inactive tabs")?;
     let updated = connection
         .execute(
             "update web_queue_tabs

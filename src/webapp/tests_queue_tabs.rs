@@ -3,6 +3,7 @@ mod queue_tabs_tests {
     use crate::test_support;
 
     use super::*;
+    use rusqlite::Connection;
     use tempfile::tempdir;
 
     #[test]
@@ -28,6 +29,64 @@ mod queue_tabs_tests {
         assert_eq!(default_active_run.unwrap().id, "default-run");
         assert_eq!(default_active_items[0].id, "default-item");
         assert_eq!(state::load_web_queue_runs().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn empty_queue_tab_does_not_inherit_latest_run() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let default_run = queue_run_fixture("default-run", "running", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "pending", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        state::create_web_queue_tab("client", "Client").unwrap();
+        state::activate_web_queue_tab("client").unwrap();
+
+        let (active_run, active_items) = state::load_web_queue().unwrap();
+        let default_tab = state::load_web_queue_tab("default").unwrap().unwrap();
+        let client_tab = state::load_web_queue_tab("client").unwrap().unwrap();
+
+        assert!(active_run.is_none());
+        assert!(active_items.is_empty());
+        assert_eq!(default_tab.run_id.as_deref(), Some("default-run"));
+        assert_eq!(client_tab.run_id, None);
+    }
+
+    #[test]
+    fn duplicate_queue_run_tab_reference_is_repaired() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let default_run = queue_run_fixture("default-run", "running", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "pending", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        state::create_web_queue_tab("client", "Client").unwrap();
+        let db = Connection::open(temp.path().join("qcold.sqlite3")).unwrap();
+        db.execute(
+            "update web_queue_tabs set run_id = 'default-run' where id = 'client'",
+            [],
+        )
+        .unwrap();
+
+        let snapshot = queue_snapshot();
+        let default_tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == "default")
+            .expect("default tab should be present");
+        let client_tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == "client")
+            .expect("client tab should be present");
+        let stored_client_tab = state::load_web_queue_tab("client").unwrap().unwrap();
+
+        assert_eq!(default_tab.run_id.as_deref(), Some("default-run"));
+        assert_eq!(default_tab.count, 1);
+        assert_eq!(client_tab.run_id, None);
+        assert_eq!(client_tab.count, 0);
+        assert!(!client_tab.running);
+        assert_eq!(stored_client_tab.run_id, None);
     }
 
     #[test]

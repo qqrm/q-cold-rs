@@ -47,6 +47,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let queueTabsModel = [];
     let queueGraphMode = localStorage.getItem(queueGraphModeStorageKey) === '1';
     let queueTabCreating = false;
+    let queueTabSwitchSerial = 0;
+    let queueTabSwitchPinnedId = '';
+    let queueTabSwitchPinnedUntil = 0;
+    const queueTabSwitchPinMs = 900;
     const queueSaved = loadQueueStorageForTab(activeQueueTabId);
     if (typeof queueSaved.graphMode === 'boolean') queueGraphMode = queueSaved.graphMode;
     let queueItems = (queueSaved.items || [])
@@ -525,15 +529,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function syncQueueFromSnapshot() {
       const nextTabs = queueTabsFromSnapshot();
-      const nextActiveTabId = state?.queue?.active_tab_id
+      const snapshotActiveTabId = state?.queue?.active_tab_id
         || nextTabs.find((tab) => tab.active)?.id
         || activeQueueTabId
         || 'default';
+      const nextActiveTabId = pinnedQueueTabId(nextTabs) || snapshotActiveTabId;
       if (nextActiveTabId !== activeQueueTabId && !queueHasBackendRun()) saveQueueStorage();
       activeQueueTabId = nextActiveTabId;
       queueTabsModel = nextTabs;
       const activeTab = queueTabsModel.find((tab) => tab.id === activeQueueTabId) || queueTabsModel[0];
-      if (activeTab?.runId && (state?.queue?.run || state?.queue?.records?.length)) {
+      if (activeTabSnapshotRunMatches(activeTab) && (state?.queue?.run || state?.queue?.records?.length)) {
         const nextRunId = state.queue.run?.id || existingQueueRunId();
         const nextExecutionMode = state.queue.run?.execution_mode || '';
         const preservedWaves = queueRun.runId && queueRun.runId === nextRunId && nextExecutionMode === 'graph'
@@ -566,6 +571,36 @@ const tg = window.Telegram && window.Telegram.WebApp;
         queueTabsModel = [{ id: 'default', label: 'Task Queue', isDefault: true, active: true }];
       }
       if (queueTaskRecords().length) reconcileDraftQueueItems();
+    }
+
+    function activeTabSnapshotRunMatches(activeTab) {
+      if (!activeTab?.runId) return false;
+      return state?.queue?.run?.id === activeTab.runId;
+    }
+
+    function pinnedQueueTabId(tabs) {
+      if (!queueTabSwitchPinnedId) return '';
+      if (Date.now() > queueTabSwitchPinnedUntil) {
+        queueTabSwitchPinnedId = '';
+        return '';
+      }
+      return tabs.some((tab) => tab.id === queueTabSwitchPinnedId) ? queueTabSwitchPinnedId : '';
+    }
+
+    function pinQueueTabSwitch(tabId) {
+      queueTabSwitchPinnedId = tabId;
+      queueTabSwitchPinnedUntil = Date.now() + queueTabSwitchPinMs;
+    }
+
+    function releaseQueueTabSwitch(tabId) {
+      if (queueTabSwitchPinnedId !== tabId) return;
+      queueTabSwitchPinnedUntil = Math.max(queueTabSwitchPinnedUntil, Date.now() + 300);
+    }
+
+    function clearQueueTabSwitch(tabId) {
+      if (tabId && queueTabSwitchPinnedId !== tabId) return;
+      queueTabSwitchPinnedId = '';
+      queueTabSwitchPinnedUntil = 0;
     }
 
     function queueTabsFromSnapshot() {

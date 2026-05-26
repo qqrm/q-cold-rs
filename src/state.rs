@@ -1,4 +1,5 @@
 use std::env;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -330,24 +331,7 @@ pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     if let Some(run_id) = active_run_id {
         return load_web_queue_run_with_connection(&connection, &run_id);
     }
-    let run = connection
-        .query_row(
-            "select id, status, execution_mode, selected_agent_command, remote_launcher,
-                    selected_repo_root, selected_repo_name, track, current_index, stop_requested,
-                    message, created_at_unix, updated_at_unix
-             from web_queue_runs
-             order by updated_at_unix desc
-             limit 1",
-            [],
-            queue_run_from_row,
-        )
-        .optional()
-        .context("failed to query web queue run")?;
-    let Some(run_row) = run else {
-        return Ok((None, Vec::new()));
-    };
-    assign_web_queue_run_to_active_tab(&connection, &run_row.id)?;
-    load_web_queue_items_for_run(&connection, run_row).map(|(run, items)| (Some(run), items))
+    Ok((None, Vec::new()))
 }
 
 pub fn load_web_queue_runs() -> Result<Vec<(QueueRunRow, Vec<QueueItemRow>)>> {

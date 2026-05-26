@@ -72,11 +72,17 @@
   background: var(--panel);
   color: var(--fg);
   font-size: 12px;
+  transition:
+    background-color .16s ease,
+    border-color .16s ease,
+    box-shadow .16s ease,
+    color .16s ease;
 }
 
 .queue-tab.active {
   border-color: var(--accent);
   background: rgba(47, 124, 246, .12);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .queue-tab span,

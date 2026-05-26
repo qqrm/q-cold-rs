@@ -31,6 +31,47 @@ pub fn load_web_queue_tab(tab_id: &str) -> Result<Option<QueueTabRow>> {
         .context("failed to query web queue tab")
 }
 
+fn deduplicate_web_queue_tab_runs(connection: &Connection) -> Result<()> {
+    let mut statement = connection
+        .prepare(
+            "select id, run_id
+             from web_queue_tabs
+             where run_id is not null
+             order by run_id, is_default desc, created_at_unix, id",
+        )
+        .context("failed to prepare duplicate web queue tab repair query")?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .context("failed to query duplicate web queue tab repair rows")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode duplicate web queue tab repair rows")?;
+    let mut seen = HashSet::new();
+    let duplicate_tab_ids = rows
+        .into_iter()
+        .filter_map(|(tab_id, run_id)| {
+            if seen.insert(run_id) {
+                None
+            } else {
+                Some(tab_id)
+            }
+        })
+        .collect::<Vec<_>>();
+    let now = unix_now();
+    for tab_id in duplicate_tab_ids {
+        connection
+            .execute(
+                "update web_queue_tabs
+                 set run_id = null, updated_at_unix = ?2
+                 where id = ?1",
+                params![tab_id, now],
+            )
+            .context("failed to repair duplicate web queue tab run reference")?;
+    }
+    Ok(())
+}
+
 pub fn create_web_queue_tab(tab_id: &str, label: &str) -> Result<QueueTabRow> {
     let connection = open_db()?;
     ensure_default_web_queue_tab(&connection)?;
@@ -88,6 +129,14 @@ pub fn assign_web_queue_run_to_tab(tab_id: &str, run_id: &str) -> Result<()> {
     if updated == 0 {
         bail!("unknown queue tab: {tab_id}");
     }
+    connection
+        .execute(
+            "update web_queue_tabs
+             set run_id = null, updated_at_unix = ?3
+             where id != ?1 and run_id = ?2",
+            params![tab_id, run_id, unix_now()],
+        )
+        .context("failed to clear duplicate queue run from other tabs")?;
     Ok(())
 }
 

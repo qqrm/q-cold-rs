@@ -708,8 +708,12 @@
           return;
         }
         const tabId = String(payload.output || '').split('\t')[1] || '';
-        if (tabId) activeQueueTabId = tabId;
+        if (tabId) {
+          activeQueueTabId = tabId;
+          pinQueueTabSwitch(tabId);
+        }
         await loadSnapshot();
+        if (tabId) releaseQueueTabSwitch(tabId);
       } catch (err) {
         appendLocalMessage('error', String(err));
       } finally {
@@ -720,7 +724,9 @@
 
     async function switchQueueTab(tabId) {
       if (!tabId || tabId === activeQueueTabId) return;
+      const switchSerial = ++queueTabSwitchSerial;
       if (!queueHasBackendRun()) saveQueueStorage();
+      pinQueueTabSwitch(tabId);
       activeQueueTabId = tabId;
       loadActiveQueueDraft();
       renderQueue();
@@ -731,13 +737,18 @@
           body: JSON.stringify({ tab_id: tabId }),
         });
         const payload = await response.json().catch(() => ({}));
+        if (switchSerial !== queueTabSwitchSerial) return;
         if (!response.ok || payload.ok === false) {
+          clearQueueTabSwitch(tabId);
           appendLocalMessage('error', payload.output || 'failed to switch queue');
           await loadSnapshot();
           return;
         }
         await loadSnapshot();
+        releaseQueueTabSwitch(tabId);
       } catch (err) {
+        if (switchSerial !== queueTabSwitchSerial) return;
+        clearQueueTabSwitch(tabId);
         appendLocalMessage('error', String(err));
         await loadSnapshot();
       }
