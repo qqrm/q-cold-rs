@@ -39,6 +39,24 @@ mod tests {
     }
 
     #[test]
+    fn stage_task_worktree_changes_does_not_stage_ignored_task_dir() {
+        let root = unique_test_dir("qcold-stage-task-worktree");
+        run_git_in(&root, ["init"]);
+        fs::write(root.join(".gitignore"), ".task\n").unwrap();
+        fs::create_dir_all(root.join(".task")).unwrap();
+        fs::write(root.join(".task/task.env"), "ignored\n").unwrap();
+        fs::write(root.join("proof.txt"), "proof\n").unwrap();
+
+        stage_task_worktree_changes(&root).unwrap();
+
+        let status = git_output(&root, ["status", "--short", "--untracked-files=all"]).unwrap();
+        assert!(status.contains("A  .gitignore"));
+        assert!(status.contains("A  proof.txt"));
+        assert!(!status.contains(".task"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn task_open_base_branch_defaults_overrides_and_rejects_mismatch() {
         let _guard = EnvVarGuard::capture(TASK_OPEN_BASE_BRANCH_ENV);
         let root = unique_test_dir("qcold-task-open-base-branch");

@@ -1,7 +1,6 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
@@ -26,7 +25,7 @@ pub(crate) fn run(repo: &Path) -> Result<()> {
 }
 
 fn tracked_files(repo: &Path) -> Result<Vec<PathBuf>> {
-    let output = Command::new("git")
+    let output = crate::internal_git::command()
         .args(["ls-files", "-z"])
         .current_dir(repo)
         .output()

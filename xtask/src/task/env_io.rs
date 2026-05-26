@@ -296,7 +296,7 @@ impl WriteAllExt for fs::File {
 }
 
 fn repo_root() -> Result<PathBuf> {
-    let output = Command::new("git")
+    let output = internal_git::command()
         .args(["rev-parse", "--show-toplevel"])
         .output()
         .context("failed to locate git root")?;
@@ -352,7 +352,7 @@ fn ensure_slug(slug: &str) -> Result<()> {
 
 fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<()> {
     let display = args.join(" ");
-    let status = Command::new("git")
+    let status = internal_git::command()
         .current_dir(repo)
         .args(args)
         .status()
@@ -365,7 +365,7 @@ fn run_git<const N: usize>(repo: &Path, args: [&str; N]) -> Result<()> {
 
 fn git_status<const N: usize>(repo: &Path, args: [&str; N]) -> Result<bool> {
     let display = args.join(" ");
-    Ok(Command::new("git")
+    Ok(internal_git::command()
         .current_dir(repo)
         .args(args)
         .status()
@@ -375,7 +375,7 @@ fn git_status<const N: usize>(repo: &Path, args: [&str; N]) -> Result<bool> {
 
 fn git_output<const N: usize>(repo: &Path, args: [&str; N]) -> Result<String> {
     let display = args.join(" ");
-    let output = Command::new("git")
+    let output = internal_git::command()
         .current_dir(repo)
         .args(args)
         .output()

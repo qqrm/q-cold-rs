@@ -260,7 +260,7 @@ fn hash_untracked_review_target_files(
     task: &TaskEnv,
     hasher: &mut std::collections::hash_map::DefaultHasher,
 ) -> Result<()> {
-    let output = Command::new("git")
+    let output = internal_git::command()
         .current_dir(&task.task_worktree)
         .args(["ls-files", "--others", "--exclude-standard", "-z"])
         .output()

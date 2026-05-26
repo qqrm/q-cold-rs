@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand};
 
+mod internal_git;
 mod quality;
 #[path = "../../src/rollout.rs"]
 mod rollout;
@@ -403,7 +404,7 @@ fn terminal_check_command() -> Result<u8> {
 }
 
 fn dirty_paths(repo: &Path) -> Result<BTreeSet<PathBuf>> {
-    let output = Command::new("git")
+    let output = internal_git::command()
         .current_dir(repo)
         .args(["status", "--porcelain", "--untracked-files=all"])
         .output()
@@ -494,11 +495,8 @@ fn closeout_success_inner(
     record_closeout_phase(task, phase, "deliver-to-primary")?;
     if !closeout_commit_status_short(task)?.is_empty() {
         record_closeout_phase(task, phase, "commit-task-worktree")?;
-        run_git(
-            &task.task_worktree,
-            ["add", "-A", "--", ".", ":(exclude).task"],
-        )
-        .context("closeout phase commit-task-worktree failed")?;
+        stage_task_worktree_changes(&task.task_worktree)
+            .context("closeout phase commit-task-worktree failed")?;
         run_git(&task.task_worktree, ["commit", "-m", message])
             .context("closeout phase commit-task-worktree failed")?;
     }
@@ -597,6 +595,12 @@ fn closeout_commit_status_short(task: &TaskEnv) -> Result<String> {
         .filter(|line| !status_path(line).is_some_and(|path| path.starts_with(".task")))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+fn stage_task_worktree_changes(repo: &Path) -> Result<()> {
+    run_git(repo, ["add", "-A", "--", "."])?;
+    run_git(repo, ["reset", "-q", "--", ".task"])?;
+    Ok(())
 }
 
 fn record_success_closeout_failure(task: &mut TaskEnv, phase: &str, error: &str) -> Result<()> {

@@ -615,6 +615,13 @@ guard `PATH` state so repository automation is not silently changed. Guard
 wrappers cannot intercept absolute command paths, shell builtins, aliases,
 already-running external terminals, or non-Q-COLD-launched processes.
 
+The self-hosted `xtask` adapter also keeps internal machine-readable Git
+transport separate from terminal output: its internal Git helper uses recorded
+`QCOLD_GUARD_REAL_*_GIT` paths when present and strips inherited guard wrappers
+from subprocess environments. Broad internal data such as `git ls-files -z` is
+consumed by the adapter; only the adapter's final operator-facing report is
+expected to pass through the output guard.
+
 Q-COLD state is stored in one local SQLite database under `QCOLD_STATE_DIR` or
 `~/.local/state/qcold/qcold.sqlite3`. The database owns repository registry,
 managed-agent records, Telegram task topics, events, and the
