@@ -1,0 +1,19 @@
+{
+  "name": "Q-COLD Slim",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "context": "../..",
+    "target": "devcontainer-slim"
+  },
+  "containerEnv": {
+    "QCOLD_DEVCONTAINER_PROFILE": "slim"
+  },
+  "postCreateCommand": "cargo fetch --locked",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer"
+      ]
+    }
+  }
+}

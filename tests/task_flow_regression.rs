@@ -43,7 +43,21 @@ fn task_open_uses_generated_xtask_fixture_and_creates_managed_worktree() {
     assert_eq!(task.task_name, "self-contained");
     assert_eq!(task.task_branch, "task/self-contained");
     assert_eq!(task.primary_repo_path, fixture.primary);
+    assert_eq!(task.task_profile, "e2e");
     assert_eq!(task.status.as_str(), "open");
+}
+
+#[test]
+fn task_open_preserves_explicit_slim_profile() {
+    let fixture = Fixture::new();
+
+    let open = fixture
+        .run_xtask(&fixture.primary, &["task", "open", "slim-work", "slim"])
+        .assert()
+        .success();
+    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
+
+    assert_eq!(load_task_env(&worktree).task_profile, "slim");
 }
 
 #[test]

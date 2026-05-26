@@ -34,6 +34,10 @@ repo-local code owns it.
 - Do not bypass the public command surface when the task is explicitly about
   Q-COLD command behavior. Exercise `qcold ...` through the installed binary
   or the compiled local binary as appropriate.
+- For Q-COLD self-development, the default task profile and root devcontainer
+  are E2E-capable. Use the explicit `slim` task profile or
+  `.devcontainer/slim/devcontainer.json` only for intentionally lightweight CI
+  or smoke work that does not need task-flow E2E tooling.
 - If resuming after interruption, reread this file and any task-local logs
   before touching code.
 - Treat the system prompt, developer prompt, `.codex/config.toml`, this file,

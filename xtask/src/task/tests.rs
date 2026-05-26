@@ -66,6 +66,18 @@ mod tests {
     }
 
     #[test]
+    fn task_profile_defaults_to_e2e_and_preserves_explicit_profiles() {
+        assert_eq!(task_profile(None), DEFAULT_TASK_PROFILE);
+        assert_eq!(task_profile(Some("")), DEFAULT_TASK_PROFILE);
+        assert_eq!(
+            task_profile(Some(LEGACY_DEFAULT_TASK_PROFILE)),
+            DEFAULT_TASK_PROFILE
+        );
+        assert_eq!(task_profile(Some(" slim ")), "slim");
+        assert_eq!(task_profile(Some("full-qemu")), "full-qemu");
+    }
+
+    #[test]
     fn stale_paused_task_uses_updated_at_then_started_at() {
         let mut task = test_task_env();
         task.updated_at = "100".into();
@@ -272,7 +284,7 @@ mod tests {
             task_execution_anchor: "002".into(),
             task_description: "closeout failure".into(),
             task_worktree: worktree.clone(),
-            task_profile: "default".into(),
+            task_profile: DEFAULT_TASK_PROFILE.into(),
             primary_repo_path: primary.clone(),
             base_branch: "main".into(),
             base_head: String::new(),
@@ -422,7 +434,7 @@ mod tests {
             task_execution_anchor: "001".into(),
             task_description: "push proof".into(),
             task_worktree: worktree,
-            task_profile: "default".into(),
+            task_profile: DEFAULT_TASK_PROFILE.into(),
             primary_repo_path: primary.clone(),
             base_branch: "main".into(),
             base_head: git_output(&primary, ["rev-parse", "main"]).unwrap(),
@@ -641,7 +653,7 @@ mod tests {
             task_execution_anchor: "001".into(),
             task_description: "pause".into(),
             task_worktree: PathBuf::from("/tmp/pause"),
-            task_profile: "default".into(),
+            task_profile: DEFAULT_TASK_PROFILE.into(),
             primary_repo_path: PathBuf::from("/tmp/repo"),
             base_branch: "main".into(),
             base_head: "HEAD".into(),

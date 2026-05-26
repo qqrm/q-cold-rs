@@ -295,7 +295,7 @@ impl Fixture {
         include_container_bin: bool,
         assume_container_runtime: bool,
     ) -> AssertCommand {
-        let original_path = env::var("PATH").unwrap_or_default();
+        let original_path = inherited_path_without_output_guard();
         let path = if include_container_bin {
             format!(
                 "{}:{}:{}",
@@ -451,6 +451,24 @@ impl Fixture {
     pub(crate) fn last_telegram_request(&self) -> Option<String> {
         self.telegram.last_request()
     }
+}
+
+fn inherited_path_without_output_guard() -> String {
+    let guard_bin = env::var_os("QCOLD_OUTPUT_GUARD_BIN").map(PathBuf::from);
+    let Some(path) = env::var_os("PATH") else {
+        return String::new();
+    };
+    let paths = env::split_paths(&path)
+        .filter(|entry| {
+            guard_bin
+                .as_deref()
+                .is_none_or(|guard_bin| entry != guard_bin)
+        })
+        .collect::<Vec<_>>();
+    env::join_paths(paths)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn rand_suffix() -> String {

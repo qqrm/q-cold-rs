@@ -81,6 +81,13 @@ cargo xtask verify full
 cargo xtask verify task-flow
 ```
 
+The root devcontainer is intentionally E2E-capable by default. It builds the
+`devcontainer-e2e` target, carries task-flow test dependencies such as `7z`,
+`jq`, and SSH/rsync tooling, and installs Docker-outside-of-Docker support when
+the host provides it. The slim Rust-only target remains available at
+`.devcontainer/slim/devcontainer.json` for explicit lightweight CI or smoke
+jobs that do not need E2E tooling.
+
 ## Task records
 
 Q-COLD stores lightweight task records in its local SQLite database. Use
@@ -558,7 +565,9 @@ manifest path is needed. In the Q-COLD checkout itself, `.cargo/config.toml`
 defines `cargo xtask` as the self-hosted adapter in `xtask/`, so normal
 development can start with `QCOLD_REPO_ROOT=$PWD qcold task open <slug>`
 from a clean primary checkout, or with plain `qcold task open <slug>` when
-the Q-COLD repository is the active registered repo. The Q-COLD self-hosted
+the Q-COLD repository is the active registered repo. Q-COLD self-hosted task
+opens default `TASK_PROFILE=e2e`; pass `slim` explicitly only for lightweight
+work that should avoid the E2E-capable environment. The Q-COLD self-hosted
 adapter requires new task opens to start from `main`; it fails before creating
 a task worktree when the primary checkout is on another branch. Registered
 repositories may set `--default-branch <branch>`, which Q-COLD forwards to the

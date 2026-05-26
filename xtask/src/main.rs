@@ -19,6 +19,8 @@ mod rollout;
 const DEFAULT_PAUSED_TASK_TTL_HOURS: u64 = 2;
 const DEFAULT_BUNDLE_RETENTION_HOURS: u64 = 24;
 const DEFAULT_TASK_OPEN_BASE_BRANCH: &str = "main";
+const DEFAULT_TASK_PROFILE: &str = "e2e";
+const LEGACY_DEFAULT_TASK_PROFILE: &str = "default";
 const TASK_OPEN_BASE_BRANCH_ENV: &str = "QCOLD_TASK_OPEN_BASE_BRANCH";
 
 fn main() -> ExitCode {
@@ -169,7 +171,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
             refresh_task_codex_env(&mut task);
             refresh_task_output_guard_env(&mut task);
             if let Some(profile) = profile {
-                task.task_profile = profile.to_string();
+                task.task_profile = task_profile(Some(profile));
             }
             write_task_env(&task)?;
             append_event(&task.task_worktree, "task-resume", "resumed task")?;
@@ -227,7 +229,7 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
         task_execution_anchor: execution_anchor,
         task_description: task_open_description(task_slug),
         task_worktree: worktree.clone(),
-        task_profile: profile.unwrap_or("default").to_string(),
+        task_profile: task_profile(profile),
         primary_repo_path: repo,
         base_branch,
         base_head,
@@ -251,6 +253,18 @@ fn open_command(task_slug: &str, profile: Option<&str>) -> Result<u8> {
     println!("task-opened\t{task_slug}\t{}", worktree.display());
     println!("TASK_WORKTREE={}", worktree.display());
     Ok(0)
+}
+
+fn task_profile(profile: Option<&str>) -> String {
+    let profile = profile
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_TASK_PROFILE);
+    if profile == LEGACY_DEFAULT_TASK_PROFILE {
+        DEFAULT_TASK_PROFILE.to_string()
+    } else {
+        profile.to_string()
+    }
 }
 
 fn ensure_task_open_base_branch(repo: &Path, branch: &str) -> Result<()> {

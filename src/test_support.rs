@@ -1,5 +1,6 @@
 use std::env;
-use std::path::PathBuf;
+use std::ffi::OsString;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 static TEST_ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -26,6 +27,7 @@ const QCOLD_ENV_VARS: &[&str] = &[
 pub(crate) struct EnvGuard {
     _lock: MutexGuard<'static, ()>,
     cwd: PathBuf,
+    path: Option<OsString>,
     vars: Vec<(&'static str, Option<String>)>,
 }
 
@@ -37,6 +39,10 @@ impl Drop for EnvGuard {
                 None => env::remove_var(name),
             }
         }
+        match &self.path {
+            Some(path) => env::set_var("PATH", path),
+            None => env::remove_var("PATH"),
+        }
         let _ = env::set_current_dir(&self.cwd);
     }
 }
@@ -44,16 +50,36 @@ impl Drop for EnvGuard {
 pub(crate) fn env_guard() -> EnvGuard {
     let lock = TEST_ENV_LOCK.lock().unwrap();
     let cwd = env::current_dir().unwrap();
+    let path = env::var_os("PATH");
+    let output_guard_bin = env::var_os("QCOLD_OUTPUT_GUARD_BIN").map(PathBuf::from);
     let vars = QCOLD_ENV_VARS
         .iter()
         .map(|name| (*name, env::var(name).ok()))
         .collect();
+    if let Some(cleaned_path) = path_without_output_guard_bin(path.as_ref(), output_guard_bin.as_deref()) {
+        env::set_var("PATH", cleaned_path);
+    }
     for name in QCOLD_ENV_VARS {
         env::remove_var(name);
     }
     EnvGuard {
         _lock: lock,
         cwd,
+        path,
         vars,
     }
+}
+
+fn path_without_output_guard_bin(path: Option<&OsString>, guard_bin: Option<&Path>) -> Option<OsString> {
+    let path = path?;
+    let paths = env::split_paths(path)
+        .filter(|entry| {
+            let is_current_guard = guard_bin.is_some_and(|guard_bin| entry == guard_bin);
+            let is_qcold_guard = entry
+                .to_string_lossy()
+                .contains("/.local/state/qcold/guard-bin/");
+            !is_current_guard && !is_qcold_guard
+        })
+        .collect::<Vec<_>>();
+    env::join_paths(paths).ok()
 }

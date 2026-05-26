@@ -1,6 +1,16 @@
 {
-  "name": "Q-COLD",
-  "image": "mcr.microsoft.com/devcontainers/rust:1-1-bookworm",
+  "name": "Q-COLD E2E",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "target": "devcontainer-e2e"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "containerEnv": {
+    "QCOLD_DEVCONTAINER_PROFILE": "e2e"
+  },
   "postCreateCommand": "cargo fetch --locked",
   "customizations": {
     "vscode": {
