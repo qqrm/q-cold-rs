@@ -38,7 +38,6 @@ const KNOWN_AGENT_COMMANDS: &[(&str, &str, AgentInvocation)] = &[
     ("cc1", "Codex account 1 compact", AgentInvocation::Direct),
     ("c2", "Codex account 2", AgentInvocation::Direct),
     ("cc2", "Codex account 2 compact", AgentInvocation::Direct),
-    ("codex", "Codex default", AgentInvocation::Exec),
 ];
 const DEFAULT_AGENT_STALE_TTL_HOURS: u64 = 2;
 

@@ -35,7 +35,7 @@ qcold task-record sync-remote --via remote-dev-env \
   --remote-repo-root /path/to/remote/target-repo
 qcold agent list
 qcold agent prune-stale
-qcold agent start --track audit -- codex exec "inspect repo"
+qcold agent start --track audit -- c1 "inspect repo"
 qcold agent start --terminal --attach --track c2 -- c2 "work on the active task"
 qcold telegram poll
 qcold telegram serve --listen 127.0.0.1:8787 --daemon
@@ -400,7 +400,9 @@ Readiness probes run through a cached
 `/api/agent-limits` request when the Agents view is opened or refreshed. Q-COLD
 uses each account's base command such as `c1`, `c2`, or `codexN` with
 `--version`, retries transient failures, and avoids compact `cc*` wrappers so
-probing does not create model sessions. The same view shows only
+probing does not create model sessions. The bare `codex` executable remains a
+supported explicit `agent start` command, but it is not advertised as an
+available account. The same view shows only
 currently running Q-COLD tracked agents and separates them from host-discovered
 agent programs: native `codex` processes plus the Q-COLD web control daemon.
 Exited Q-COLD agent records remain available through the CLI registry surface,

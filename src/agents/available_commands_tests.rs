@@ -9,16 +9,16 @@ mod available_commands_tests {
     use super::*;
 
     #[test]
-    fn available_agent_commands_skip_unauthenticated_accounts() {
+    fn available_agent_commands_skip_unauthenticated_accounts_and_default_codex() {
         let temp = tempdir().unwrap();
         let bin = temp.path().join("bin");
         let home = temp.path().join("home");
         fs::create_dir_all(&bin).unwrap();
         fs::create_dir_all(&home).unwrap();
-        for command in ["c1", "c2", "codex4", "codex6"] {
+        for command in ["c1", "c2", "codex", "codex4", "codex6"] {
             write_executable(&bin.join(command));
         }
-        for account in ["1", "2", "4"] {
+        for account in ["1", "2", "4", "default"] {
             write_auth_file(&home, account);
         }
         let path_env = env::join_paths([bin.as_path()]).unwrap();

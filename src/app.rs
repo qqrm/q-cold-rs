@@ -56,7 +56,7 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold task-record list\n",
     "  qcold task-record audit\n",
     "  qcold agent list\n",
-    "  qcold agent start --track audit -- codex exec \"inspect repo\"\n",
+    "  qcold agent start --track audit -- c1 \"inspect repo\"\n",
     "  qcold telegram poll\n",
     "  qcold wsl autostart install\n",
     "  qcold bundle\n",
