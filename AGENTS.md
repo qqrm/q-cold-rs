@@ -197,10 +197,6 @@ fixture or debugging task explicitly needs them.
   branch, pushes that base branch to `origin`, refreshes the remote-tracking
   ref, and only then marks the task terminal. A local-only commit is not a
   successful terminal closeout when the push-capable managed flow is available.
-- Do not perform final operator installation from a task branch or managed task
-  worktree. After successful integration into `main`, rebuild and install
-  Q-COLD only from the primary checkout so the installed binary reflects landed
-  repository state.
 
 ## Validation Authority
 
