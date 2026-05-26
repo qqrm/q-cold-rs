@@ -618,7 +618,7 @@ impl TerminalKey {
             Self::End => "End",
             Self::PageUp => "PageUp",
             Self::PageDown => "PageDown",
-            Self::LineFeed => "Enter",
+            Self::LineFeed => "Ctrl j",
         }
     }
 }
