@@ -60,4 +60,13 @@ mod asset_tests {
         assert!(APP_JS.contains("function queueItemRemovedOrRemoving(item)"));
         assert!(APP_JS.contains("let liveStateHoldUntil = 0;"));
     }
+
+    #[test]
+    fn queue_tabs_assets_are_embedded() {
+        assert!(INDEX_HTML.contains("id=\"queue-tabs\""));
+        assert!(QUEUE_CSS.contains(".queue-tab"));
+        assert!(APP_JS.contains("function renderQueueTabs()"));
+        assert!(APP_JS.contains("/api/queue/tab/create"));
+        assert!(APP_JS.contains("tab_id: activeQueueTabId"));
+    }
 }

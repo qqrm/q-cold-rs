@@ -196,6 +196,11 @@ fn queue_snapshot() -> QueueSnapshot {
     let reconcile_error = reconcile_stale_web_queue_run()
         .err()
         .map(|err| format!("{err:#}"));
+    let tabs = queue_tab_snapshot();
+    let active_tab_id = tabs
+        .iter()
+        .find(|tab| tab.active)
+        .map_or_else(|| "default".to_string(), |tab| tab.id.clone());
     match state::load_web_queue() {
         Ok((run, records)) => QueueSnapshot {
             count: records.len(),
@@ -204,6 +209,8 @@ fn queue_snapshot() -> QueueSnapshot {
             }),
             run,
             records,
+            tabs,
+            active_tab_id,
             error: reconcile_error,
         },
         Err(err) => QueueSnapshot {
@@ -211,9 +218,40 @@ fn queue_snapshot() -> QueueSnapshot {
             running: false,
             run: None,
             records: Vec::new(),
+            tabs,
+            active_tab_id,
             error: Some(format!("{err:#}")),
         },
     }
+}
+
+fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
+    let runs = state::load_web_queue_runs().unwrap_or_default();
+    let runs = runs
+        .into_iter()
+        .map(|(run, items)| (run.id.clone(), (run, items)))
+        .collect::<HashMap<_, _>>();
+    state::load_web_queue_tabs()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|tab| {
+            let run = tab.run_id.as_ref().and_then(|run_id| runs.get(run_id));
+            let status = run.map_or_else(|| "draft".to_string(), |(run, _)| run.status.clone());
+            let running = run.is_some_and(|(run, items)| queue_run_has_live_work(run, items));
+            QueueTabSnapshot {
+                id: tab.id,
+                label: tab.label,
+                run_id: tab.run_id,
+                is_default: tab.is_default,
+                active: tab.active,
+                running,
+                status,
+                count: run.map_or(0, |(_, items)| items.len()),
+                message: run.map_or_else(String::new, |(run, _)| run.message.clone()),
+                updated_at: tab.updated_at,
+            }
+        })
+        .collect()
 }
 
 fn discover_terminal_sessions() -> TerminalSnapshot {

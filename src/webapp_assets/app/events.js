@@ -650,6 +650,7 @@
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             run_id: queueRun.runId,
+            tab_id: activeQueueTabId,
             execution_mode: queueGraphMode ? 'graph' : 'sequence',
             selected_agent_command: selectedAgent.command,
             selected_repo_root: selectedRepo.root || '',
@@ -686,6 +687,76 @@
       }
       appendLocalMessage('status', 'Queue run accepted');
       await loadSnapshot();
+    }
+
+    async function createQueueTab() {
+      if (!queueHasBackendRun()) saveQueueStorage();
+      appendLocalMessage('status', 'Creating queue');
+      try {
+        const response = await fetch('/api/queue/tab/create', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ label: `Queue ${queueTabsModel.length + 1}` }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to create queue');
+          return;
+        }
+        const tabId = String(payload.output || '').split('\t')[1] || '';
+        if (tabId) activeQueueTabId = tabId;
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
+    }
+
+    async function switchQueueTab(tabId) {
+      if (!tabId || tabId === activeQueueTabId) return;
+      if (!queueHasBackendRun()) saveQueueStorage();
+      activeQueueTabId = tabId;
+      loadActiveQueueDraft();
+      renderQueue();
+      try {
+        const response = await fetch('/api/queue/tab/switch', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tab_id: tabId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to switch queue');
+          await loadSnapshot();
+          return;
+        }
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+        await loadSnapshot();
+      }
+    }
+
+    async function deleteQueueTab(tabId) {
+      const tab = queueTabsModel.find((candidate) => candidate.id === tabId);
+      if (!tab || tab.isDefault || tab.running) return;
+      appendLocalMessage('status', 'Deleting queue');
+      try {
+        const response = await fetch('/api/queue/tab/delete', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tab_id: tabId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || payload.ok === false) {
+          appendLocalMessage('error', payload.output || 'failed to delete queue');
+          return;
+        }
+        clearQueueDraft(tabId);
+        if (activeQueueTabId === tabId) activeQueueTabId = 'default';
+        await loadSnapshot();
+      } catch (err) {
+        appendLocalMessage('error', String(err));
+      }
     }
 
     function queueItemStartsImmediately(item, index) {
@@ -834,6 +905,7 @@
     queueGraphModeInput.addEventListener('change', () => {
       queueGraphMode = queueGraphModeInput.checked;
       localStorage.setItem(queueGraphModeStorageKey, queueGraphMode ? '1' : '0');
+      if (!queueHasBackendRun()) saveQueueStorage();
       renderQueue();
     });
     queueInput.addEventListener('keydown', (event) => {

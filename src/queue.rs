@@ -19,49 +19,7 @@ mod tests;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:8787";
 const MAX_PROMPT_PACKAGE_FILES: usize = 200;
-const QUEUE_HELP: &str = "\
-Q-COLD queue package flow
-
-Run a persistent dashboard daemon, stage prompts, then let the daemon open
-managed task worktrees and start agents:
-
-  qcold q-help
-  qcold queue run --from queue.json --agent c1 --repo-root /path/to/repo
-  qcold queue list
-  qcold queue append <run-id> --prompt \"follow-up task\"
-  qcold queue stop
-  qcold queue continue <run-id>
-
-`qcold queue run` and mutating queue commands post to the dashboard API on
-127.0.0.1:8787 by default and auto-start `qcold telegram serve --daemon` if
-the daemon is not already reachable. Use `--listen <addr>` to target another
-local daemon.
-
-Preferred JSON package:
-
-  {
-    \"execution_mode\": \"sequence\",
-    \"layers\": [
-      { \"name\": \"policy\", \"prompt\": \"shared rules for every task\" }
-    ],
-    \"default_layers\": [\"policy\"],
-    \"items\": [
-      { \"slug\": \"task-one\", \"prompt\": \"first task\" },
-      { \"slug\": \"task-two\", \"prompt\": \"second task\" }
-    ]
-  }
-
-Directory or ZIP package convention:
-
-  layers/*.md      shared prompt layers prepended to every task
-  prompts/*.md     queued task prompts
-  tasks/*.md       queued task prompts
-  queue.json       preferred manifest when present
-
-Graph execution is available with `execution_mode: \"graph\"` and per-item
-`depends_on` arrays in JSON. Queue items are still executed through managed
-`qcold task open` plus terminal closeout; the queue owns the agent lifecycle.
-";
+const QUEUE_HELP: &str = include_str!("queue_help.txt");
 
 #[derive(Args)]
 #[command(after_help = QUEUE_HELP)]
@@ -74,6 +32,12 @@ pub(crate) struct QueueArgs {
 enum QueueCommand {
     #[command(about = "Submit a new queue run to the dashboard daemon")]
     Run(QueueRunArgs),
+    #[command(about = "Create an empty queue tab and make it active")]
+    Create(QueueCreateArgs),
+    #[command(about = "Switch the active queue tab")]
+    Switch(QueueSwitchArgs),
+    #[command(about = "Delete an inactive queue tab with no running work")]
+    Delete(QueueDeleteArgs),
     #[command(about = "Append prompt items to an existing queue run")]
     Append(QueueAppendArgs),
     #[command(about = "List the current queue run from local Q-COLD state")]
@@ -92,6 +56,8 @@ struct QueueRunArgs {
     source: QueuePromptSourceArgs,
     #[arg(long)]
     run_id: Option<String>,
+    #[arg(long, help = "Queue tab id; defaults to the active queue tab")]
+    tab_id: Option<String>,
     #[arg(long, value_enum, default_value_t = QueueExecutionMode::Sequence)]
     execution_mode: QueueExecutionMode,
     #[arg(long = "agent")]
@@ -199,6 +165,7 @@ struct PromptLayer {
 #[derive(Serialize)]
 struct QueueRunRequest {
     run_id: Option<String>,
+    tab_id: Option<String>,
     execution_mode: Option<String>,
     selected_agent_command: String,
     selected_repo_root: Option<String>,
@@ -245,9 +212,14 @@ struct QueueHttpClient {
     agent: ureq::Agent,
 }
 
+include!("queue_tabs.rs");
+
 pub(crate) fn run(args: QueueArgs) -> Result<u8> {
     match args.command {
         QueueCommand::Run(args) => run_queue(args),
+        QueueCommand::Create(args) => create_queue(args),
+        QueueCommand::Switch(args) => switch_queue(args),
+        QueueCommand::Delete(args) => delete_queue(args),
         QueueCommand::Append(args) => append_queue(args),
         QueueCommand::List => list_queue(),
         QueueCommand::Stop(args) => stop_queue(&args),
@@ -270,6 +242,7 @@ fn run_queue(args: QueueRunArgs) -> Result<u8> {
         .map_or_else(default_agent_command, Ok)?;
     let request = QueueRunRequest {
         run_id: args.run_id.or(package.run_id),
+        tab_id: args.tab_id,
         execution_mode: Some(
             package
                 .execution_mode
@@ -322,37 +295,59 @@ fn append_queue(args: QueueAppendArgs) -> Result<u8> {
 }
 
 fn list_queue() -> Result<u8> {
-    let (run, mut items) = state::load_web_queue()?;
-    let Some(run) = run else {
+    let tabs = state::load_web_queue_tabs()?;
+    let runs = state::load_web_queue_runs()?;
+    if tabs.is_empty() && runs.is_empty() {
         println!("queue\tstatus=empty");
         return Ok(0);
-    };
-    items.sort_by_key(|item| item.position);
-    println!(
-        "queue-run\t{}\tstatus={}\tmode={}\tagent={}\titems={}\tmessage={}",
-        compact_field(&run.id),
-        compact_field(&run.status),
-        compact_field(&run.execution_mode),
-        compact_field(&run.selected_agent_command),
-        items.len(),
-        compact_field(&run.message)
-    );
-    for item in items {
-        let depends_on = if item.depends_on.is_empty() {
-            "-".to_string()
-        } else {
-            item.depends_on.join(",")
-        };
+    }
+    let runs = runs
+        .into_iter()
+        .map(|(run, items)| (run.id.clone(), (run, items)))
+        .collect::<BTreeMap<_, _>>();
+    for tab in tabs {
+        let run = tab.run_id.as_ref().and_then(|run_id| runs.get(run_id));
+        let status = run.map_or("draft", |(run, _)| run.status.as_str());
         println!(
-            "queue-item\t{}\tid={}\tslug={}\tstatus={}\tagent={}\tdepends_on={}\tmessage={}",
-            item.position,
-            compact_field(&item.id),
-            compact_field(&item.slug),
-            compact_field(&item.status),
-            compact_field(item.agent_id.as_deref().unwrap_or("-")),
-            compact_field(&depends_on),
-            compact_field(&item.message)
+            "queue-tab\t{}\tactive={}\tdefault={}\trun={}\tstatus={}\titems={}\tlabel={}",
+            compact_field(&tab.id),
+            tab.active,
+            tab.is_default,
+            compact_field(tab.run_id.as_deref().unwrap_or("-")),
+            compact_field(status),
+            run.map_or(0, |(_, items)| items.len()),
+            compact_field(&tab.label)
         );
+        let Some((run, mut items)) = run.cloned() else {
+            continue;
+        };
+        items.sort_by_key(|item| item.position);
+        println!(
+            "queue-run\t{}\tstatus={}\tmode={}\tagent={}\titems={}\tmessage={}",
+            compact_field(&run.id),
+            compact_field(&run.status),
+            compact_field(&run.execution_mode),
+            compact_field(&run.selected_agent_command),
+            items.len(),
+            compact_field(&run.message)
+        );
+        for item in items {
+            let depends_on = if item.depends_on.is_empty() {
+                "-".to_string()
+            } else {
+                item.depends_on.join(",")
+            };
+            println!(
+                "queue-item\t{}\tid={}\tslug={}\tstatus={}\tagent={}\tdepends_on={}\tmessage={}",
+                item.position,
+                compact_field(&item.id),
+                compact_field(&item.slug),
+                compact_field(&item.status),
+                compact_field(item.agent_id.as_deref().unwrap_or("-")),
+                compact_field(&depends_on),
+                compact_field(&item.message)
+            );
+        }
     }
     Ok(0)
 }

@@ -113,6 +113,15 @@ fn open_db() -> Result<Connection> {
                  created_at_unix integer not null,
                  updated_at_unix integer not null
              );
+             create table if not exists web_queue_tabs (
+                 id text primary key,
+                 label text not null,
+                 run_id text references web_queue_runs(id) on delete set null,
+                 is_default integer not null default 0,
+                 active integer not null default 0,
+                 created_at_unix integer not null,
+                 updated_at_unix integer not null
+             );
              create table if not exists web_queue_items (
                  id text primary key,
                  run_id text not null references web_queue_runs(id) on delete cascade,
@@ -134,6 +143,12 @@ fn open_db() -> Result<Connection> {
                  unique(run_id, position),
                  unique(run_id, slug)
              );
+             create unique index if not exists web_queue_tabs_default
+             on web_queue_tabs(is_default)
+             where is_default = 1;
+             create unique index if not exists web_queue_tabs_active
+             on web_queue_tabs(active)
+             where active = 1;
              create table if not exists claims (
                  id text primary key,
                  task_id text references tasks(id),
@@ -180,6 +195,7 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
     ensure_column(connection, "tasks", "sequence", "integer")?;
     ensure_column(connection, "agents", "cwd", "text")?;
     ensure_web_queue_schema(connection)?;
+    ensure_default_web_queue_tab(connection)?;
     ensure_column(
         connection,
         "web_queue_runs",
@@ -237,6 +253,15 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  created_at_unix integer not null,
                  updated_at_unix integer not null
              );
+             create table if not exists web_queue_tabs (
+                 id text primary key,
+                 label text not null,
+                 run_id text references web_queue_runs(id) on delete set null,
+                 is_default integer not null default 0,
+                 active integer not null default 0,
+                 created_at_unix integer not null,
+                 updated_at_unix integer not null
+             );
              create table if not exists web_queue_items (
                  id text primary key,
                  run_id text not null references web_queue_runs(id) on delete cascade,
@@ -257,9 +282,110 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  updated_at_unix integer not null,
                  unique(run_id, position),
                  unique(run_id, slug)
-             );",
+             );
+             create unique index if not exists web_queue_tabs_default
+             on web_queue_tabs(is_default)
+             where is_default = 1;
+             create unique index if not exists web_queue_tabs_active
+             on web_queue_tabs(active)
+             where active = 1;",
         )
         .context("failed to initialize web queue tables")?;
+    Ok(())
+}
+
+fn ensure_default_web_queue_tab(connection: &Connection) -> Result<()> {
+    let default_exists = connection
+        .query_row(
+            "select 1 from web_queue_tabs where is_default = 1 limit 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .context("failed to query default web queue tab")?
+        .is_some();
+    if !default_exists {
+        let run_id = latest_web_queue_run_id(connection)?;
+        let now = unix_now();
+        connection
+            .execute(
+                "insert into web_queue_tabs
+                     (id, label, run_id, is_default, active, created_at_unix, updated_at_unix)
+                 values ('default', 'Task Queue', ?1, 1, 1, ?2, ?2)",
+                params![run_id, now],
+            )
+            .context("failed to create default web queue tab")?;
+    }
+    let active_exists = connection
+        .query_row(
+            "select 1 from web_queue_tabs where active = 1 limit 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .context("failed to query active web queue tab")?
+        .is_some();
+    if !active_exists {
+        let fallback = active_fallback_queue_tab_id(connection)?;
+        connection
+            .execute(
+                "update web_queue_tabs set active = 1, updated_at_unix = ?2 where id = ?1",
+                params![fallback, unix_now()],
+            )
+            .context("failed to activate default web queue tab")?;
+    }
+    Ok(())
+}
+
+fn latest_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
+    connection
+        .query_row(
+            "select id from web_queue_runs order by updated_at_unix desc limit 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to query latest web queue run")
+}
+
+fn active_fallback_queue_tab_id(connection: &Connection) -> Result<String> {
+    connection
+        .query_row(
+            "select id from web_queue_tabs order by is_default desc, created_at_unix, id limit 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to query fallback queue tab")?
+        .context("missing fallback queue tab")
+}
+
+fn active_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
+    ensure_default_web_queue_tab(connection)?;
+    connection
+        .query_row(
+            "select run_id from web_queue_tabs where active = 1 limit 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .context("failed to query active web queue run")
+        .map(Option::flatten)
+}
+
+fn assign_web_queue_run_to_active_tab(connection: &Connection, run_id: &str) -> Result<()> {
+    ensure_default_web_queue_tab(connection)?;
+    let updated = connection
+        .execute(
+            "update web_queue_tabs
+             set run_id = ?1, updated_at_unix = ?2
+             where active = 1",
+            params![run_id, unix_now()],
+        )
+        .context("failed to assign queue run to active tab")?;
+    if updated == 0 {
+        bail!("no active queue tab");
+    }
     Ok(())
 }
 
@@ -645,6 +771,18 @@ fn queue_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueRunRow> 
         message: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+    })
+}
+
+fn queue_tab_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueTabRow> {
+    Ok(QueueTabRow {
+        id: row.get(0)?,
+        label: row.get(1)?,
+        run_id: row.get(2)?,
+        is_default: row.get::<_, i64>(3)? != 0,
+        active: row.get::<_, i64>(4)? != 0,
+        created_at: row.get(5)?,
+        updated_at: row.get(6)?,
     })
 }
 

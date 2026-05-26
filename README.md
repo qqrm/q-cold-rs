@@ -36,7 +36,10 @@ qcold task-record sync-remote --via remote-dev-env \
 qcold q-help
 qcold queue run --from queue.json --agent c1 --repo-root /path/to/target-repo
 qcold queue list
+qcold queue create "client queue"
+qcold queue switch <queue-tab-id>
 qcold queue append <run-id> --prompt "follow-up task"
+qcold queue delete <queue-tab-id>
 qcold agent list
 qcold agent named-sessions list --agent cc1
 qcold agent named-sessions drop --agent cc1 --name atomic
@@ -218,8 +221,11 @@ receive a prompt package and need to stage work without reading Q-COLD source:
 qcold q-help
 qcold queue run --from queue.json --agent c1 --repo-root /path/to/repo
 qcold queue list
+qcold queue create "client queue"
+qcold queue switch <queue-tab-id>
 qcold queue stop
 qcold queue continue <run-id>
+qcold queue delete <queue-tab-id>
 ```
 
 `qcold queue run` and other mutating queue commands post to the local dashboard
@@ -227,6 +233,13 @@ daemon on `127.0.0.1:8787` by default. If the daemon is not reachable, Q-COLD
 starts `qcold telegram serve --daemon` for that listen address before sending
 the request. Use `--listen <addr>` to target another local dashboard daemon, or
 `--no-start-daemon` to fail instead of starting one.
+
+Queue tabs let one dashboard daemon keep separate task queues for different
+repositories or workstreams. The default `Task Queue` tab is always present.
+`qcold queue create` creates and activates an empty tab, `qcold queue switch`
+changes which tab receives default run/append/stop/continue operations, and
+`qcold queue delete` removes a non-default tab only when it has no running
+queue work. The web dashboard exposes the same tabs above the queue editor.
 
 Prompt packages can be JSON manifests, directories, plain text files, or ZIP
 archives. A JSON manifest may define shared `layers`, optional

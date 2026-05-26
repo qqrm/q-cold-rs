@@ -76,6 +76,17 @@ pub struct QueueRunRow {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub struct QueueTabRow {
+    pub id: String,
+    pub label: String,
+    pub run_id: Option<String>,
+    pub is_default: bool,
+    pub active: bool,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub struct QueueItemRow {
     pub id: String,
     pub run_id: String,
@@ -122,21 +133,34 @@ pub fn load_terminal_metadata() -> Result<Vec<TerminalMetadataRow>> {
     Ok(rows)
 }
 
+include!("state/queue_tabs.rs");
+
 pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()> {
     let mut connection = open_db()?;
     let tx = connection
         .transaction()
         .context("failed to start web queue transaction")?;
-    tx.execute("delete from web_queue_items", [])
+    ensure_default_web_queue_tab(&tx)?;
+    tx.execute("delete from web_queue_items where run_id = ?1", [run.id.as_str()])
         .context("failed to clear web queue items")?;
-    tx.execute("delete from web_queue_runs", [])
-        .context("failed to clear web queue runs")?;
     tx.execute(
         "insert into web_queue_runs
              (id, status, execution_mode, selected_agent_command, remote_launcher,
               selected_repo_root, selected_repo_name, track, current_index, stop_requested,
               message, created_at_unix, updated_at_unix)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         on conflict(id) do update set
+             status = excluded.status,
+             execution_mode = excluded.execution_mode,
+             selected_agent_command = excluded.selected_agent_command,
+             remote_launcher = excluded.remote_launcher,
+             selected_repo_root = excluded.selected_repo_root,
+             selected_repo_name = excluded.selected_repo_name,
+             track = excluded.track,
+             current_index = excluded.current_index,
+             stop_requested = excluded.stop_requested,
+             message = excluded.message,
+             updated_at_unix = excluded.updated_at_unix",
         params![
             run.id,
             run.status,
@@ -183,6 +207,7 @@ pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()
         )
         .context("failed to insert web queue item")?;
     }
+    assign_web_queue_run_to_active_tab(&tx, &run.id)?;
     tx.commit().context("failed to commit web queue")?;
     Ok(())
 }
@@ -295,6 +320,11 @@ pub fn update_web_queue_item_plans(run_id: &str, items: &[QueueItemRow]) -> Resu
 
 pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     let connection = open_db()?;
+    ensure_default_web_queue_tab(&connection)?;
+    let active_run_id = active_web_queue_run_id(&connection)?;
+    if let Some(run_id) = active_run_id {
+        return load_web_queue_run_with_connection(&connection, &run_id);
+    }
     let run = connection
         .query_row(
             "select id, status, execution_mode, selected_agent_command, remote_launcher,
@@ -311,26 +341,55 @@ pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     let Some(run_row) = run else {
         return Ok((None, Vec::new()));
     };
+    assign_web_queue_run_to_active_tab(&connection, &run_row.id)?;
+    load_web_queue_items_for_run(&connection, run_row).map(|(run, items)| (Some(run), items))
+}
+
+pub fn load_web_queue_runs() -> Result<Vec<(QueueRunRow, Vec<QueueItemRow>)>> {
+    let connection = open_db()?;
+    let mut statement = connection
+        .prepare(
+            "select id, status, execution_mode, selected_agent_command, remote_launcher,
+                    selected_repo_root, selected_repo_name, track, current_index, stop_requested,
+                    message, created_at_unix, updated_at_unix
+             from web_queue_runs
+             order by updated_at_unix desc, id",
+        )
+        .context("failed to prepare web queue run query")?;
+    let runs = statement
+        .query_map([], queue_run_from_row)
+        .context("failed to query web queue runs")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode web queue runs")?;
+    drop(statement);
+    runs.into_iter()
+        .map(|run| load_web_queue_items_for_run(&connection, run))
+        .collect()
+}
+
+pub fn load_web_queue_items() -> Result<Vec<QueueItemRow>> {
+    let connection = open_db()?;
     let mut statement = connection
         .prepare(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
                     remote_launcher, agent_id, status, message, attempts, next_attempt_at_unix,
                     started_at_unix, updated_at_unix, depends_on_json
              from web_queue_items
-             where run_id = ?1
-             order by position, id",
+             order by run_id, position, id",
         )
         .context("failed to prepare web queue item query")?;
     let rows = statement
-        .query_map([run_row.id.as_str()], queue_item_from_row)
+        .query_map([], queue_item_from_row)
         .context("failed to query web queue items")?
         .collect::<Result<Vec<_>, _>>()
         .context("failed to decode web queue items")?;
-    Ok((Some(run_row), rows))
+    Ok(rows)
 }
 
-pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
-    let connection = open_db()?;
+fn load_web_queue_run_with_connection(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     let run = connection
         .query_row(
             "select id, status, execution_mode, selected_agent_command, remote_launcher,
@@ -346,6 +405,13 @@ pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<Queu
     let Some(run_row) = run else {
         return Ok((None, Vec::new()));
     };
+    load_web_queue_items_for_run(connection, run_row).map(|(run, items)| (Some(run), items))
+}
+
+fn load_web_queue_items_for_run(
+    connection: &Connection,
+    run_row: QueueRunRow,
+) -> Result<(QueueRunRow, Vec<QueueItemRow>)> {
     let mut statement = connection
         .prepare(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
@@ -361,7 +427,12 @@ pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<Queu
         .context("failed to query web queue items")?
         .collect::<Result<Vec<_>, _>>()
         .context("failed to decode web queue items")?;
-    Ok((Some(run_row), rows))
+    Ok((run_row, rows))
+}
+
+pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
+    let connection = open_db()?;
+    load_web_queue_run_with_connection(&connection, run_id)
 }
 
 pub fn update_web_queue_run(
@@ -382,15 +453,22 @@ pub fn update_web_queue_run(
     Ok(())
 }
 
-pub fn request_web_queue_stop() -> Result<()> {
+pub fn request_web_queue_stop(run_id: Option<&str>) -> Result<()> {
     let connection = open_db()?;
+    let run_id = match run_id {
+        Some(run_id) => Some(run_id.to_string()),
+        None => active_web_queue_run_id(&connection)?,
+    };
+    let Some(run_id) = run_id else {
+        return Ok(());
+    };
     connection
         .execute(
             "update web_queue_runs
              set stop_requested = 1, status = 'stopping', message = 'stop requested',
-                 updated_at_unix = ?1
-             where status in ('running', 'waiting', 'starting')",
-            [unix_now()],
+                 updated_at_unix = ?2
+             where id = ?1 and status in ('running', 'waiting', 'starting')",
+            params![run_id, unix_now()],
         )
         .context("failed to request web queue stop")?;
     Ok(())
@@ -468,78 +546,6 @@ pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> 
         )
         .context("failed to update web queue item agent")?;
     Ok(())
-}
-
-pub fn delete_web_queue_item(run_id: &str, item_id: &str) -> Result<QueueItemRow> {
-    delete_web_queue_item_if_exists(run_id, item_id)?
-        .with_context(|| format!("unknown queue item: {item_id}"))
-}
-
-pub fn delete_web_queue_item_if_exists(
-    run_id: &str,
-    item_id: &str,
-) -> Result<Option<QueueItemRow>> {
-    let mut connection = open_db()?;
-    let tx = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .context("failed to start web queue item delete transaction")?;
-    let item = tx
-        .query_row(
-            "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
-                    remote_launcher, agent_id, status, message, attempts, next_attempt_at_unix,
-                    started_at_unix, updated_at_unix, depends_on_json
-             from web_queue_items
-             where run_id = ?1 and id = ?2",
-            params![run_id, item_id],
-            queue_item_from_row,
-        )
-        .optional()
-        .context("failed to query web queue item")?;
-    let Some(item) = item else {
-        delete_web_queue_run_if_empty(&tx, run_id)?;
-        tx.commit().context("failed to commit web queue item delete")?;
-        return Ok(None);
-    };
-    tx.execute(
-        "delete from web_queue_items where run_id = ?1 and id = ?2",
-        params![run_id, item_id],
-    )
-    .context("failed to delete web queue item")?;
-    remove_web_queue_dependency_references(&tx, run_id, item_id)?;
-    delete_web_queue_run_if_empty(&tx, run_id)?;
-    tx.commit().context("failed to commit web queue item delete")?;
-    Ok(Some(item))
-}
-
-fn delete_web_queue_run_if_empty(connection: &Connection, run_id: &str) -> Result<()> {
-    let remaining = connection
-        .query_row(
-            "select count(*) from web_queue_items where run_id = ?1",
-            [run_id],
-            |row| row.get::<_, i64>(0),
-        )
-        .context("failed to count remaining web queue items")?;
-    if remaining == 0 {
-        connection
-            .execute("delete from web_queue_runs where id = ?1", [run_id])
-            .context("failed to delete empty web queue run")?;
-    }
-    Ok(())
-}
-
-pub fn delete_empty_web_queue_run(run_id: &str) -> Result<bool> {
-    let connection = open_db()?;
-    let deleted = connection
-        .execute(
-            "delete from web_queue_runs
-             where id = ?1
-               and not exists (
-                   select 1 from web_queue_items where run_id = ?1
-               )",
-            [run_id],
-        )
-        .context("failed to delete empty web queue run")?;
-    Ok(deleted > 0)
 }
 
 pub fn save_terminal_metadata(target: &str, name: Option<&str>, scope: Option<&str>) -> Result<()> {

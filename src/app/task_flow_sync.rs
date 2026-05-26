@@ -246,7 +246,7 @@ fn live_web_queue_task(
 }
 
 fn live_web_queue_item_slug(task_slug: &str) -> bool {
-    state::load_web_queue().is_ok_and(|(_, items)| {
+    state::load_web_queue_items().is_ok_and(|items| {
         items
             .iter()
             .any(|item| item.slug == task_slug && item.status != "success")

@@ -87,6 +87,9 @@ repo-local code owns it.
 - `qcold q-help`
 - `qcold queue help`
 - `qcold queue run [--from <path>] [--prompt "<prompt>"] [--agent <command>] [--repo-root <path>]`
+- `qcold queue create [<label>]`
+- `qcold queue switch <queue-tab-id>`
+- `qcold queue delete <queue-tab-id>`
 - `qcold queue append [<run-id>] [--from <path>] [--prompt "<prompt>"]`
 - `qcold queue list`
 - `qcold queue stop`

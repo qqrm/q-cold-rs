@@ -1,0 +1,44 @@
+Q-COLD queue package flow
+
+Run a persistent dashboard daemon, stage prompts, then let the daemon open
+managed task worktrees and start agents:
+
+  qcold q-help
+  qcold queue run --from queue.json --agent c1 --repo-root /path/to/repo
+  qcold queue create "client queue"
+  qcold queue switch <queue-tab-id>
+  qcold queue list
+  qcold queue append <run-id> --prompt "follow-up task"
+  qcold queue stop
+  qcold queue continue <run-id>
+  qcold queue delete <queue-tab-id>
+
+`qcold queue run` and mutating queue commands post to the dashboard API on
+127.0.0.1:8787 by default and auto-start `qcold telegram serve --daemon` if
+the daemon is not already reachable. Use `--listen <addr>` to target another
+local daemon.
+
+Preferred JSON package:
+
+  {
+    "execution_mode": "sequence",
+    "layers": [
+      { "name": "policy", "prompt": "shared rules for every task" }
+    ],
+    "default_layers": ["policy"],
+    "items": [
+      { "slug": "task-one", "prompt": "first task" },
+      { "slug": "task-two", "prompt": "second task" }
+    ]
+  }
+
+Directory or ZIP package convention:
+
+  layers/*.md      shared prompt layers prepended to every task
+  prompts/*.md     queued task prompts
+  tasks/*.md       queued task prompts
+  queue.json       preferred manifest when present
+
+Graph execution is available with `execution_mode: "graph"` and per-item
+`depends_on` arrays in JSON. Queue items are still executed through managed
+`qcold task open` plus terminal closeout; the queue owns the agent lifecycle.

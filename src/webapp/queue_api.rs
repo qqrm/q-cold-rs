@@ -33,6 +33,14 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(&fallback_run_id),
     );
+    let tab_id = payload
+        .tab_id
+        .as_deref()
+        .map(clean_queue_tab_id)
+        .filter(|value| !value.is_empty());
+    if let Some(tab_id) = tab_id.as_deref() {
+        state::activate_web_queue_tab(tab_id)?;
+    }
     let execution_mode = clean_queue_execution_mode(payload.execution_mode.as_deref());
     let now = unix_now();
     let run = queue_run_from_request(&run_id, &payload, &selected_agent_command, execution_mode, now);
@@ -48,6 +56,9 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     let mut items = queue_items_from_requests(&run, prompts, 0, &mut used_slugs, now);
     normalize_queue_dependencies(&run.execution_mode, &mut items)?;
     state::replace_web_queue(&run, &items)?;
+    if let Some(tab_id) = tab_id.as_deref() {
+        state::assign_web_queue_run_to_tab(tab_id, &run_id)?;
+    }
     spawn_web_queue_worker(run_id.clone());
     Ok(run_id)
 }
@@ -224,7 +235,7 @@ fn handle_queue_stop_result(headers: &HeaderMap) -> Result<()> {
     if webapp_write_token_required() {
         require_write_token(headers)?;
     }
-    state::request_web_queue_stop()
+    state::request_web_queue_stop(None)
 }
 
 fn handle_queue_continue(
@@ -256,11 +267,172 @@ fn handle_queue_continue_result(
     Ok(())
 }
 
+fn handle_queue_tab_create(
+    headers: &HeaderMap,
+    payload: &QueueTabCreateRequest,
+) -> TerminalSendResponse {
+    match handle_queue_tab_create_result(headers, payload) {
+        Ok(tab_id) => TerminalSendResponse {
+            ok: true,
+            output: format!("queue-tab\t{tab_id}"),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_tab_create_result(
+    headers: &HeaderMap,
+    payload: &QueueTabCreateRequest,
+) -> Result<String> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let fallback = format!("queue-{}", base36_time_id());
+    let raw_label = payload
+        .label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Queue");
+    let tab_id = unique_queue_tab_id(&fallback)?;
+    let label = clean_queue_tab_label(raw_label);
+    state::create_web_queue_tab(&tab_id, &label)?;
+    state::activate_web_queue_tab(&tab_id)?;
+    Ok(tab_id)
+}
+
+fn handle_queue_tab_switch(
+    headers: &HeaderMap,
+    payload: &QueueTabRequest,
+) -> TerminalSendResponse {
+    match handle_queue_tab_switch_result(headers, payload) {
+        Ok(()) => TerminalSendResponse {
+            ok: true,
+            output: "queue tab switched".to_string(),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_tab_switch_result(headers: &HeaderMap, payload: &QueueTabRequest) -> Result<()> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let tab_id = clean_queue_tab_id(&payload.tab_id);
+    if tab_id.is_empty() {
+        bail!("invalid queue tab id");
+    }
+    state::activate_web_queue_tab(&tab_id)
+}
+
+fn handle_queue_tab_delete(
+    headers: &HeaderMap,
+    payload: &QueueTabRequest,
+) -> TerminalSendResponse {
+    match handle_queue_tab_delete_result(headers, payload) {
+        Ok(()) => TerminalSendResponse {
+            ok: true,
+            output: "queue tab deleted".to_string(),
+        },
+        Err(err) => TerminalSendResponse {
+            ok: false,
+            output: format!("{err:#}"),
+        },
+    }
+}
+
+fn handle_queue_tab_delete_result(headers: &HeaderMap, payload: &QueueTabRequest) -> Result<()> {
+    if webapp_write_token_required() {
+        require_write_token(headers)?;
+    }
+    let tab_id = clean_queue_tab_id(&payload.tab_id);
+    let tab = state::load_web_queue_tab(&tab_id)?
+        .with_context(|| format!("unknown queue tab: {tab_id}"))?;
+    if tab.is_default {
+        bail!("cannot delete the default queue tab");
+    }
+    if let Some(run_id) = tab.run_id.as_deref() {
+        let (run, items) = state::load_web_queue_run(run_id)?;
+        let Some(run) = run else {
+            state::delete_web_queue_tab(&tab_id)?;
+            return Ok(());
+        };
+        if queue_run_has_live_work(&run, &items) {
+            bail!("cannot delete a queue tab while it has running work");
+        }
+        for item in items {
+            let item = state::delete_web_queue_item(&run.id, &item.id)?;
+            cleanup_queue_item_artifacts(&item, None, None)?;
+        }
+        state::delete_empty_web_queue_run(&run.id)?;
+    }
+    state::delete_web_queue_tab(&tab_id)
+}
+
+fn queue_run_has_live_work(run: &state::QueueRunRow, items: &[state::QueueItemRow]) -> bool {
+    if matches!(
+        run.status.as_str(),
+        "running" | "waiting" | "starting" | "stopping"
+    ) {
+        return true;
+    }
+    items.iter().any(|item| {
+        matches!(item.status.as_str(), "running" | "starting" | "waiting")
+            || item.agent_id.as_deref().is_some_and(agent_running)
+    })
+}
+
 fn clean_queue_execution_mode(value: Option<&str>) -> String {
     match value.map(str::trim) {
         Some("graph") => "graph".to_string(),
         _ => "sequence".to_string(),
     }
+}
+
+fn clean_queue_tab_id(value: &str) -> String {
+    sanitize_daemon_id(value)
+}
+
+fn clean_queue_tab_label(value: &str) -> String {
+    let label = value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(48)
+        .collect::<String>();
+    if label.is_empty() {
+        "Queue".to_string()
+    } else {
+        label
+    }
+}
+
+fn unique_queue_tab_id(prefix: &str) -> Result<String> {
+    let base = clean_queue_tab_id(prefix);
+    if base.is_empty() {
+        bail!("invalid queue tab id");
+    }
+    let existing = state::load_web_queue_tabs()?
+        .into_iter()
+        .map(|tab| tab.id)
+        .collect::<HashSet<_>>();
+    if !existing.contains(&base) {
+        return Ok(base);
+    }
+    for index in 2..100 {
+        let candidate = format!("{base}-{index}");
+        if !existing.contains(&candidate) {
+            return Ok(candidate);
+        }
+    }
+    bail!("failed to allocate queue tab id")
 }
 
 fn queue_run_from_request(
@@ -614,7 +786,7 @@ fn handle_queue_clear_result(headers: &HeaderMap, payload: &QueueClearRequest) -
         run.status.as_str(),
         "running" | "waiting" | "starting" | "stopping"
     ) {
-        state::request_web_queue_stop()?;
+        state::request_web_queue_stop(Some(&run.id))?;
     }
     let mut removed = 0;
     for item in items {

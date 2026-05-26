@@ -17,6 +17,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueAgentState = document.getElementById('queue-agent-state');
     const queueState = document.getElementById('queue-state');
     const queueStatus = document.getElementById('queue-status');
+    const queueTabs = document.getElementById('queue-tabs');
     const queueGraphModeInput = document.getElementById('queue-graph-mode');
     const transcriptModal = document.getElementById('transcript-modal');
     const transcriptTitle = document.getElementById('transcript-title');
@@ -35,13 +36,17 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const viewButtons = Array.from(document.querySelectorAll('.nav button'));
     const viewNames = new Set(viewButtons.map((button) => button.dataset.view));
     const queueStorageKey = 'qcold-task-queue-v4';
+    const queueDraftsStorageKey = 'qcold-task-queue-drafts-v1';
     const queueAgentStorageKey = 'qcold-task-queue-agent-v1';
     const queueRepoStorageKey = 'qcold-task-queue-repo-v1';
     const queueGraphModeStorageKey = 'qcold-task-queue-graph-mode-v1';
     let selectedQueueAgent = localStorage.getItem(queueAgentStorageKey) || '';
     let selectedQueueRepoRoot = localStorage.getItem(queueRepoStorageKey) || '';
+    let activeQueueTabId = 'default';
+    let queueTabsModel = [];
     let queueGraphMode = localStorage.getItem(queueGraphModeStorageKey) === '1';
-    const queueSaved = loadQueueStorage();
+    const queueSaved = loadQueueStorageForTab(activeQueueTabId);
+    if (typeof queueSaved.graphMode === 'boolean') queueGraphMode = queueSaved.graphMode;
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
     let queueWaves = normalizeQueueWaves(queueSaved.waves || [], queueItems);
@@ -140,7 +145,18 @@ const tg = window.Telegram && window.Telegram.WebApp;
       return shortId && shortId !== label ? `agent ${label} / ${shortId}` : `agent ${label}`;
     }
 
-    function loadQueueStorage() {
+    function loadQueueDrafts() {
+      try {
+        return JSON.parse(localStorage.getItem(queueDraftsStorageKey) || '{}');
+      } catch (_err) {
+        return {};
+      }
+    }
+
+    function loadQueueStorageForTab(tabId) {
+      const drafts = loadQueueDrafts();
+      if (drafts[tabId]) return drafts[tabId];
+      if (tabId !== 'default') return {};
       try {
         return JSON.parse(localStorage.getItem(queueStorageKey) || '{}');
       } catch (_err) {
@@ -152,11 +168,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (queueGraphMode) syncQueueWaveDependencies();
       const draftItems = queueItems.filter((item) => !item.runId);
       const draftWaves = normalizeQueueWaves(queueWaves, draftItems);
+      const drafts = loadQueueDrafts();
       if (!draftItems.length && draftWaves.length <= 1) {
-        localStorage.removeItem(queueStorageKey);
+        delete drafts[activeQueueTabId];
+        localStorage.setItem(queueDraftsStorageKey, JSON.stringify(drafts));
+        if (activeQueueTabId === 'default') localStorage.removeItem(queueStorageKey);
         return;
       }
-      localStorage.setItem(queueStorageKey, JSON.stringify({
+      drafts[activeQueueTabId] = {
+        graphMode: queueGraphMode,
         waves: draftWaves.map((wave) => ({ id: wave.id })),
         items: draftItems.map((item) => ({
           id: item.id,
@@ -176,7 +196,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
           startedAt: item.startedAt,
           updatedAt: item.updatedAt,
         })),
-      }));
+      };
+      localStorage.setItem(queueDraftsStorageKey, JSON.stringify(drafts));
     }
 
     function defaultQueueItem() {
@@ -501,13 +522,22 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function syncQueueFromSnapshot() {
-      if (state?.queue?.run || state?.queue?.records?.length) {
+      const nextTabs = queueTabsFromSnapshot();
+      const nextActiveTabId = state?.queue?.active_tab_id
+        || nextTabs.find((tab) => tab.active)?.id
+        || activeQueueTabId
+        || 'default';
+      if (nextActiveTabId !== activeQueueTabId && !queueHasBackendRun()) saveQueueStorage();
+      activeQueueTabId = nextActiveTabId;
+      queueTabsModel = nextTabs;
+      const activeTab = queueTabsModel.find((tab) => tab.id === activeQueueTabId) || queueTabsModel[0];
+      if (activeTab?.runId && (state?.queue?.run || state?.queue?.records?.length)) {
         const nextRunId = state.queue.run?.id || existingQueueRunId();
         const nextExecutionMode = state.queue.run?.execution_mode || '';
         const preservedWaves = queueRun.runId && queueRun.runId === nextRunId && nextExecutionMode === 'graph'
           ? queueWaves
           : [];
-        localStorage.removeItem(queueStorageKey);
+        clearQueueDraft(activeQueueTabId);
         const previousItems = new Map(queueItems.map((item) => [item.id, item]));
         pruneQueueRemovalTombstones();
         queueItems = (state.queue.records || [])
@@ -529,6 +559,49 @@ const tg = window.Telegram && window.Telegram.WebApp;
         queueGraphMode = nextExecutionMode === 'graph';
         return;
       }
+      loadActiveQueueDraft();
+      if (queueTabsModel.length <= 1 && !queueItems.length) {
+        queueTabsModel = [{ id: 'default', label: 'Task Queue', isDefault: true, active: true }];
+      }
+      if (queueTaskRecords().length) reconcileDraftQueueItems();
+    }
+
+    function queueTabsFromSnapshot() {
+      const tabs = state?.queue?.tabs || [];
+      if (!Array.isArray(tabs) || !tabs.length) {
+        return [{ id: 'default', label: 'Task Queue', isDefault: true, active: true }];
+      }
+      return tabs.map((tab) => ({
+        id: tab.id || 'default',
+        label: tab.label || 'Queue',
+        runId: tab.run_id || '',
+        isDefault: Boolean(tab.is_default),
+        active: Boolean(tab.active),
+        running: Boolean(tab.running),
+        status: tab.status || '',
+        count: Number(tab.count || 0),
+        message: tab.message || '',
+      }));
+    }
+
+    function clearQueueDraft(tabId) {
+      const drafts = loadQueueDrafts();
+      delete drafts[tabId || activeQueueTabId || 'default'];
+      localStorage.setItem(queueDraftsStorageKey, JSON.stringify(drafts));
+      if ((tabId || activeQueueTabId) === 'default') localStorage.removeItem(queueStorageKey);
+    }
+
+    function loadActiveQueueDraft() {
+      const saved = loadQueueStorageForTab(activeQueueTabId);
+      queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+      queueItems = (saved.items || []).map((item) => ({ ...defaultQueueItem(), ...item }));
+      queueWaves = normalizeQueueWaves(saved.waves || [], queueItems, { pruneBackendEmpty: true });
+      queueGraphMode = typeof saved.graphMode === 'boolean'
+        ? saved.graphMode
+        : localStorage.getItem(queueGraphModeStorageKey) === '1';
+    }
+
+    function reconcileDraftQueueItems() {
       queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
       let changed = false;
       const beforeCount = queueItems.length;
@@ -598,8 +671,51 @@ const tg = window.Telegram && window.Telegram.WebApp;
       };
     }
 
+    function renderQueueTabs() {
+      const tabs = queueTabsModel.length
+        ? queueTabsModel
+        : [{ id: 'default', label: 'Task Queue', isDefault: true, active: true }];
+      const nodes = tabs.map((tab) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = `queue-tab${tab.id === activeQueueTabId ? ' active' : ''}`;
+        button.setAttribute('role', 'tab');
+        button.setAttribute('aria-selected', tab.id === activeQueueTabId ? 'true' : 'false');
+        button.title = tab.message || tab.status || tab.label;
+        button.addEventListener('click', () => switchQueueTab(tab.id));
+        const label = document.createElement('span');
+        label.textContent = tab.isDefault ? 'Base' : tab.label;
+        const meta = document.createElement('small');
+        meta.textContent = tab.runId ? `${tab.status || 'run'} ${tab.count || 0}` : 'draft';
+        button.append(label, meta);
+        if (!tab.isDefault) {
+          const close = document.createElement('span');
+          close.className = 'queue-tab-close';
+          close.textContent = '×';
+          close.title = tab.running ? 'Queue has running work' : 'Delete queue';
+          close.setAttribute('aria-label', close.title);
+          close.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (!tab.running) deleteQueueTab(tab.id);
+          });
+          if (tab.running) close.classList.add('disabled');
+          button.appendChild(close);
+        }
+        return button;
+      });
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.className = 'queue-tab queue-tab-add';
+      add.textContent = '+';
+      add.title = 'Add queue';
+      add.setAttribute('aria-label', 'Add queue');
+      add.addEventListener('click', createQueueTab);
+      queueTabs.replaceChildren(...nodes, add);
+    }
+
     function renderQueue() {
       document.getElementById('nav-queue').textContent = String(queueItems.length);
+      renderQueueTabs();
       queueGraphModeInput.checked = queueGraphMode;
       queueGraphModeInput.disabled = queueHasBackendRun();
       queueState.textContent = queueRun.running

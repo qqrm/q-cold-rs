@@ -352,6 +352,9 @@ fn router() -> Router {
         .route("/api/queue/clear", post(api_queue_clear))
         .route("/api/queue/stop", post(api_queue_stop))
         .route("/api/queue/continue", post(api_queue_continue))
+        .route("/api/queue/tab/create", post(api_queue_tab_create))
+        .route("/api/queue/tab/switch", post(api_queue_tab_switch))
+        .route("/api/queue/tab/delete", post(api_queue_tab_delete))
         .route("/api/terminal/send", post(api_terminal_send))
         .route("/api/terminal/metadata", post(api_terminal_metadata))
         .route("/api/events", get(api_events))
@@ -495,6 +498,48 @@ async fn api_queue_continue(
     no_store((status, Json(response)))
 }
 
+async fn api_queue_tab_create(
+    headers: HeaderMap,
+    Json(payload): Json<QueueTabCreateRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_tab_create(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_tab_switch(
+    headers: HeaderMap,
+    Json(payload): Json<QueueTabRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_tab_switch(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
+async fn api_queue_tab_delete(
+    headers: HeaderMap,
+    Json(payload): Json<QueueTabRequest>,
+) -> impl IntoResponse {
+    let response = handle_queue_tab_delete(&headers, &payload);
+    refresh_dashboard_state_after_mutation(response.ok);
+    let status = if response.ok {
+        StatusCode::OK
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    no_store((status, Json(response)))
+}
+
 async fn api_task_chat_target(
     headers: HeaderMap,
     Json(payload): Json<TaskChatTargetRequest>,
@@ -592,6 +637,7 @@ include!("webapp/tests_assets.rs");
 include!("webapp/tests_queue_live_edit.rs");
 include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_reconcile.rs");
+include!("webapp/tests_queue_tabs.rs");
 include!("webapp/tests_queue_taskflow.rs");
 include!("webapp/tests_terminal_send.rs");
 include!("webapp/tests_task_transcript.rs");

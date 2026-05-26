@@ -73,5 +73,7 @@ fn directory_package_uses_layers_and_prompt_dirs() {
 #[test]
 fn help_mentions_console_queue_flow() {
     assert!(help_text().contains("qcold queue run --from queue.json"));
+    assert!(help_text().contains("qcold queue create"));
+    assert!(help_text().contains("qcold queue switch"));
     assert!(help_text().contains("layers/*.md"));
 }

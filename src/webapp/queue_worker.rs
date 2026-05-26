@@ -832,10 +832,16 @@ fn update_successful_queue_item(
 }
 
 fn reconcile_stale_web_queue_run() -> Result<()> {
-    let (run, mut items) = state::load_web_queue()?;
-    let Some(mut run) = run else {
-        return Ok(());
-    };
+    for (run, items) in state::load_web_queue_runs()? {
+        reconcile_one_stale_web_queue_run(run, items)?;
+    }
+    Ok(())
+}
+
+fn reconcile_one_stale_web_queue_run(
+    mut run: state::QueueRunRow,
+    mut items: Vec<state::QueueItemRow>,
+) -> Result<()> {
     if web_queue_worker_active(&run.id) {
         return Ok(());
     }

@@ -26,7 +26,23 @@ pub(crate) struct QueueSnapshot {
     pub(crate) running: bool,
     pub(crate) run: Option<state::QueueRunRow>,
     pub(crate) records: Vec<state::QueueItemRow>,
+    pub(crate) tabs: Vec<QueueTabSnapshot>,
+    pub(crate) active_tab_id: String,
     pub(crate) error: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct QueueTabSnapshot {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) run_id: Option<String>,
+    pub(crate) is_default: bool,
+    pub(crate) active: bool,
+    pub(crate) running: bool,
+    pub(crate) status: String,
+    pub(crate) count: usize,
+    pub(crate) message: String,
+    pub(crate) updated_at: u64,
 }
 
 #[derive(Serialize)]
@@ -692,6 +708,7 @@ struct TaskTranscriptMessage {
 #[derive(Deserialize)]
 pub(crate) struct QueueRunRequest {
     pub(crate) run_id: Option<String>,
+    pub(crate) tab_id: Option<String>,
     pub(crate) execution_mode: Option<String>,
     pub(crate) selected_agent_command: String,
     pub(crate) selected_remote_launcher: Option<String>,
@@ -756,6 +773,16 @@ pub(crate) struct QueueRemoveRequest {
 #[derive(Deserialize)]
 pub(crate) struct QueueClearRequest {
     pub(crate) run_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct QueueTabCreateRequest {
+    pub(crate) label: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct QueueTabRequest {
+    pub(crate) tab_id: String,
 }
 
 #[derive(Deserialize)]

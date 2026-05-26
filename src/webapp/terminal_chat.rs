@@ -434,10 +434,10 @@ fn codex_thread_id_from_session_path(path: &str) -> Option<String> {
 }
 
 fn queue_item_for_task_id(task_id: &str) -> Result<Option<state::QueueItemRow>> {
-    let (_, items) = state::load_web_queue()?;
     let Some(slug) = task_id.strip_prefix("task/") else {
         return Ok(None);
     };
+    let items = state::load_web_queue_items()?;
     Ok(items.into_iter().find(|item| item.slug == slug))
 }
 
