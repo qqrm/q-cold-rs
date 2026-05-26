@@ -3,6 +3,11 @@ struct NamedCodexResumeLaunch {
     cwd: PathBuf,
 }
 
+enum NamedResumeCandidate {
+    Resume(PathBuf),
+    CleanExit,
+}
+
 fn named_codex_resume_launch(
     track: &str,
     command: &str,
@@ -39,7 +44,7 @@ fn named_codex_resume_launch_for_primary(
     let mut records = AgentState::load()?.records;
     records.sort_by_key(|record| std::cmp::Reverse(record.started_at));
     for record in records {
-        let Some(cwd) = named_resume_candidate_cwd(
+        let Some(candidate) = named_resume_candidate(
             &record,
             track,
             &account,
@@ -49,6 +54,9 @@ fn named_codex_resume_launch_for_primary(
         )?
         else {
             continue;
+        };
+        let NamedResumeCandidate::Resume(cwd) = candidate else {
+            return Ok(None);
         };
         if let Some(session_id) = task_resume_session_for_agent(&tasks, &record.id) {
             return Ok(Some(NamedCodexResumeLaunch {
@@ -85,14 +93,14 @@ fn plain_codex_chat_command(command: &str) -> Option<String> {
     })
 }
 
-fn named_resume_candidate_cwd(
+fn named_resume_candidate(
     record: &AgentRecord,
     track: &str,
     account: &str,
     requested_name: &str,
     primary_root: &Path,
     metadata: &HashMap<String, state::TerminalMetadataRow>,
-) -> Result<Option<PathBuf>> {
+) -> Result<Option<NamedResumeCandidate>> {
     if record.track != track || process_state(record.pid) == "running" {
         return Ok(None);
     }
@@ -112,7 +120,13 @@ fn named_resume_candidate_cwd(
     let Some((_, candidate_primary)) = agent_worktree_primary_for_cwd(&cwd)? else {
         return Ok(None);
     };
-    Ok((candidate_primary == primary_root).then_some(cwd))
+    if candidate_primary != primary_root {
+        return Ok(None);
+    }
+    if terminal_exit_status(&record.id) == Some(0) {
+        return Ok(Some(NamedResumeCandidate::CleanExit));
+    }
+    Ok(Some(NamedResumeCandidate::Resume(cwd)))
 }
 
 fn task_resume_session_for_agent(records: &[state::TaskRecordRow], agent_id: &str) -> Option<String> {

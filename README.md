@@ -502,6 +502,9 @@ Q-COLD terminal display name, Q-COLD attaches to that terminal instead of
 starting a duplicate session. A later plain named Codex launch, such as
 `cc1 --name atomic`, resumes the latest exited same-track named Codex chat when
 Q-COLD has imported that prior session id; otherwise it starts a fresh chat.
+When the newer same-name terminal exited cleanly, such as through Codex `/q`,
+Q-COLD treats that name as intentionally closed and starts fresh instead of
+falling back to older interrupted sessions.
 Plain processes started in a non-multiplexed console are visible as host
 processes but are not safely attachable after the fact. Start agents with
 `qcold agent start --terminal --attach --track <track> -- <command>...` to see
@@ -547,6 +550,8 @@ return to its stable workspace before starting another chat or task. Use
 isolation should be bypassed.
 When the wrapped agent exits, the terminal session exits too, so `/q` in an
 attached agent returns to the parent terminal without an extra shell prompt.
+That clean exit also prevents the same terminal name from auto-resuming the
+closed Codex chat on the next plain named launch.
 Terminal backend follow-up work is tracked in
 [`docs/terminal-backlog.md`](docs/terminal-backlog.md).
 GUI command execution is enabled for the local server by default. If the GUI is

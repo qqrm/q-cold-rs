@@ -277,6 +277,18 @@ fn log_path(id: &str, stream: &str) -> Result<PathBuf> {
     Ok(state_dir()?.join("logs").join(format!("{id}.{stream}.log")))
 }
 
+fn terminal_exit_status_path(id: &str) -> Result<PathBuf> {
+    Ok(state_dir()?.join("logs").join(format!("{id}.exit-status")))
+}
+
+fn terminal_exit_status(id: &str) -> Option<i32> {
+    fs::read_to_string(terminal_exit_status_path(id).ok()?)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
 fn log_file(path: &PathBuf) -> Result<File> {
     OpenOptions::new()
         .create(true)

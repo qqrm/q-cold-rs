@@ -29,6 +29,12 @@ mod resume_tests {
         git_ok(path, &["commit", "-m", "seed"]);
     }
 
+    fn write_terminal_exit_status(id: &str, status: i32) {
+        let path = terminal_exit_status_path(id).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, format!("{status}\n")).unwrap();
+    }
+
     #[test]
     fn codex_resume_reuses_latest_agent_worktree_for_same_track() {
         let _guard = crate::test_support::env_guard();
@@ -237,6 +243,140 @@ mod resume_tests {
             Some(metadata.to_string()),
         );
         state::upsert_task_record(&record).unwrap();
+
+        let launch = named_codex_resume_launch_for_primary(
+            "c1",
+            "/opt/qcold-test/bin/c1",
+            "Atomic",
+            &primary,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(launch.cwd, previous.cwd);
+        assert_eq!(
+            launch.command,
+            "'/opt/qcold-test/bin/c1' resume '019df1ab-7579-7e41-ad71-701b63175455'"
+        );
+    }
+
+    #[test]
+    fn named_codex_launch_starts_fresh_after_clean_named_exit() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempdir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let primary = temp.path().join("repo");
+        seed_git_repo(&primary);
+        let interrupted = open_agent_worktree("interrupted", "c1", 100, &primary).unwrap();
+        let clean = open_agent_worktree("clean", "c1", 200, &primary).unwrap();
+
+        for (id, started_at, cwd) in [
+            ("interrupted", 100, interrupted.cwd.clone()),
+            ("clean", 200, clean.cwd.clone()),
+        ] {
+            state::insert_agent(&state::AgentRow {
+                id: id.to_string(),
+                track: "c1".to_string(),
+                pid: u32::MAX,
+                started_at,
+                command: vec![
+                    "zellij".to_string(),
+                    "--session".to_string(),
+                    format!("qcold-{id}"),
+                    "pane".to_string(),
+                    "1".to_string(),
+                    "/opt/qcold-test/bin/c1".to_string(),
+                ],
+                cwd: Some(cwd),
+                stdout_log_path: None,
+                stderr_log_path: None,
+            })
+            .unwrap();
+            state::save_terminal_metadata(
+                &format!("zellij:qcold-{id}:1"),
+                Some("atomic"),
+                None,
+            )
+            .unwrap();
+        }
+
+        let metadata = serde_json::json!({
+            "kind": "codex-session-import",
+            "command": "/opt/qcold-test/bin/c1",
+            "codex_thread_id": "019df1ab-7579-7e41-ad71-701b63175455",
+        });
+        let record = state::new_task_record(
+            "adhoc/interrupted-atomic".to_string(),
+            "codex-session".to_string(),
+            "Atomic".to_string(),
+            "Atomic".to_string(),
+            "closed:unknown".to_string(),
+            Some(primary.display().to_string()),
+            Some(interrupted.cwd.display().to_string()),
+            Some("interrupted".to_string()),
+            Some(metadata.to_string()),
+        );
+        state::upsert_task_record(&record).unwrap();
+        write_terminal_exit_status("interrupted", 130);
+        write_terminal_exit_status("clean", 0);
+
+        assert!(
+            named_codex_resume_launch_for_primary(
+                "c1",
+                "/opt/qcold-test/bin/c1",
+                "Atomic",
+                &primary,
+            )
+            .unwrap()
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn named_codex_launch_resumes_after_interrupted_named_exit() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempdir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let primary = temp.path().join("repo");
+        seed_git_repo(&primary);
+        let previous = open_agent_worktree("old", "c1", 100, &primary).unwrap();
+        state::insert_agent(&state::AgentRow {
+            id: "old".to_string(),
+            track: "c1".to_string(),
+            pid: u32::MAX,
+            started_at: 100,
+            command: vec![
+                "zellij".to_string(),
+                "--session".to_string(),
+                "qcold-old".to_string(),
+                "pane".to_string(),
+                "1".to_string(),
+                "/opt/qcold-test/bin/c1".to_string(),
+            ],
+            cwd: Some(previous.cwd.clone()),
+            stdout_log_path: None,
+            stderr_log_path: None,
+        })
+        .unwrap();
+        state::save_terminal_metadata("zellij:qcold-old:1", Some("atomic"), None).unwrap();
+        let metadata = serde_json::json!({
+            "kind": "codex-session-import",
+            "command": "/opt/qcold-test/bin/c1",
+            "codex_thread_id": "019df1ab-7579-7e41-ad71-701b63175455",
+        });
+        let record = state::new_task_record(
+            "adhoc/old-atomic".to_string(),
+            "codex-session".to_string(),
+            "Atomic".to_string(),
+            "Atomic".to_string(),
+            "closed:unknown".to_string(),
+            Some(primary.display().to_string()),
+            Some(previous.cwd.display().to_string()),
+            Some("old".to_string()),
+            Some(metadata.to_string()),
+        );
+        state::upsert_task_record(&record).unwrap();
+        write_terminal_exit_status("old", 130);
 
         let launch = named_codex_resume_launch_for_primary(
             "c1",

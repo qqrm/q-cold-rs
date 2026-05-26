@@ -274,10 +274,12 @@ fn start_tmux_terminal_agent(
         launch.qcold_agent_worktree.as_deref(),
         launch.output_guard.as_ref(),
     );
+    let exit_status_path = terminal_exit_status_path(id)?;
     let wrapped = format!(
-        "{env_prefix}{}; status=$?; printf \
+        "{env_prefix}{}; status=$?; printf '%s\\n' \"$status\" > {}; printf \
          '\\n[Q-COLD terminal command exited with status %s]\\n' \"$status\"; exit \"$status\"",
         launch.command,
+        shell_quote(&exit_status_path.display().to_string()),
     );
     let delayed = format!("sleep 0.1; exec sh -lc {}", shell_quote(&wrapped));
     let tmux_shell_command = format!("sh -lc {}", shell_quote(&delayed));
@@ -339,12 +341,15 @@ fn start_zellij_terminal_agent(
         launch.qcold_agent_worktree.as_deref(),
         launch.output_guard.as_ref(),
     );
+    let exit_status_path = terminal_exit_status_path(id)?;
     let wrapped = format!(
-        "{env_prefix}{}{}; status=$?; printf '\\n[Q-COLD terminal command exited with status %s]\\n' \
+        "{env_prefix}{}{}; status=$?; printf '%s\\n' \"$status\" > {}; \
+         printf '\\n[Q-COLD terminal command exited with status %s]\\n' \
          \"$status\"; sleep 0.1; zellij delete-session --force {} >/dev/null 2>&1 || true; \
          exit \"$status\"",
         terminal_title_shell_prefix(launch.zellij_pane_name.as_deref()),
         launch.command,
+        shell_quote(&exit_status_path.display().to_string()),
         shell_quote(&session)
     );
     let layout_path = state_dir()?.join("logs").join(format!("{id}.zellij.kdl"));
