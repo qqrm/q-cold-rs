@@ -319,6 +319,8 @@ mod resume_tests {
         state::upsert_task_record(&record).unwrap();
         write_terminal_exit_status("interrupted", 130);
         write_terminal_exit_status("clean", 0);
+        fs::create_dir_all(temp.path().join("state/logs")).unwrap();
+        fs::write(log_path("clean", "out").unwrap(), "closed output\n").unwrap();
 
         assert!(
             named_codex_resume_launch_for_primary(
@@ -332,8 +334,9 @@ mod resume_tests {
         );
         let agents = AgentState::load().unwrap().records;
         assert!(agents.iter().any(|record| record.id == "interrupted"));
-        assert!(agents.iter().all(|record| record.id != "clean"));
-        assert!(!terminal_exit_status_path("clean").unwrap().exists());
+        assert!(agents.iter().any(|record| record.id == "clean"));
+        assert!(terminal_exit_status_path("clean").unwrap().exists());
+        assert!(log_path("clean", "out").unwrap().exists());
     }
 
     #[test]

@@ -513,11 +513,11 @@ starting a duplicate session. A later plain named Codex launch, such as
 `cc1 --name atomic`, resumes the latest exited same-track named Codex chat when
 Q-COLD has imported that prior session id; otherwise it starts a fresh chat.
 When the newer same-name terminal exited cleanly, such as through Codex `/quit`,
-Q-COLD treats that name as intentionally closed, drops the Q-COLD resume
-binding, and starts fresh instead of falling back to older interrupted
-sessions. Use
+Q-COLD treats that name as intentionally closed and starts fresh instead of
+falling back to older interrupted sessions; the closed named-session record and
+local terminal logs remain available until explicitly dropped. Use
 `qcold agent named-sessions list --agent cc1` to inspect Q-COLD's named Codex
-resume bindings, `qcold agent named-sessions drop --agent cc1 --name atomic`
+sessions, `qcold agent named-sessions drop --agent cc1 --name atomic`
 to drop one stale name, or `qcold agent named-sessions drop-all --agent cc1`
 to clear all named sessions for that agent account and track. These commands
 remove Q-COLD's resume binding records and local terminal logs, but they do not

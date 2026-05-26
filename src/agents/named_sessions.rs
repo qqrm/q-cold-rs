@@ -6,11 +6,11 @@ struct NamedSessionsArgs {
 
 #[derive(Subcommand)]
 enum NamedSessionsCommand {
-    #[command(about = "List named Codex resume sessions known to Q-COLD")]
+    #[command(about = "List named Codex sessions known to Q-COLD")]
     List(NamedSessionListArgs),
-    #[command(about = "Drop named Codex resume sessions by display name")]
+    #[command(about = "Drop named Codex sessions by display name")]
     Drop(NamedSessionDropArgs),
-    #[command(about = "Drop all named Codex resume sessions in a scope")]
+    #[command(about = "Drop all named Codex sessions in a scope")]
     DropAll(NamedSessionDropAllArgs),
 }
 
@@ -264,10 +264,6 @@ fn named_session_rows(filter: &NamedSessionFilter) -> Result<Vec<NamedSessionRec
         let state = process_state(record.pid);
         let session_id = task_resume_session_for_agent(&tasks, &record.id);
         let exit_status = terminal_exit_status(&record.id);
-        if state != "running" && exit_status == Some(0) {
-            delete_named_session_binding(&record.id, &target)?;
-            continue;
-        }
         let resume_state = named_session_resume_state(state, exit_status, session_id.as_deref());
         rows.push(NamedSessionRecord {
             agent_id: record.id,

@@ -114,7 +114,7 @@ enum AgentCommand {
     Attach(AttachArgs),
     #[command(about = "List tracked agent processes")]
     List,
-    #[command(about = "Inspect or drop named Codex resume sessions")]
+    #[command(about = "Inspect or drop named Codex sessions")]
     NamedSessions(NamedSessionsArgs),
     #[command(about = "Prune stale terminal agents and ad-hoc task records")]
     PruneStale(PruneStaleArgs),

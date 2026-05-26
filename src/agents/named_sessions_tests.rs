@@ -122,7 +122,7 @@ mod named_sessions_tests {
     }
 
     #[test]
-    fn named_session_list_prunes_clean_exit_rows() {
+    fn named_session_list_keeps_clean_exit_rows_and_logs() {
         let _guard = crate::test_support::env_guard();
         let temp = tempdir().unwrap();
         env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
@@ -136,16 +136,20 @@ mod named_sessions_tests {
         fs::write(log_path("clean", "out").unwrap(), "output\n").unwrap();
 
         let rows = named_session_rows(&agent_filter("cc1", None)).unwrap();
+        let rendered = render_named_sessions(&rows);
 
-        assert!(rows.is_empty());
-        assert!(AgentState::load().unwrap().records.is_empty());
-        assert!(state::load_terminal_metadata().unwrap().is_empty());
+        assert_eq!(rows.len(), 1);
+        assert!(rendered.contains("named-session\tname=Atomic\ttrack=c1\taccount=1"));
+        assert!(rendered.contains("\tresume=closed\t"));
+        assert!(rendered.contains("\texit_status=0"));
+        assert_eq!(AgentState::load().unwrap().records.len(), 1);
+        assert_eq!(state::load_terminal_metadata().unwrap().len(), 1);
         let task_records = state::load_task_records(None, 1000).unwrap();
         assert!(task_records
             .iter()
-            .all(|record| record.agent_id.as_deref() != Some("clean")));
-        assert!(!terminal_exit_status_path("clean").unwrap().exists());
-        assert!(!log_path("clean", "out").unwrap().exists());
+            .any(|record| record.agent_id.as_deref() == Some("clean")));
+        assert!(terminal_exit_status_path("clean").unwrap().exists());
+        assert!(log_path("clean", "out").unwrap().exists());
     }
 
     #[test]

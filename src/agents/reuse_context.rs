@@ -5,7 +5,7 @@ struct NamedCodexResumeLaunch {
 
 enum NamedResumeCandidate {
     Resume(PathBuf),
-    CleanExit { target: String },
+    CleanExit,
 }
 
 fn named_codex_resume_launch(
@@ -68,10 +68,7 @@ fn named_codex_resume_launch_for_primary(
                     }));
                 }
             }
-            NamedResumeCandidate::CleanExit { target } => {
-                delete_named_session_binding(&record.id, &target)?;
-                return Ok(None);
-            }
+            NamedResumeCandidate::CleanExit => return Ok(None),
         }
     }
     Ok(None)
@@ -129,10 +126,7 @@ fn named_resume_candidate(
         return Ok(None);
     }
     if terminal_exit_status(&record.id) == Some(0) {
-        let Some(target) = terminal_target_key(record) else {
-            return Ok(None);
-        };
-        return Ok(Some(NamedResumeCandidate::CleanExit { target }));
+        return Ok(Some(NamedResumeCandidate::CleanExit));
     }
     Ok(Some(NamedResumeCandidate::Resume(cwd)))
 }
