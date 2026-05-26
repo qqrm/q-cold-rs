@@ -265,7 +265,14 @@ when the override is coherent with the current checkout or managed worktree.
 
 Telegram outbound notifications still use `TELEGRAM_BOT_TOKEN` plus
 `QCOLD_TELEGRAM_OPERATOR_CHAT_ID` or `TELEGRAM_CHAT_ID` through the repository
-adapter notification flow. Inbound Telegram control is frozen: `qcold telegram
+adapter notification flow. Q-COLD-started terminal agents forward
+`TELEGRAM_ENV_FILE` and `JIRA_ENV_FILE` paths, and discover a repository-local
+`.env.taskflow-telegram.local` when no explicit env-file path is set, so queue
+closeouts use the same repository adapter notification flow as manual task
+closeouts. Keep bot tokens in the env file; Q-COLD forwards non-secret
+endpoint and chat-id settings but does not inject raw token values into
+terminal shell prefixes or queue task packets. Inbound Telegram control is
+frozen: `qcold telegram
 poll` acknowledges updates so they do not accumulate, clears the bot slash
 command menu with `setMyCommands`, and deliberately does not route messages,
 slash commands, Mini App launch requests, task creation, agent starts, or

@@ -441,6 +441,7 @@ fn apply_qcold_launch_env(
     if let Some(agent_worktree) = agent_worktree {
         command.env("QCOLD_AGENT_WORKTREE", agent_worktree);
     }
+    apply_notification_launch_env(command, root);
     crate::output_guard::apply_output_guard_to_command(command, output_guard);
 }
 
@@ -474,11 +475,94 @@ fn terminal_qcold_env_prefix_with_path(
             shell_quote(&agent_worktree.display().to_string())
         );
     }
+    for (name, value) in notification_launch_env(root) {
+        let _ = write!(prefix, "export {name}={}; ", shell_quote(&value));
+    }
     prefix.push_str(&crate::output_guard::terminal_output_guard_env_prefix_with_path(
         output_guard,
         path,
     ));
     prefix
+}
+
+fn apply_notification_launch_env(command: &mut Command, root: Option<&Path>) {
+    for (name, value) in notification_launch_env(root) {
+        command.env(name, value);
+    }
+}
+
+fn notification_launch_env(root: Option<&Path>) -> Vec<(&'static str, String)> {
+    let mut vars = Vec::new();
+    let discovered_env = discover_notification_env_file(root);
+    if let Some(value) = nonempty_env("TELEGRAM_ENV_FILE")
+        .or_else(|| discovered_env.as_deref().map(path_display))
+    {
+        vars.push(("TELEGRAM_ENV_FILE", value));
+    }
+    if let Some(value) =
+        nonempty_env("JIRA_ENV_FILE").or_else(|| discovered_env.as_deref().map(path_display))
+    {
+        vars.push(("JIRA_ENV_FILE", value));
+    }
+    for name in [
+        "TELEGRAM_API_BASE_URL",
+        "TELEGRAM_NOTIFY_TIMEOUT",
+        "QCOLD_TELEGRAM_OPERATOR_CHAT_ID",
+        "TELEGRAM_CHAT_ID",
+        "JIRA_URL",
+        "JIRA_PROJECT_KEY",
+        "JIRA_ISSUE_TYPE",
+        "JIRA_PARENT_KEY",
+        "JIRA_DONE_TRANSITION",
+        "JIRA_LABELS",
+        "JIRA_SYNC",
+        "JIRA_DEBUG_TO_TELEGRAM",
+    ] {
+        if let Some(value) = nonempty_env(name) {
+            vars.push((name, value));
+        }
+    }
+    vars
+}
+
+fn nonempty_env(name: &str) -> Option<String> {
+    env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn discover_notification_env_file(root: Option<&Path>) -> Option<PathBuf> {
+    let mut roots = Vec::new();
+    let root = root?;
+    roots.push(root.to_path_buf());
+    if let Some(primary) = task_env_value(&root.join(".task/task.env"), "PRIMARY_REPO_PATH") {
+        roots.push(PathBuf::from(primary));
+    }
+    roots
+        .into_iter()
+        .map(|root| root.join(".env.taskflow-telegram.local"))
+        .find(|path| path.is_file())
+}
+
+fn task_env_value(path: &Path, key: &str) -> Option<String> {
+    let content = fs::read_to_string(path).ok()?;
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")))
+        .map(shell_env_value)
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn shell_env_value(raw: &str) -> String {
+    if raw.starts_with('\'') && raw.ends_with('\'') && raw.len() >= 2 {
+        return raw[1..raw.len() - 1].replace("'\\''", "'");
+    }
+    raw.to_string()
+}
+
+fn path_display(path: &Path) -> String {
+    path.display().to_string()
 }
 
 fn zellij_first_terminal_pane_once(session: &str) -> Result<String> {

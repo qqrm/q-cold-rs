@@ -88,6 +88,76 @@ mod output_guard_tests {
     }
 
     #[test]
+    fn terminal_env_prefix_forwards_notification_env_without_token_literals() {
+        let _guard = crate::test_support::env_guard();
+        env::set_var("TELEGRAM_ENV_FILE", "/secure/taskflow-notify.env");
+        env::set_var("TELEGRAM_API_BASE_URL", "http://127.0.0.1:1234");
+        env::set_var("TELEGRAM_CHAT_ID", "test-chat");
+        env::set_var("TELEGRAM_BOT_TOKEN", "secret-token");
+
+        let prefix = terminal_qcold_env_prefix_with_path(None, None, None, Some("/usr/bin:/bin"));
+
+        assert!(prefix.contains("export TELEGRAM_ENV_FILE='/secure/taskflow-notify.env';"));
+        assert!(prefix.contains("export TELEGRAM_API_BASE_URL='http://127.0.0.1:1234';"));
+        assert!(prefix.contains("export TELEGRAM_CHAT_ID='test-chat';"));
+        assert!(!prefix.contains("TELEGRAM_BOT_TOKEN"));
+        assert!(!prefix.contains("secret-token"));
+    }
+
+    #[test]
+    fn terminal_env_prefix_discovers_repo_notification_env_file() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let notify = temp.path().join(".env.taskflow-telegram.local");
+        fs::write(&notify, "TELEGRAM_BOT_TOKEN=secret-token\n").unwrap();
+
+        let prefix =
+            terminal_qcold_env_prefix_with_path(Some(temp.path()), None, None, Some("/usr/bin"));
+        let expected = notify.display().to_string();
+
+        assert!(prefix.contains(&format!("export TELEGRAM_ENV_FILE={};", shell_quote(&expected))));
+        assert!(prefix.contains(&format!("export JIRA_ENV_FILE={};", shell_quote(&expected))));
+        assert!(!prefix.contains("secret-token"));
+    }
+
+    #[test]
+    fn launch_env_discovers_primary_notification_file_for_task_worktree() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let primary = temp.path().join("primary");
+        let worktree = temp.path().join("task");
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(worktree.join(".task")).unwrap();
+        let notify = primary.join(".env.taskflow-telegram.local");
+        fs::write(&notify, "TELEGRAM_BOT_TOKEN=secret-token\n").unwrap();
+        fs::write(
+            worktree.join(".task/task.env"),
+            format!("PRIMARY_REPO_PATH='{}'\n", primary.display()),
+        )
+        .unwrap();
+
+        let mut command = Command::new("rg");
+        apply_qcold_launch_env(&mut command, Some(&worktree), None, None);
+        let expected = notify.display().to_string();
+
+        assert_eq!(
+            command_env_value(&command, "TELEGRAM_ENV_FILE").as_deref(),
+            Some(expected.as_str())
+        );
+        assert_eq!(
+            command_env_value(&command, "JIRA_ENV_FILE").as_deref(),
+            Some(expected.as_str())
+        );
+        assert!(command_env_value(&command, "TELEGRAM_BOT_TOKEN").is_none());
+
+        let prefix =
+            terminal_qcold_env_prefix_with_path(Some(&worktree), None, None, Some("/usr/bin"));
+        assert!(prefix.contains(&format!("export TELEGRAM_ENV_FILE={};", shell_quote(&expected))));
+        assert!(prefix.contains(&format!("export JIRA_ENV_FILE={};", shell_quote(&expected))));
+        assert!(!prefix.contains("secret-token"));
+    }
+
+    #[test]
     fn output_guard_wrapper_uses_real_command_env_var() {
         let temp = tempdir().unwrap();
         let guarded = GuardedCommand {
