@@ -185,6 +185,52 @@ fn delete_web_queue_run_if_empty(connection: &Connection, run_id: &str) -> Resul
     Ok(())
 }
 
+fn delete_unreferenced_web_queue_run(connection: &Connection, run_id: &str) -> Result<()> {
+    let references = connection
+        .query_row(
+            "select count(*) from web_queue_tabs where run_id = ?1",
+            [run_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .context("failed to count web queue tab references")?;
+    if references == 0 {
+        delete_web_queue_run(connection, run_id)?;
+    }
+    Ok(())
+}
+
+fn delete_unreferenced_web_queue_runs(connection: &Connection) -> Result<()> {
+    connection
+        .execute(
+            "delete from web_queue_items
+             where not exists (
+                 select 1 from web_queue_tabs where web_queue_tabs.run_id = web_queue_items.run_id
+             )",
+            [],
+        )
+        .context("failed to delete orphaned web queue items")?;
+    connection
+        .execute(
+            "delete from web_queue_runs
+             where not exists (
+                 select 1 from web_queue_tabs where web_queue_tabs.run_id = web_queue_runs.id
+             )",
+            [],
+        )
+        .context("failed to delete orphaned web queue runs")?;
+    Ok(())
+}
+
+fn delete_web_queue_run(connection: &Connection, run_id: &str) -> Result<()> {
+    connection
+        .execute("delete from web_queue_items where run_id = ?1", [run_id])
+        .context("failed to delete web queue items")?;
+    connection
+        .execute("delete from web_queue_runs where id = ?1", [run_id])
+        .context("failed to delete web queue run")?;
+    Ok(())
+}
+
 pub fn delete_empty_web_queue_run(run_id: &str) -> Result<bool> {
     let connection = open_db()?;
     let deleted = connection

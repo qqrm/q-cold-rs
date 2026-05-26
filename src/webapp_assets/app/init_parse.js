@@ -691,7 +691,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         if (!tab.isDefault) {
           const close = document.createElement('span');
           close.className = 'queue-tab-close';
-          close.textContent = '×';
+          close.textContent = 'x';
           close.title = tab.running ? 'Queue has running work' : 'Delete queue';
           close.setAttribute('aria-label', close.title);
           close.addEventListener('click', (event) => {

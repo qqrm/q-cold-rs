@@ -546,8 +546,9 @@
     function taskRecordForQueueItem(item) {
       const repo = queueItemRepository(item);
       const records = queueTaskRecords().filter((task) => task.id === `task/${item.slug}`);
-      const exact = records.find((task) => !repo?.root || !task.repo_root || task.repo_root === repo.root);
-      return exact || records.find((task) => task.status?.startsWith('closed')) || null;
+      return records.find((task) => !repo?.root || task.repo_root === repo.root)
+        || records.find((task) => item.agentId && task.agent_id === item.agentId)
+        || null;
     }
 
     function runningAgent(agentId) {

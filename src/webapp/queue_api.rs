@@ -807,7 +807,8 @@ fn cleanup_queue_item_artifacts(
     let task_id = task_id
         .filter(|id| !id.trim().is_empty())
         .map_or(default_task_id, str::to_string);
-    let task = state::get_task_record(&task_id)?;
+    let task = state::get_task_record(&task_id)?
+        .filter(|task| queue_task_record_matches_item(item, task));
     let agent_id = agent_id
         .filter(|id| !id.trim().is_empty())
         .map(str::to_string)

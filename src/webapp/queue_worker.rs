@@ -908,16 +908,10 @@ fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
     let Some(record) = state::get_task_record(&task_id)? else {
         return Ok(None);
     };
-    if queue_task_record_repo_mismatch(item, &record) && !record.status.starts_with("closed") {
+    if !queue_task_record_matches_item(item, &record) {
         return Ok(None);
     }
     Ok(Some(record.status))
-}
-
-fn queue_task_record_repo_mismatch(item: &state::QueueItemRow, record: &state::TaskRecordRow) -> bool {
-    item.repo_root
-        .as_deref()
-        .is_some_and(|repo| record.repo_root.as_deref().is_some_and(|value| value != repo))
 }
 
 fn agent_running(agent_id: &str) -> bool {

@@ -141,6 +141,7 @@ pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()
         .transaction()
         .context("failed to start web queue transaction")?;
     ensure_default_web_queue_tab(&tx)?;
+    let previous_run_id = active_web_queue_run_id(&tx)?;
     tx.execute("delete from web_queue_items where run_id = ?1", [run.id.as_str()])
         .context("failed to clear web queue items")?;
     tx.execute(
@@ -208,6 +209,10 @@ pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()
         .context("failed to insert web queue item")?;
     }
     assign_web_queue_run_to_active_tab(&tx, &run.id)?;
+    if let Some(previous_run_id) = previous_run_id.as_deref().filter(|id| *id != run.id) {
+        delete_unreferenced_web_queue_run(&tx, previous_run_id)?;
+    }
+    delete_unreferenced_web_queue_runs(&tx)?;
     tx.commit().context("failed to commit web queue")?;
     Ok(())
 }
@@ -347,13 +352,16 @@ pub fn load_web_queue() -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
 
 pub fn load_web_queue_runs() -> Result<Vec<(QueueRunRow, Vec<QueueItemRow>)>> {
     let connection = open_db()?;
+    ensure_default_web_queue_tab(&connection)?;
     let mut statement = connection
         .prepare(
-            "select id, status, execution_mode, selected_agent_command, remote_launcher,
-                    selected_repo_root, selected_repo_name, track, current_index, stop_requested,
-                    message, created_at_unix, updated_at_unix
-             from web_queue_runs
-             order by updated_at_unix desc, id",
+            "select distinct r.id, r.status, r.execution_mode, r.selected_agent_command,
+                    r.remote_launcher, r.selected_repo_root, r.selected_repo_name, r.track,
+                    r.current_index, r.stop_requested, r.message, r.created_at_unix,
+                    r.updated_at_unix
+             from web_queue_runs r
+             join web_queue_tabs t on t.run_id = r.id
+             order by r.updated_at_unix desc, r.id",
         )
         .context("failed to prepare web queue run query")?;
     let runs = statement
@@ -369,12 +377,16 @@ pub fn load_web_queue_runs() -> Result<Vec<(QueueRunRow, Vec<QueueItemRow>)>> {
 
 pub fn load_web_queue_items() -> Result<Vec<QueueItemRow>> {
     let connection = open_db()?;
+    ensure_default_web_queue_tab(&connection)?;
     let mut statement = connection
         .prepare(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
                     remote_launcher, agent_id, status, message, attempts, next_attempt_at_unix,
                     started_at_unix, updated_at_unix, depends_on_json
              from web_queue_items
+             where exists (
+                 select 1 from web_queue_tabs where web_queue_tabs.run_id = web_queue_items.run_id
+             )
              order by run_id, position, id",
         )
         .context("failed to prepare web queue item query")?;

@@ -79,6 +79,111 @@ mod queue_taskflow_tests {
     }
 
     #[test]
+    fn queue_task_status_ignores_closed_record_from_other_repo() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo_a = temp.path().join("repo-a");
+        let repo_b = temp.path().join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+        let item = queue_taskflow_item("shared-slug", &repo_a, None);
+        state::upsert_task_record(&task_record_fixture(
+            "shared-slug",
+            "closed:success",
+            &repo_b,
+        ))
+        .unwrap();
+
+        assert_eq!(queue_task_status(&item).unwrap(), None);
+    }
+
+    #[test]
+    fn queue_launch_workspace_rejects_live_slug_conflict() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo_a = temp.path().join("repo-a");
+        let repo_b = temp.path().join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+        let run = queue_run_fixture("run-a", &repo_a);
+        let mut existing = queue_taskflow_item("shared-slug", &repo_a, None);
+        existing.id = "item-a".to_string();
+        existing.run_id = run.id.clone();
+        existing.status = "running".to_string();
+        state::replace_web_queue(&run, &[existing]).unwrap();
+        let candidate = queue_taskflow_item("shared-slug", &repo_b, None);
+
+        let err = match queue_launch_workspace(&candidate) {
+            Ok(_) => panic!("slug conflict should be rejected"),
+            Err(err) => err,
+        };
+
+        assert!(format!("{err:#}").contains("already active"));
+    }
+
+    #[test]
+    fn queue_launch_workspace_ignores_discovered_worktree_for_other_repo() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo_a = temp.path().join("repo-a");
+        let repo_b = temp.path().join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+        let stale_worktree = temp.path().join("WT/repo-a/001-shared-slug");
+        write_task_env(&stale_worktree, "shared-slug", &repo_b);
+        let item = queue_taskflow_item("shared-slug", &repo_a, None);
+
+        let workspace = queue_launch_workspace(&item).unwrap();
+
+        assert_eq!(workspace.worktree, repo_a.canonicalize().unwrap());
+        assert!(!workspace.existing_task);
+    }
+
+    #[test]
+    fn queue_launch_workspace_ignores_record_cwd_for_other_repo() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo_a = temp.path().join("repo-a");
+        let repo_b = temp.path().join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+        let stale_worktree = temp.path().join("stale-worktree");
+        write_task_env(&stale_worktree, "shared-slug", &repo_b);
+        state::upsert_task_record(&state::TaskRecordRow {
+            cwd: Some(stale_worktree.display().to_string()),
+            ..task_record_fixture("shared-slug", "open", &repo_a)
+        })
+        .unwrap();
+        let item = queue_taskflow_item("shared-slug", &repo_a, None);
+
+        let workspace = queue_launch_workspace(&item).unwrap();
+
+        assert_eq!(workspace.worktree, repo_a.canonicalize().unwrap());
+        assert!(!workspace.existing_task);
+    }
+
+    #[test]
+    fn queue_cleanup_keeps_task_record_from_other_repo() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo_a = temp.path().join("repo-a");
+        let repo_b = temp.path().join("repo-b");
+        fs::create_dir_all(&repo_a).unwrap();
+        fs::create_dir_all(&repo_b).unwrap();
+        let item = queue_taskflow_item("shared-slug", &repo_a, None);
+        state::upsert_task_record(&task_record_fixture("shared-slug", "open", &repo_b)).unwrap();
+
+        cleanup_queue_item_artifacts(&item, None, None).unwrap();
+
+        assert!(state::get_task_record("task/shared-slug").unwrap().is_some());
+    }
+
+    #[test]
     fn queue_remote_launcher_is_explicit_not_agents_autoselected() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
@@ -114,6 +219,47 @@ mod queue_taskflow_tests {
 
     #[cfg(not(unix))]
     fn make_executable(_path: &Path) {}
+
+    fn queue_run_fixture(id: &str, repo: &Path) -> state::QueueRunRow {
+        state::QueueRunRow {
+            id: id.to_string(),
+            status: "running".to_string(),
+            execution_mode: "sequence".to_string(),
+            selected_agent_command: "c1".to_string(),
+            remote_launcher: None,
+            selected_repo_root: Some(repo.display().to_string()),
+            selected_repo_name: Some("repo".to_string()),
+            track: queue_track(id),
+            current_index: -1,
+            stop_requested: false,
+            message: "queued".to_string(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn task_record_fixture(slug: &str, status: &str, repo: &Path) -> state::TaskRecordRow {
+        state::new_task_record(
+            format!("task/{slug}"),
+            "task-flow".to_string(),
+            slug.to_string(),
+            "existing task".to_string(),
+            status.to_string(),
+            Some(repo.display().to_string()),
+            Some(repo.join("WT").join(slug).display().to_string()),
+            None,
+            None,
+        )
+    }
+
+    fn write_task_env(worktree: &Path, slug: &str, repo: &Path) {
+        fs::create_dir_all(worktree.join(".task")).unwrap();
+        fs::write(
+            worktree.join(".task/task.env"),
+            format!("TASK_NAME={slug}\nPRIMARY_REPO_PATH={}\n", repo.display()),
+        )
+        .unwrap();
+    }
 
     fn queue_taskflow_item(
         slug: &str,

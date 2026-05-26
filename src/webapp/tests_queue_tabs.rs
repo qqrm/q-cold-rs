@@ -31,6 +31,27 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_tab_replacement_prunes_superseded_run() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let old_run = queue_run_fixture("old-run", "running", -1);
+        let old_item = queue_item_fixture("old-run", "old-item", 0, "pending", None);
+        state::replace_web_queue(&old_run, &[old_item]).unwrap();
+        let new_run = queue_run_fixture("new-run", "running", -1);
+        let new_item = queue_item_fixture("new-run", "new-item", 0, "pending", None);
+
+        state::replace_web_queue(&new_run, &[new_item]).unwrap();
+
+        let runs = state::load_web_queue_runs().unwrap();
+        let items = state::load_web_queue_items().unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].0.id, "new-run");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, "new-item");
+    }
+
+    #[test]
     fn queue_tab_delete_rejects_running_work() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
