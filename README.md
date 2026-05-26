@@ -240,6 +240,7 @@ repositories or workstreams. The default `Task Queue` tab is always present.
 changes which tab receives default run/append/stop/continue operations, and
 `qcold queue delete` removes a non-default tab only when it has no running
 queue work. The web dashboard exposes the same tabs above the queue editor.
+Use the dashboard `New queue` button to create and activate another queue tab.
 
 Prompt packages can be JSON manifests, directories, plain text files, or ZIP
 archives. A JSON manifest may define shared `layers`, optional

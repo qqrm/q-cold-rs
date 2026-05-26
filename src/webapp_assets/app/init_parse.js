@@ -18,6 +18,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const queueState = document.getElementById('queue-state');
     const queueStatus = document.getElementById('queue-status');
     const queueTabs = document.getElementById('queue-tabs');
+    const createQueueTabButton = document.getElementById('create-queue-tab');
     const queueGraphModeInput = document.getElementById('queue-graph-mode');
     const transcriptModal = document.getElementById('transcript-modal');
     const transcriptTitle = document.getElementById('transcript-title');
@@ -45,6 +46,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let activeQueueTabId = 'default';
     let queueTabsModel = [];
     let queueGraphMode = localStorage.getItem(queueGraphModeStorageKey) === '1';
+    let queueTabCreating = false;
     const queueSaved = loadQueueStorageForTab(activeQueueTabId);
     if (typeof queueSaved.graphMode === 'boolean') queueGraphMode = queueSaved.graphMode;
     let queueItems = (queueSaved.items || [])
@@ -703,14 +705,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }
         return button;
       });
-      const add = document.createElement('button');
-      add.type = 'button';
-      add.className = 'queue-tab queue-tab-add';
-      add.textContent = '+';
-      add.title = 'Add queue';
-      add.setAttribute('aria-label', 'Add queue');
-      add.addEventListener('click', createQueueTab);
-      queueTabs.replaceChildren(...nodes, add);
+      queueTabs.replaceChildren(...nodes);
     }
 
     function renderQueue() {
@@ -724,6 +719,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
           ? 'stopped'
           : queueGraphMode ? 'graph' : 'idle';
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
+      createQueueTabButton.disabled = queueTabCreating;
+      createQueueTabButton.textContent = queueTabCreating ? 'Creating...' : 'New queue';
       queueInput.disabled = false;
       renderQueueRepoSelector();
       renderQueueAgentSelector();

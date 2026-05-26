@@ -691,6 +691,9 @@
     }
 
     async function createQueueTab() {
+      if (queueTabCreating) return;
+      queueTabCreating = true;
+      renderQueue();
       if (!queueHasBackendRun()) saveQueueStorage();
       appendLocalMessage('status', 'Creating queue');
       try {
@@ -709,6 +712,9 @@
         await loadSnapshot();
       } catch (err) {
         appendLocalMessage('error', String(err));
+      } finally {
+        queueTabCreating = false;
+        renderQueue();
       }
     }
 
@@ -900,6 +906,7 @@
     document.getElementById('add-queue-task').addEventListener('click', addQueueTask);
     document.getElementById('add-queue-wave').addEventListener('click', createQueueWave);
     document.getElementById('clear-queue').addEventListener('click', clearQueue);
+    createQueueTabButton.addEventListener('click', createQueueTab);
     document.getElementById('run-queue').addEventListener('click', runQueue);
     document.getElementById('stop-queue').addEventListener('click', stopQueue);
     document.getElementById('refresh-agent-limits').addEventListener('click', () => loadAgentLimits(true));

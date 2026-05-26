@@ -64,8 +64,11 @@ mod asset_tests {
     #[test]
     fn queue_tabs_assets_are_embedded() {
         assert!(INDEX_HTML.contains("id=\"queue-tabs\""));
+        assert!(INDEX_HTML.contains("id=\"create-queue-tab\""));
         assert!(QUEUE_CSS.contains(".queue-tab"));
+        assert!(QUEUE_CSS.contains(".queue-create"));
         assert!(APP_JS.contains("function renderQueueTabs()"));
+        assert!(APP_JS.contains("createQueueTabButton.addEventListener('click', createQueueTab)"));
         assert!(APP_JS.contains("/api/queue/tab/create"));
         assert!(APP_JS.contains("tab_id: activeQueueTabId"));
     }
