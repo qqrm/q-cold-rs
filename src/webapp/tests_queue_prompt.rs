@@ -5,119 +5,88 @@ mod queue_prompt_tests {
     use crate::{state, test_support};
 
     use super::*;
-    use std::fs;
     use tempfile::tempdir;
 
     #[test]
-    fn queue_task_instruction_starts_managed_task() {
-        let item = state::QueueItemRow {
-            id: "item".to_string(),
-            run_id: "run".to_string(),
-            position: 0,
-            depends_on: Vec::new(),
-            prompt: "do focused work".to_string(),
-            slug: "task-run-01".to_string(),
-            repo_root: Some("/workspace/repo".to_string()),
-            repo_name: Some("repo".to_string()),
-            agent_command: "c1".to_string(),
-            remote_launcher: None,
-            agent_id: None,
-            status: "pending".to_string(),
-            message: String::new(),
-            attempts: 0,
-            next_attempt_at: None,
-            started_at: 0,
-            updated_at: 0,
-        };
+    fn queue_task_instruction_delegates_task_environment_selection() {
+        let item = queue_prompt_item("task-run-01", None);
 
         let instruction = queue_task_instruction(&item);
+
         assert!(instruction.contains("Q-COLD_TASK_PACKET"));
         assert!(instruction.contains("repo_root: /workspace/repo"));
         assert!(instruction.contains("task_slug: task-run-01"));
         assert!(instruction.contains("selected_command: c1"));
-        assert!(instruction.contains("do not run qcold task open"));
-        assert!(instruction.contains("task_env: .task/task.env"));
-        assert!(instruction.contains("task_logs: .task/logs/"));
+        assert!(instruction.contains("executor-owned task environment selection"));
+        assert!(instruction.contains("Q-COLD has not opened task_slug"));
+        assert!(instruction.contains("has not selected a profile or container"));
+        assert!(instruction.contains("start or resume the repository-managed task-flow"));
+        assert!(instruction.contains("choose the required repo-approved environment"));
+        assert!(instruction.contains("task_env: <actual-task-worktree>/.task/task.env"));
+        assert!(instruction.contains("task_logs: <actual-task-worktree>/.task/logs/"));
+        assert!(instruction.contains("make task/<task_slug> visible to local Q-COLD"));
         assert!(instruction.contains("pause_or_blocked_only_for: business decision"));
         assert!(instruction.contains("output_guard:"));
         assert!(instruction.contains("automatically guard configured broad-output commands"));
         assert!(instruction.contains("qcold-guard status=blocked"));
         assert!(instruction.contains("operator_request_snippet: |\n  do focused work"));
         assert!(instruction.contains("operator_request: |\n  do focused work"));
-        assert!(!instruction.contains("home base for /workspace/repo"));
+        assert!(!instruction.contains("do not run qcold task open"));
+        assert!(!instruction.contains("backend-opened"));
     }
 
     #[test]
-    fn queue_task_instruction_marks_remote_task_context() {
-        let item = state::QueueItemRow {
-            id: "item".to_string(),
-            run_id: "run".to_string(),
-            position: 0,
-            depends_on: Vec::new(),
-            prompt: "do remote work".to_string(),
-            slug: "task-remote-01".to_string(),
-            repo_root: Some("/local/repo".to_string()),
-            repo_name: Some("repo".to_string()),
-            agent_command: "c1".to_string(),
-            remote_launcher: Some("remote-dev-env".to_string()),
-            agent_id: None,
-            status: "pending".to_string(),
-            message: String::new(),
-            attempts: 0,
-            next_attempt_at: None,
-            started_at: 0,
-            updated_at: 0,
-        };
-        let task = QueueManagedTask {
+    fn queue_task_instruction_marks_available_remote_launcher_as_hint() {
+        let item = queue_prompt_item("task-remote-01", Some("remote-dev-env"));
+        let task = QueueLaunchWorkspace {
             worktree: "/local/repo".into(),
             remote_launcher: Some("remote-dev-env".to_string()),
-            remote_worktree: Some("/remote/WT/repo/task-remote-01".to_string()),
+            remote_worktree: None,
+            existing_task: false,
         };
 
         let instruction = queue_task_instruction_with_task(&item, &task);
 
-        assert!(instruction.contains("remote_launcher: remote-dev-env"));
+        assert!(instruction.contains("available_remote_launcher: remote-dev-env"));
+        assert!(instruction.contains("executor-owned task environment selection"));
+        assert!(instruction.contains("available_remote_launcher is a convenience launcher"));
+        assert!(instruction.contains("not a selected profile"));
+        assert!(instruction.contains("choose the required repo-approved environment"));
+        assert!(!instruction.contains("remote_task_worktree:"));
+        assert!(!instruction.contains("Q-COLD already opened the remote task"));
+        assert!(!instruction.contains("do not open a local task"));
+    }
+
+    #[test]
+    fn queue_task_instruction_allows_existing_remote_task_resume() {
+        let item = queue_prompt_item("task-remote-01", Some("remote-dev-env"));
+        let task = QueueLaunchWorkspace {
+            worktree: "/local/repo".into(),
+            remote_launcher: Some("remote-dev-env".to_string()),
+            remote_worktree: Some("/remote/WT/repo/task-remote-01".to_string()),
+            existing_task: true,
+        };
+
+        let instruction = queue_task_instruction_with_task(&item, &task);
+
+        assert!(instruction.contains("available_remote_launcher: remote-dev-env"));
         assert!(instruction.contains("remote_task_worktree: /remote/WT/repo/task-remote-01"));
-        assert!(instruction.contains("backend-opened remote managed task worktree"));
-        assert!(instruction.contains("do not open a local task"));
-        assert!(instruction.contains("keep this Codex executor local"));
-        assert!(instruction.contains("treat local repo_root as orchestration and dashboard state only"));
-        let remote_command_flow =
-            "run repository reads, edits, builds, tests, and validation through the remote launcher";
-        assert!(instruction.contains(remote_command_flow));
-        assert!(instruction.contains("enter the existing remote task devcontainer"));
-        assert!(instruction.contains("reread AGENTS.md and available task logs from remote_task_worktree"));
+        assert!(instruction.contains("launch_context: existing remote managed task record"));
+        assert!(instruction.contains("re-enter it if it still matches the goal"));
+        assert!(instruction.contains("Q-COLD did not choose a new profile"));
         assert!(instruction.contains("task_env: remote_task_worktree/.task/task.env"));
         assert!(instruction.contains("task_logs: remote_task_worktree/.task/logs/"));
-        assert!(instruction.contains("run relevant validation remotely"));
-        assert!(instruction.contains("repository task-flow closeout surface through the remote launcher"));
+        assert!(instruction.contains("sync local Q-COLD if needed"));
     }
 
     #[test]
     fn queue_remote_agent_command_stays_local() {
-        let item = state::QueueItemRow {
-            id: "item".to_string(),
-            run_id: "run".to_string(),
-            position: 0,
-            depends_on: Vec::new(),
-            prompt: "do remote work".to_string(),
-            slug: "task-remote-01".to_string(),
-            repo_root: Some("/local/repo".to_string()),
-            repo_name: Some("repo".to_string()),
-            agent_command: "c1".to_string(),
-            remote_launcher: Some("remote-dev-env".to_string()),
-            agent_id: None,
-            status: "pending".to_string(),
-            message: String::new(),
-            attempts: 0,
-            next_attempt_at: None,
-            started_at: 0,
-            updated_at: 0,
-        };
-        let task = QueueManagedTask {
+        let item = queue_prompt_item("task-remote-01", Some("remote-dev-env"));
+        let task = QueueLaunchWorkspace {
             worktree: "/local/repo".into(),
             remote_launcher: Some("remote-dev-env".to_string()),
-            remote_worktree: Some("/remote/WT/repo/task-remote-01".to_string()),
+            remote_worktree: None,
+            existing_task: false,
         };
 
         let command = queue_agent_launch_command(&item, &task);
@@ -126,115 +95,24 @@ mod queue_prompt_tests {
     }
 
     #[test]
-    fn queue_remote_policy_autoselects_default_launcher() {
-        let temp = tempdir().unwrap();
-        let repo = temp.path().join("repo");
-        let bin = temp.path().join("bin");
-        fs::create_dir_all(&repo).unwrap();
-        fs::create_dir_all(&bin).unwrap();
-        fs::write(
-            repo.join("AGENTS.md"),
-            "The default substantive execution environment is the approved remote dev\nenvironment.",
-        )
-        .unwrap();
-        let launcher = bin.join("remote-dev-env");
-        fs::write(&launcher, "#!/bin/sh\nexit 0\n").unwrap();
-        make_executable(&launcher);
-
-        assert_eq!(
-            default_queue_remote_launcher_from(Some(repo.to_str().unwrap()), Some(bin.as_os_str())),
-            Some("remote-dev-env".to_string())
-        );
-        assert_eq!(default_queue_remote_launcher_from(None, Some(bin.as_os_str())), None);
-    }
-
-    #[test]
-    fn queue_task_record_metadata_preserves_original_prompt_and_snippet() {
-        let _guard = test_support::env_guard();
-        let temp = tempdir().unwrap();
-        std::env::set_var("QCOLD_STATE_DIR", temp.path());
-        let repo = temp.path().join("repo");
-        let worktree = temp.path().join("WT/repo/task-queue-01");
-        fs::create_dir_all(&repo).unwrap();
-        fs::create_dir_all(&worktree).unwrap();
-        let prompt = [
-            "First line",
-            "Second line",
-            "Third line",
-            "Fourth line",
-            "Fifth line",
-            "Sixth line should not be in snippet",
-        ]
-        .join("\n");
-        let item = state::QueueItemRow {
-            id: "item".to_string(),
-            run_id: "run".to_string(),
-            position: 0,
-            depends_on: Vec::new(),
-            prompt: prompt.clone(),
-            slug: "task-queue-01".to_string(),
-            repo_root: Some(repo.display().to_string()),
-            repo_name: Some("repo".to_string()),
-            agent_command: "c1".to_string(),
-            remote_launcher: None,
-            agent_id: Some("agent".to_string()),
-            status: "pending".to_string(),
-            message: String::new(),
-            attempts: 0,
-            next_attempt_at: None,
-            started_at: 0,
-            updated_at: 0,
-        };
-
-        remember_queue_task_worktree(&item, &repo, &worktree).unwrap();
-        let record = state::get_task_record("task/task-queue-01")
-            .unwrap()
-            .unwrap();
-        let metadata: serde_json::Value =
-            serde_json::from_str(record.metadata_json.as_deref().unwrap()).unwrap();
-
-        assert_eq!(
-            record.description,
-            "First line\nSecond line\nThird line\nFourth line\nFifth line"
-        );
-        assert_eq!(metadata["operator_prompt"].as_str(), Some(prompt.as_str()));
-        assert_eq!(
-            metadata["operator_prompt_snippet"].as_str(),
-            Some("First line\nSecond line\nThird line\nFourth line\nFifth line")
-        );
-        assert_eq!(metadata["prompt_source"].as_str(), Some("web-queue-card"));
-    }
-
-    #[test]
     fn queue_task_record_agent_updates_after_executor_start() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
-        let repo = temp.path().join("repo");
-        let worktree = temp.path().join("WT/repo/task-queue-agent");
-        fs::create_dir_all(&repo).unwrap();
-        fs::create_dir_all(&worktree).unwrap();
-        let item = state::QueueItemRow {
-            id: "item".to_string(),
-            run_id: "run".to_string(),
-            position: 0,
-            depends_on: Vec::new(),
-            prompt: "do focused work".to_string(),
-            slug: "task-queue-agent".to_string(),
-            repo_root: Some(repo.display().to_string()),
-            repo_name: Some("repo".to_string()),
-            agent_command: "c1".to_string(),
-            remote_launcher: None,
-            agent_id: None,
-            status: "pending".to_string(),
-            message: String::new(),
-            attempts: 0,
-            next_attempt_at: None,
-            started_at: 0,
-            updated_at: 0,
-        };
+        let item = queue_prompt_item("task-queue-agent", None);
+        let record = state::new_task_record(
+            "task/task-queue-agent".to_string(),
+            "task-flow".to_string(),
+            "task-queue-agent".to_string(),
+            "existing task".to_string(),
+            "open".to_string(),
+            Some("/workspace/repo".to_string()),
+            Some("/workspace/WT/repo/task-queue-agent".to_string()),
+            None,
+            None,
+        );
+        state::upsert_task_record(&record).unwrap();
 
-        remember_queue_task_worktree(&item, &repo, &worktree).unwrap();
         remember_queue_task_agent(&item, "qa-task-queue-agent").unwrap();
         let record = state::get_task_record("task/task-queue-agent")
             .unwrap()
@@ -243,55 +121,25 @@ mod queue_prompt_tests {
         assert_eq!(record.agent_id.as_deref(), Some("qa-task-queue-agent"));
     }
 
-    #[test]
-    fn queue_remote_task_record_metadata_preserves_launcher_and_worktree() {
-        let _guard = test_support::env_guard();
-        let temp = tempdir().unwrap();
-        std::env::set_var("QCOLD_STATE_DIR", temp.path());
-        let repo = temp.path().join("repo");
-        fs::create_dir_all(&repo).unwrap();
-        let item = state::QueueItemRow {
+    fn queue_prompt_item(slug: &str, remote_launcher: Option<&str>) -> state::QueueItemRow {
+        state::QueueItemRow {
             id: "item".to_string(),
             run_id: "run".to_string(),
             position: 0,
             depends_on: Vec::new(),
-            prompt: "do remote work".to_string(),
-            slug: "task-queue-remote".to_string(),
-            repo_root: Some(repo.display().to_string()),
+            prompt: "do focused work".to_string(),
+            slug: slug.to_string(),
+            repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
             agent_command: "c1".to_string(),
-            remote_launcher: Some("remote-dev-env".to_string()),
-            agent_id: Some("agent".to_string()),
+            remote_launcher: remote_launcher.map(str::to_string),
+            agent_id: None,
             status: "pending".to_string(),
             message: String::new(),
             attempts: 0,
             next_attempt_at: None,
             started_at: 0,
             updated_at: 0,
-        };
-
-        remember_queue_remote_task(&item, &repo, "remote-dev-env", "/remote/WT/repo/task").unwrap();
-        let record = state::get_task_record("task/task-queue-remote")
-            .unwrap()
-            .unwrap();
-        let metadata: serde_json::Value =
-            serde_json::from_str(record.metadata_json.as_deref().unwrap()).unwrap();
-
-        assert_eq!(record.repo_root.as_deref(), Some(repo.to_str().unwrap()));
-        assert_eq!(record.cwd.as_deref(), Some("/remote/WT/repo/task"));
-        assert_eq!(metadata["remote_launcher"].as_str(), Some("remote-dev-env"));
-        assert_eq!(metadata["remote_cwd"].as_str(), Some("/remote/WT/repo/task"));
-        assert_eq!(metadata["opened_by"].as_str(), Some("web-queue"));
-    }
-
-    fn make_executable(path: &std::path::Path) {
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-
-            let mut permissions = fs::metadata(path).unwrap().permissions();
-            permissions.set_mode(0o755);
-            fs::set_permissions(path, permissions).unwrap();
         }
     }
 }

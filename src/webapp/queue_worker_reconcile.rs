@@ -31,9 +31,6 @@ fn failed_queue_run_may_be_resolved(
     {
         return Ok(true);
     }
-    if failed_queue_run_has_only_retryable_open_failures(items) {
-        return Ok(true);
-    }
     for item in items {
         if !matches!(item.status.as_str(), "failed" | "blocked") {
             continue;
@@ -43,31 +40,6 @@ fn failed_queue_run_may_be_resolved(
         }
     }
     Ok(false)
-}
-
-fn failed_queue_run_has_only_retryable_open_failures(items: &[state::QueueItemRow]) -> bool {
-    let mut saw_retryable = false;
-    for item in items
-        .iter()
-        .filter(|item| matches!(item.status.as_str(), "failed" | "blocked"))
-    {
-        if !retryable_failed_queue_open_item(item) {
-            return false;
-        }
-        saw_retryable = true;
-    }
-    saw_retryable
-}
-
-fn retryable_failed_queue_open_item(item: &state::QueueItemRow) -> bool {
-    item.status == "failed"
-        && item.agent_id.is_none()
-        && item.attempts < queue_retry_limit()
-        && queue_task_open_failure_retryable(&item.message)
-}
-
-fn queue_retry_limit() -> i64 {
-    i64::try_from(WEB_QUEUE_RETRY_DELAYS.len()).unwrap_or(i64::MAX)
 }
 
 fn queue_agent_failure_message(item: &state::QueueItemRow, agent_id: &str) -> Option<&'static str> {
@@ -141,19 +113,6 @@ fn restart_resolved_failed_queue_run(
     if run.status != "failed" {
         return Ok(None);
     }
-    if reset_retryable_failed_queue_open_items(&run.id, items)? {
-        state::update_web_queue_run(
-            &run.id,
-            "running",
-            -1,
-            "retrying transient task-open failure",
-        )?;
-        let (updated_run, updated_items) = state::load_web_queue_run(&run.id)?;
-        let Some(updated_run) = updated_run else {
-            return Ok(None);
-        };
-        return Ok(Some((updated_run, updated_items)));
-    }
     if items
         .iter()
         .any(|item| matches!(item.status.as_str(), "failed" | "blocked"))
@@ -175,24 +134,6 @@ fn restart_resolved_failed_queue_run(
         return Ok(None);
     };
     Ok(Some((updated_run, updated_items)))
-}
-
-fn reset_retryable_failed_queue_open_items(run_id: &str, items: &[state::QueueItemRow]) -> Result<bool> {
-    if !failed_queue_run_has_only_retryable_open_failures(items) {
-        return Ok(false);
-    }
-    for item in items.iter().filter(|item| retryable_failed_queue_open_item(item)) {
-        state::update_web_queue_item(
-            run_id,
-            &item.id,
-            "waiting",
-            "retrying transient task-open failure",
-            None,
-            item.attempts,
-            None,
-        )?;
-    }
-    Ok(true)
 }
 
 fn stale_queue_task_record_handled(

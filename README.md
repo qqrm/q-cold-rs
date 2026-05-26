@@ -263,16 +263,17 @@ authenticated available account (`c1`, `c2`, or `codexN`) with readiness
 status, and starts
 one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
 <repo>`, with internal agent track and task slug names generated automatically.
-For repositories whose root `AGENTS.md` declares the approved remote dev
-environment as the default substantive execution environment, the Queue
-automatically stores `remote_launcher=remote-dev-env`, opens each row with
-`qcold task open-remote`, starts the selected Codex-like executor locally for
-auth/VPN/chat access, passes the remote launcher and remote task worktree in
-the task packet, tells the executor that local state is orchestration-only,
-and periodically syncs remote task records back into the local dashboard. Set
-`QCOLD_QUEUE_REMOTE_LAUNCHER=local` to force
-local queue execution for diagnostics, or set it to another single executable
-launcher name/path to override the default.
+The Queue does not pre-open queued rows or choose a task profile/container from
+repository policy text. It starts the selected Codex-like executor in the
+repository root, sends the task slug and prompt, and tells that executor to use
+the repository-native task-flow contract from `AGENTS.md` and the operator
+request. If remote work, a devcontainer, full-QEMU, or another proof
+environment is required, the executor opens or enters that environment itself.
+`QCOLD_QUEUE_REMOTE_LAUNCHER=<launcher>` or an explicit queue payload launcher
+is passed only as an `available_remote_launcher` hint for that executor; it is
+not a selected profile and Q-COLD does not run `qcold task open-remote` on the
+executor's behalf. Set `QCOLD_QUEUE_REMOTE_LAUNCHER=local` to suppress that
+launcher hint.
 Direct terminal agents started from a repository through Q-COLD wrappers are
 also valid task entry points. Those agents run from
 `../WT/<repo>/agents/<agent>` worktrees with `QCOLD_REPO_ROOT` pointing at the
@@ -299,8 +300,8 @@ waits for the attachable terminal pane, sends `/new`, and then sends the
 generated managed-task instruction so the row does not inherit the previous
 Codex chat context. That instruction is a compact `Q-COLD_TASK_PACKET` with
 the repository root, task slug, selected command, required task-flow commands,
-validation and closeout expectation, blocker boundary, state pointers such as
-`.task/task.env` and task logs, an output guard policy, a bounded
+validation and closeout expectation, blocker boundary, state pointers for the
+eventual `.task/task.env` and task logs, an output guard policy, a bounded
 operator-request snippet, and the full operator request for the executor.
 If the Codex CLI presents its interactive update menu during queue launch,
 the backend accepts the default update action. When Codex exits after a
@@ -329,10 +330,10 @@ persisted run state before reporting the run state. If the selected agent accoun
 unavailable, the
 backend waits and retries the next launch three times after roughly 1, 5, and
 10 minutes before failing the row; unauthenticated accounts fail immediately.
-Remote `task open-remote` transport failures and launcher setup failures before
-a managed task record exists are retryable on the same schedule. If a daemon
-restart sees such a failure persisted before the retry budget is exhausted,
-stale queue reconciliation resets that row to waiting and resumes the graph.
+Executor launcher setup failures before a managed task record exists are
+retryable on the same schedule. Repository task-open, remote transport, and
+environment-bootstrap failures happen inside the executor-owned task flow and
+must be surfaced through the matching `task/<slug>` record.
 Once the matching `task/<slug>` record exists,
 Q-COLD will not start a second executor for that row; non-success closeout or a
 prematurely exited executor stops the row for operator diagnostics. If the

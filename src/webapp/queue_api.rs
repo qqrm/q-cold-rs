@@ -375,7 +375,7 @@ fn queue_item_from_request(
     }
 }
 
-fn resolve_queue_remote_launcher(requested: Option<&str>, repo_root: Option<&str>) -> Option<String> {
+fn resolve_queue_remote_launcher(requested: Option<&str>, _repo_root: Option<&str>) -> Option<String> {
     if let Some(setting) = queue_remote_launcher_setting(requested) {
         return setting.into_launcher();
     }
@@ -383,30 +383,30 @@ fn resolve_queue_remote_launcher(requested: Option<&str>, repo_root: Option<&str
     if let Some(setting) = queue_remote_launcher_setting(env_launcher.as_deref()) {
         return setting.into_launcher();
     }
-    default_queue_remote_launcher(repo_root)
+    None
 }
 
 fn resolve_queue_item_remote_launcher(
     requested: Option<&str>,
     inherited: Option<String>,
-    repo_root: Option<&str>,
+    _repo_root: Option<&str>,
 ) -> Option<String> {
     if let Some(setting) = queue_remote_launcher_setting(requested) {
         return setting.into_launcher();
     }
-    inherited.or_else(|| default_queue_remote_launcher(repo_root))
+    inherited
 }
 
 fn update_queue_item_remote_launcher(
     requested: Option<&str>,
     current: Option<String>,
     inherited: Option<String>,
-    repo_root: Option<&str>,
+    _repo_root: Option<&str>,
 ) -> Option<String> {
     if let Some(setting) = queue_remote_launcher_setting(requested) {
         return setting.into_launcher();
     }
-    current.or(inherited).or_else(|| default_queue_remote_launcher(repo_root))
+    current.or(inherited)
 }
 
 enum QueueRemoteLauncherSetting {
@@ -432,53 +432,6 @@ fn queue_remote_launcher_setting(value: Option<&str>) -> Option<QueueRemoteLaunc
         return Some(QueueRemoteLauncherSetting::Local);
     }
     Some(QueueRemoteLauncherSetting::Remote(value.to_string()))
-}
-
-fn default_queue_remote_launcher(repo_root: Option<&str>) -> Option<String> {
-    default_queue_remote_launcher_from(repo_root, env::var_os("PATH").as_deref())
-}
-
-fn default_queue_remote_launcher_from(
-    repo_root: Option<&str>,
-    path: Option<&std::ffi::OsStr>,
-) -> Option<String> {
-    const DEFAULT_LAUNCHER: &str = "remote-dev-env";
-    if repo_prefers_remote_queue(repo_root) && launcher_available(DEFAULT_LAUNCHER, path) {
-        return Some(DEFAULT_LAUNCHER.to_string());
-    }
-    None
-}
-
-fn repo_prefers_remote_queue(repo_root: Option<&str>) -> bool {
-    const REMOTE_POLICY_MARKER: &str =
-        "default substantive execution environment is the approved remote dev environment";
-    let Some(repo_root) = repo_root.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
-    };
-    fs::read_to_string(Path::new(repo_root).join("AGENTS.md")).is_ok_and(|content| {
-        normalize_policy_text(&content).contains(REMOTE_POLICY_MARKER)
-    })
-}
-
-fn normalize_policy_text(content: &str) -> String {
-    content
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
-}
-
-fn launcher_available(launcher: &str, path: Option<&std::ffi::OsStr>) -> bool {
-    let launcher_path = Path::new(launcher);
-    if launcher_path.components().count() > 1 {
-        return executable_file(launcher_path);
-    }
-    let Some(path) = path else {
-        return false;
-    };
-    env::split_paths(path)
-        .map(|directory| directory.join(launcher))
-        .any(|candidate| executable_file(&candidate))
 }
 
 fn normalize_queue_dependencies(

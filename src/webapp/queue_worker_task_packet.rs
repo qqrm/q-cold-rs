@@ -1,13 +1,17 @@
 #[cfg(test)]
 fn queue_task_instruction(item: &state::QueueItemRow) -> String {
-    queue_task_instruction_inner(item, item.remote_launcher.as_deref(), None)
+    queue_task_instruction_inner(item, item.remote_launcher.as_deref(), None, false)
 }
 
-fn queue_task_instruction_with_task(item: &state::QueueItemRow, task: &QueueManagedTask) -> String {
+fn queue_task_instruction_with_task(
+    item: &state::QueueItemRow,
+    task: &QueueLaunchWorkspace,
+) -> String {
     queue_task_instruction_inner(
         item,
         task.remote_launcher.as_deref(),
         task.remote_worktree.as_deref(),
+        task.existing_task,
     )
 }
 
@@ -15,6 +19,7 @@ fn queue_task_instruction_inner(
     item: &state::QueueItemRow,
     remote_launcher: Option<&str>,
     remote_worktree: Option<&str>,
+    existing_task: bool,
 ) -> String {
     let root = item.repo_root.as_deref().unwrap_or("<repo>");
     let prompt_snippet = prompt::prompt_snippet(&item.prompt);
@@ -23,13 +28,18 @@ fn queue_task_instruction_inner(
     let _ = writeln!(packet, "repo_root: {root}");
     let _ = writeln!(packet, "task_slug: {}", item.slug);
     let _ = writeln!(packet, "selected_command: {}", item.agent_command);
-    write_queue_launch_context(&mut packet, remote_launcher, remote_worktree);
+    write_queue_launch_context(&mut packet, remote_launcher, remote_worktree, existing_task);
     let _ = writeln!(packet, "required_flow:");
-    write_queue_required_flow(&mut packet, remote_launcher.is_some());
+    write_queue_required_flow(
+        &mut packet,
+        remote_launcher.is_some(),
+        remote_worktree.is_some(),
+        existing_task,
+    );
     let _ = writeln!(packet, "state_pointers:");
-    write_queue_state_pointers(&mut packet, remote_launcher.is_some());
+    write_queue_state_pointers(&mut packet, remote_worktree.is_some(), existing_task);
     let _ = writeln!(packet, "validation_closeout:");
-    write_queue_validation_closeout(&mut packet, remote_launcher.is_some());
+    write_queue_validation_closeout(&mut packet, remote_worktree.is_some());
     let _ = writeln!(packet, "blocker_boundary:");
     let _ = writeln!(packet, "  pause_or_blocked_only_for: business decision or external resource");
     let _ = writeln!(packet, "output_guard:");
@@ -51,61 +61,99 @@ fn write_queue_launch_context(
     packet: &mut String,
     remote_launcher: Option<&str>,
     remote_worktree: Option<&str>,
+    existing_task: bool,
 ) {
     if let Some(launcher) = remote_launcher {
-        let _ = writeln!(packet, "remote_launcher: {launcher}");
-        if let Some(worktree) = remote_worktree {
-            let _ = writeln!(packet, "remote_task_worktree: {worktree}");
-        }
-        let _ = writeln!(
-            packet,
-            "launch_context: backend-opened remote managed task worktree"
-        );
+        let _ = writeln!(packet, "available_remote_launcher: {launcher}");
+    }
+    if let Some(worktree) = remote_worktree {
+        let _ = writeln!(packet, "remote_task_worktree: {worktree}");
+        let _ = writeln!(packet, "launch_context: existing remote managed task record");
+    } else if existing_task {
+        let _ = writeln!(packet, "launch_context: existing managed task worktree");
     } else {
-        let _ = writeln!(packet, "launch_context: backend-opened managed task worktree");
+        let _ = writeln!(packet, "launch_context: executor-owned task environment selection");
     }
 }
 
-fn write_queue_required_flow(packet: &mut String, remote: bool) {
-    if remote {
+fn write_queue_required_flow(
+    packet: &mut String,
+    has_remote_launcher: bool,
+    has_remote_worktree: bool,
+    existing_task: bool,
+) {
+    if has_remote_worktree {
         let _ = writeln!(
             packet,
-            "  - do not open a local task; Q-COLD already opened the remote task"
-        );
-        let _ = writeln!(packet, "  - keep this Codex executor local for auth, VPN, and chat access");
-        let _ = writeln!(packet, "  - treat local repo_root as orchestration and dashboard state only");
-        let _ = writeln!(
-            packet,
-            "  - run repository reads, edits, builds, tests, and validation through the remote launcher"
+            "  - an existing remote task record was found; re-enter it if it still matches the goal"
         );
         let _ = writeln!(packet, "  - use remote_task_worktree as the remote cwd for repository work");
         let _ = writeln!(
             packet,
-            "  - enter the existing remote task devcontainer before substantive work if the repo requires it"
+            "  - Q-COLD did not choose a new profile, container, or proof environment for this run"
         );
         let _ = writeln!(
             packet,
-            "  - reread AGENTS.md and available task logs from remote_task_worktree"
+            "  - if a different repo-approved environment is required, make that choice inside the task"
+        );
+    } else if existing_task {
+        let _ = writeln!(
+            packet,
+            "  - an existing managed task worktree was found; continue it if it still matches the goal"
+        );
+        let _ = writeln!(
+            packet,
+            "  - Q-COLD did not choose a new profile, container, or proof environment for this run"
         );
     } else {
-        let _ = writeln!(packet, "  - do not run qcold task open; Q-COLD already opened it");
-        let _ = writeln!(packet, "  - confirm pwd contains .task/task.env");
-        let _ = writeln!(packet, "  - reread AGENTS.md and available task logs");
+        let _ = writeln!(
+            packet,
+            "  - Q-COLD has not opened task_slug and has not selected a profile or container"
+        );
+        let _ = writeln!(
+            packet,
+            "  - start or resume the repository-managed task-flow for task_slug from repo_root"
+        );
     }
+    let _ = writeln!(
+        packet,
+        "  - choose the required repo-approved environment from AGENTS.md and the operator request"
+    );
+    if has_remote_launcher {
+        let _ = writeln!(
+            packet,
+            "  - available_remote_launcher is a convenience launcher, not a selected profile"
+        );
+    }
+    let _ = writeln!(
+        packet,
+        "  - keep this Codex executor chat local; run substantive work where the repo flow requires"
+    );
+    let _ = writeln!(
+        packet,
+        "  - reread root AGENTS.md, nearest AGENTS.md, and task logs after entering the actual task worktree"
+    );
+    let _ = writeln!(
+        packet,
+        "  - make task/<task_slug> visible to local Q-COLD; sync remote task records if remote closeout is used"
+    );
 }
 
-fn write_queue_validation_closeout(packet: &mut String, remote: bool) {
-    if remote {
+fn write_queue_validation_closeout(packet: &mut String, remote_worktree: bool) {
+    if remote_worktree {
         let _ = writeln!(
             packet,
-            "  expect: run relevant validation remotely, then terminal closeout from remote_task_worktree"
+            "  expect: run relevant validation in the selected task environment, then terminal closeout"
         );
         let _ = writeln!(
             packet,
-            "  success: use the repository task-flow closeout surface through the remote launcher"
+            "  success: use the repository task-flow closeout surface, then sync local Q-COLD if needed"
         );
     } else {
-        let _ = writeln!(packet, "  expect: run relevant validation, then terminal closeout");
+        let _ = writeln!(
+            packet,
+            "  expect: run relevant validation in the selected task environment, then terminal closeout"
+        );
         let _ = writeln!(
             packet,
             "  success: qcold task closeout --outcome success --message \"<message>\""
@@ -113,13 +161,16 @@ fn write_queue_validation_closeout(packet: &mut String, remote: bool) {
     }
 }
 
-fn write_queue_state_pointers(packet: &mut String, remote: bool) {
-    if remote {
+fn write_queue_state_pointers(packet: &mut String, remote_worktree: bool, existing_task: bool) {
+    if remote_worktree {
         let _ = writeln!(packet, "  task_env: remote_task_worktree/.task/task.env");
         let _ = writeln!(packet, "  task_logs: remote_task_worktree/.task/logs/");
-    } else {
+    } else if existing_task {
         let _ = writeln!(packet, "  task_env: .task/task.env");
         let _ = writeln!(packet, "  task_logs: .task/logs/");
+    } else {
+        let _ = writeln!(packet, "  task_env: <actual-task-worktree>/.task/task.env");
+        let _ = writeln!(packet, "  task_logs: <actual-task-worktree>/.task/logs/");
     }
 }
 
@@ -142,6 +193,6 @@ fn write_queue_output_guard_policy(packet: &mut String) {
     );
 }
 
-fn queue_agent_launch_command(item: &state::QueueItemRow, _task: &QueueManagedTask) -> String {
+fn queue_agent_launch_command(item: &state::QueueItemRow, _task: &QueueLaunchWorkspace) -> String {
     item.agent_command.clone()
 }

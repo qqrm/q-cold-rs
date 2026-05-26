@@ -1,17 +1,8 @@
 #[cfg(test)]
 mod queue_taskflow_tests {
+    use crate::test_support;
+
     use super::*;
-
-    #[test]
-    fn queue_task_open_output_reports_worktree() {
-        let output = "task-opened\ttask-run-01\t/work/WT/repo/123-task-run-01\n\
-                      TASK_WORKTREE=/work/WT/repo/123-task-run-01\n";
-
-        assert_eq!(
-            parse_task_worktree_output(output).unwrap(),
-            PathBuf::from("/work/WT/repo/123-task-run-01")
-        );
-    }
 
     #[test]
     fn queue_task_open_prefers_runnable_current_executable() {
@@ -53,26 +44,63 @@ mod queue_taskflow_tests {
     }
 
     #[test]
-    fn queue_remote_task_open_transport_failure_is_retryable() {
-        let message = "failed to open remote managed task bs-meta3-perf-observability through \
-                       remote-dev-env: exit status: 255\nssh: connect to host 10.253.244.101 \
-                       port 22: Connection timed out";
+    fn queue_launch_workspace_without_existing_task_uses_repo_root() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let item = queue_taskflow_item("task-run-01", &repo, None);
 
-        match queue_task_open_failure_outcome(message.to_string()) {
-            QueueItemOutcome::Failed { retryable, .. } => assert!(retryable),
-            _ => panic!("expected failed outcome"),
-        }
+        let workspace = queue_launch_workspace(&item).unwrap();
+
+        assert_eq!(workspace.worktree, repo.canonicalize().unwrap());
+        assert_eq!(workspace.remote_launcher, None);
+        assert_eq!(workspace.remote_worktree, None);
+        assert!(!workspace.existing_task);
     }
 
     #[test]
-    fn queue_local_task_open_configuration_failure_is_not_retryable() {
-        match queue_task_open_failure_outcome("queue item has no repository root".to_string()) {
-            QueueItemOutcome::Failed { message, retryable } => {
-                assert_eq!(message, "queue item has no repository root");
-                assert!(!retryable);
-            }
-            _ => panic!("expected failed outcome"),
-        }
+    fn queue_launch_workspace_preserves_remote_launcher_without_opening_task() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let item = queue_taskflow_item("task-remote-01", &repo, Some("remote-dev-env"));
+
+        let workspace = queue_launch_workspace(&item).unwrap();
+
+        assert_eq!(workspace.worktree, repo.canonicalize().unwrap());
+        assert_eq!(workspace.remote_launcher.as_deref(), Some("remote-dev-env"));
+        assert_eq!(workspace.remote_worktree, None);
+        assert!(!workspace.existing_task);
+        assert!(state::get_task_record("task/task-remote-01").unwrap().is_none());
+    }
+
+    #[test]
+    fn queue_remote_launcher_is_explicit_not_agents_autoselected() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        fs::write(
+            repo.join("AGENTS.md"),
+            "The default substantive execution environment is the approved remote dev environment.",
+        )
+        .unwrap();
+        std::env::remove_var("QCOLD_QUEUE_REMOTE_LAUNCHER");
+
+        assert_eq!(
+            resolve_queue_remote_launcher(None, Some(repo.to_str().unwrap())),
+            None
+        );
+
+        std::env::set_var("QCOLD_QUEUE_REMOTE_LAUNCHER", "remote-dev-env");
+        assert_eq!(
+            resolve_queue_remote_launcher(None, Some(repo.to_str().unwrap())),
+            Some("remote-dev-env".to_string())
+        );
     }
 
     #[cfg(unix)]
@@ -86,4 +114,30 @@ mod queue_taskflow_tests {
 
     #[cfg(not(unix))]
     fn make_executable(_path: &Path) {}
+
+    fn queue_taskflow_item(
+        slug: &str,
+        repo: &Path,
+        remote_launcher: Option<&str>,
+    ) -> state::QueueItemRow {
+        state::QueueItemRow {
+            id: "item".to_string(),
+            run_id: "run".to_string(),
+            position: 0,
+            depends_on: Vec::new(),
+            prompt: "do focused work".to_string(),
+            slug: slug.to_string(),
+            repo_root: Some(repo.display().to_string()),
+            repo_name: Some("repo".to_string()),
+            agent_command: "c1".to_string(),
+            remote_launcher: remote_launcher.map(str::to_string),
+            agent_id: None,
+            status: "pending".to_string(),
+            message: String::new(),
+            attempts: 0,
+            next_attempt_at: None,
+            started_at: 0,
+            updated_at: 0,
+        }
+    }
 }
