@@ -154,6 +154,14 @@ pub(crate) fn stop_daemon_for_listen(listen: &str) -> Result<()> {
     replace_existing_daemon(&paths, listen)
 }
 
+pub(crate) fn start_daemon_for_listen(listen: &str) -> Result<()> {
+    start_daemon(&ServeArgs {
+        listen: listen.to_string(),
+        daemon: true,
+        daemon_child: false,
+    })
+}
+
 fn read_pid_file(path: &Path) -> Result<Option<u32>> {
     if !path.is_file() {
         return Ok(None);

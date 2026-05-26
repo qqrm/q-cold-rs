@@ -32,3 +32,25 @@ fn cargo_subcommand_reports_package_version() {
         .stdout(contains(format!("qcold {package_version}.")))
         .stdout(is_match(QCOLD_VERSION_PATTERN).unwrap());
 }
+
+#[test]
+fn q_help_prints_queue_package_guidance() {
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .arg("q-help")
+        .assert()
+        .success()
+        .stdout(contains("qcold queue run --from queue.json"))
+        .stdout(contains("layers/*.md"));
+}
+
+#[test]
+fn queue_help_exposes_console_queue_commands() {
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args(["queue", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("Submit a new queue run"))
+        .stdout(contains("Append prompt items"));
+}

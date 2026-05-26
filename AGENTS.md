@@ -84,6 +84,14 @@ repo-local code owns it.
 - `qcold task-record update <task-id> [--title "<title>"] [--description "<description>"] [--status <status>]`
 - `qcold task-record close <task-id> [--outcome success|blocked|failed]`
 - `qcold task-record delete <task-id>`
+- `qcold q-help`
+- `qcold queue help`
+- `qcold queue run [--from <path>] [--prompt "<prompt>"] [--agent <command>] [--repo-root <path>]`
+- `qcold queue append [<run-id>] [--from <path>] [--prompt "<prompt>"]`
+- `qcold queue list`
+- `qcold queue stop`
+- `qcold queue continue [<run-id>]`
+- `qcold queue clear [--run-id <run-id>]`
 - `qcold agent list`
 - `qcold agent prune-stale [--max-age-hours <n>] [--include-attached] [--dry-run] [--verbose]`
 - `qcold agent attach <agent-id|terminal-target|session|name>`

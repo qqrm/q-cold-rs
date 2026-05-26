@@ -33,6 +33,10 @@ qcold task-record audit --top 10
 qcold task-record sync-remote --via remote-dev-env \
   --local-repo-root /path/to/local/target-repo \
   --remote-repo-root /path/to/remote/target-repo
+qcold q-help
+qcold queue run --from queue.json --agent c1 --repo-root /path/to/target-repo
+qcold queue list
+qcold queue append <run-id> --prompt "follow-up task"
 qcold agent list
 qcold agent prune-stale
 qcold agent start --track audit -- c1 "inspect repo"
@@ -201,6 +205,33 @@ concurrent dashboard or agent process temporarily blocks the telemetry refresh;
 they print a warning instead of failing the read. SQLite lock waits default to
 30 seconds and can be overridden for one process with
 `QCOLD_SQLITE_BUSY_TIMEOUT_MS`.
+
+## Queue CLI
+
+The dashboard queue is also available from the standalone CLI for agents that
+receive a prompt package and need to stage work without reading Q-COLD source:
+
+```bash
+qcold q-help
+qcold queue run --from queue.json --agent c1 --repo-root /path/to/repo
+qcold queue list
+qcold queue stop
+qcold queue continue <run-id>
+```
+
+`qcold queue run` and other mutating queue commands post to the local dashboard
+daemon on `127.0.0.1:8787` by default. If the daemon is not reachable, Q-COLD
+starts `qcold telegram serve --daemon` for that listen address before sending
+the request. Use `--listen <addr>` to target another local dashboard daemon, or
+`--no-start-daemon` to fail instead of starting one.
+
+Prompt packages can be JSON manifests, directories, plain text files, or ZIP
+archives. A JSON manifest may define shared `layers`, optional
+`default_layers`, an `execution_mode` of `sequence` or `graph`, and queued
+`items` with `prompt`, `slug`, and optional `depends_on` fields. Directory and
+ZIP packages use `layers/*.md` as shared prompt layers and `prompts/*.md` or
+`tasks/*.md` as queued task prompts; a root `queue.json` manifest takes
+precedence when present.
 
 ## Web interface
 

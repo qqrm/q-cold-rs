@@ -2,6 +2,7 @@ mod adapter;
 mod agents;
 mod output_guard;
 mod prompt;
+mod queue;
 mod repo_bundle;
 mod repository;
 mod rollout;
@@ -92,6 +93,11 @@ fn run() -> Result<u8> {
         TopLevel::Install(args) => adapter_for_cwd_sensitive_repo()?.install(&args.args),
         TopLevel::Task(cmd) => task_command(cmd),
         TopLevel::TaskRecord(args) => task_record_command(args),
+        TopLevel::QHelp => {
+            print!("{}", queue::help_text());
+            Ok(0)
+        }
+        TopLevel::Queue(args) => queue::run(args),
         TopLevel::Bundle => repo_bundle::run(),
         TopLevel::Status => status::run(),
         TopLevel::Repo(args) => repository::run(args),
@@ -146,6 +152,10 @@ enum TopLevel {
     Task(TaskArgs),
     #[command(about = "Manage Q-COLD-owned task records in SQLite")]
     TaskRecord(TaskRecordArgs),
+    #[command(name = "q-help", about = "Print agent-facing queue package guidance")]
+    QHelp,
+    #[command(about = "Submit and inspect Q-COLD dashboard queue runs from the CLI")]
+    Queue(queue::QueueArgs),
     #[command(about = "Write one source ZIP archive for the current repository into ./bundles")]
     Bundle,
     #[command(about = "Summarize primary-checkout, worktree, and drift state")]
