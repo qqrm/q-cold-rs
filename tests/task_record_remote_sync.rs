@@ -42,6 +42,7 @@ fn sync_remote_imports_task_flow_records_under_local_repo_sequence() {
     let local_repo = temp.path().join("vitastor");
     git_init(&local_repo);
     let remote = temp.path().join("remote-dev-env");
+    let sync_capture = temp.path().join("sync-args.txt");
     let metadata = json!({
         "token_usage": {
             "input_tokens": 10,
@@ -87,9 +88,11 @@ fn sync_remote_imports_task_flow_records_under_local_repo_sequence() {
             concat!(
                 "#!/bin/sh\n",
                 "if [ \"$1\" = env ]; then exit 0; fi\n",
+                "printf '%s\\n' \"$@\" > {}\n",
                 "printf 'task-record-export\\tcount=1\\n'\n",
                 "printf 'task-record-json\\t%s\\n' '{}'\n",
             ),
+            shell_quote(&sync_capture),
             record.to_string().replace('\'', "'\\''")
         ),
     );
@@ -132,6 +135,13 @@ fn sync_remote_imports_task_flow_records_under_local_repo_sequence() {
         .clone();
     let output = String::from_utf8(output).unwrap();
     assert!(output.contains("remote_records=1\timported=1\tskipped=0"));
+    assert_eq!(
+        fs::read_to_string(sync_capture)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        ["cargo", "xtask", "task", "export-records", "--limit", "200"]
+    );
 
     let show = AssertCommand::cargo_bin("cargo-qcold")
         .unwrap()
@@ -150,6 +160,67 @@ fn sync_remote_imports_task_flow_records_under_local_repo_sequence() {
     assert!(show.contains("\tcwd=/remote/WT/vitastor/024-remote-task\t"));
     assert!(show.contains("token-usage\tinput=10"));
     assert!(show.contains("token-efficiency\tsessions=1"));
+}
+
+#[test]
+fn legacy_remote_qcold_sync_is_explicit() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let local_repo = temp.path().join("vitastor");
+    git_init(&local_repo);
+    let remote = temp.path().join("remote-dev-env");
+    let capture = temp.path().join("legacy-args.txt");
+    let record = json!({
+        "id": "task/legacy-remote-task",
+        "source": "task-flow",
+        "sequence": 8,
+        "title": "Legacy Remote Task",
+        "description": "Remote work",
+        "status": "open",
+        "created_at": 100,
+        "updated_at": 200,
+        "repo_root": "/remote/vitastor",
+        "cwd": "/remote/WT/vitastor/008-legacy-remote-task",
+        "agent_id": null,
+        "metadata_json": null
+    });
+    write_executable(
+        &remote,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf '%s\\n' \"$@\" > {}\n",
+                "printf 'task-record-json\\t%s\\n' '{}'\n",
+            ),
+            shell_quote(&capture),
+            record.to_string().replace('\'', "'\\''")
+        ),
+    );
+
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "sync-remote",
+            "--via",
+            remote.to_str().unwrap(),
+            "--local-repo-root",
+            local_repo.to_str().unwrap(),
+            "--legacy-remote-qcold",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(capture)
+            .unwrap()
+            .lines()
+            .collect::<Vec<_>>(),
+        ["qcold", "task-record", "export", "--limit", "200"]
+    );
 }
 
 #[test]
@@ -176,6 +247,10 @@ fn open_remote_reserves_local_sequence_and_passes_it_to_launcher() {
             "open-remote",
             "--via",
             remote.to_str().unwrap(),
+            "--remote-task-sequence-env",
+            "VITASTOR_TASKFLOW_TASK_SEQUENCE",
+            "--remote-task-description-env",
+            "VITASTOR_TASKFLOW_DESCRIPTION",
             "remote-sequenced",
         ])
         .env("QCOLD_STATE_DIR", &state_dir)
@@ -185,10 +260,19 @@ fn open_remote_reserves_local_sequence_and_passes_it_to_launcher() {
         .success();
     let captured = fs::read_to_string(capture).unwrap();
     assert!(captured.contains("QCOLD_TASK_SEQUENCE=1\n"));
-    assert!(captured.contains("qcold\n"));
+    assert!(captured.contains("VITASTOR_TASKFLOW_TASK_SEQUENCE=1\n"));
+    assert!(captured.contains(
+        "QCOLD_TASKFLOW_DESCRIPTION=Open managed task-flow work for Remote Sequenced.\n"
+    ));
+    assert!(captured.contains(
+        "VITASTOR_TASKFLOW_DESCRIPTION=Open managed task-flow work for Remote Sequenced.\n"
+    ));
+    assert!(captured.contains("cargo\n"));
+    assert!(captured.contains("xtask\n"));
     assert!(captured.contains("task\n"));
     assert!(captured.contains("open\n"));
     assert!(captured.contains("remote-sequenced\n"));
+    assert!(!captured.contains("qcold\n"));
 
     let show = AssertCommand::cargo_bin("cargo-qcold")
         .unwrap()
@@ -202,4 +286,19 @@ fn open_remote_reserves_local_sequence_and_passes_it_to_launcher() {
         .stdout
         .clone();
     assert!(String::from_utf8(show).unwrap().contains("\tsequence=1\t"));
+
+    let export = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args(["task-record", "export", "--limit", "10"])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let export = String::from_utf8(export).unwrap();
+    assert!(export.contains("remote_launcher"));
+    assert!(export.contains("remote_adapter"));
 }

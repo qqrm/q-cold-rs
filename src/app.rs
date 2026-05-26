@@ -215,7 +215,7 @@ enum TaskRecordSubcommand {
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
-    #[command(about = "Import remote task-flow records into the local canonical task-record DB")]
+    #[command(about = "Import remote repo-adapter task-flow records into the local task-record DB")]
     SyncRemote(TaskRecordRemoteSyncArgs),
     #[command(about = "Create or update a Q-COLD-owned task record")]
     Create(TaskRecordCreateArgs),
@@ -243,14 +243,42 @@ struct TaskRecordAuditArgs {
 
 #[derive(Args)]
 struct TaskRecordRemoteSyncArgs {
-    #[arg(long, default_value = "remote-dev-env")]
-    via: String,
+    #[command(flatten)]
+    remote: RemoteAdapterArgs,
     #[arg(long)]
     local_repo_root: Option<PathBuf>,
     #[arg(long)]
     remote_repo_root: Option<String>,
     #[arg(long, default_value_t = 200)]
     limit: usize,
+    #[arg(long)]
+    legacy_remote_qcold: bool,
+}
+
+#[derive(Args)]
+struct RemoteAdapterArgs {
+    #[arg(long, default_value = "remote-dev-env")]
+    via: String,
+    #[arg(long, default_value = "cargo")]
+    remote_adapter: String,
+    #[arg(long = "remote-adapter-arg")]
+    adapter_args: Vec<String>,
+    #[arg(long)]
+    no_default_remote_adapter_arg: bool,
+}
+
+#[derive(Args)]
+struct RemoteTaskOpenEnvArgs {
+    #[arg(long = "remote-task-sequence-env", value_name = "NAME")]
+    sequence_vars: Vec<String>,
+    #[arg(long = "remote-task-prompt-env", value_name = "NAME")]
+    prompt_names: Vec<String>,
+    #[arg(long = "remote-task-description-env", value_name = "NAME")]
+    description_keys: Vec<String>,
+    #[arg(long = "remote-codex-thread-env", value_name = "NAME")]
+    thread_targets: Vec<String>,
+    #[arg(long = "remote-codex-rollout-env", value_name = "NAME")]
+    rollout_targets: Vec<String>,
 }
 
 #[derive(Args)]
@@ -293,7 +321,7 @@ enum TaskSubcommand {
         task_slug: String,
         profile: Option<String>,
     },
-    #[command(about = "Reserve a local task number and open the task through a remote launcher")]
+    #[command(about = "Reserve a local task number and open it through a remote repo adapter")]
     OpenRemote(RemoteOpenArgs),
     Enter,
     List,
@@ -329,8 +357,10 @@ struct MessageArgs {
 
 #[derive(Args)]
 struct RemoteOpenArgs {
-    #[arg(long, default_value = "remote-dev-env")]
-    via: String,
+    #[command(flatten)]
+    remote: RemoteAdapterArgs,
+    #[command(flatten)]
+    remote_env: RemoteTaskOpenEnvArgs,
     task_slug: String,
     profile: Option<String>,
 }
@@ -679,6 +709,7 @@ include!("app/remote_task_records.rs");
 include!("app/codex_sessions.rs");
 include!("app/rendering.rs");
 include!("app/tests.rs");
+include!("app/tests_remote_adapter.rs");
 
 fn guard_command(args: &GuardArgs) -> Result<u8> {
     let Some((program, command_args)) = args.command.split_first() else {

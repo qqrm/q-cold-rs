@@ -53,9 +53,11 @@ Legacy `cargo qcold <command>` remains supported for compatibility, but
 Use `qcold --version` to check the installed operator binary. The reported
 version includes the Cargo package version, a monotonic Git commit-count build
 number, and the Git commit hash embedded when that binary was built. The build
-number is commit-derived so the same clean commit reports the same version on
-local and remote installs. A tracked-dirty local rebuild appends `-dirty` to the
-hash so changed-but-uncommitted operator binaries remain distinguishable.
+number is commit-derived so the same clean commit reports the same version
+wherever Q-COLD is installed. Remote task hosts normally run the repository
+adapter, not a second Q-COLD control plane. A tracked-dirty local rebuild
+appends `-dirty` to the hash so changed-but-uncommitted operator binaries
+remain distinguishable.
 
 ## Local iteration checks
 
@@ -167,16 +169,33 @@ When work runs on a remote task host, keep the operator machine as the canonical
 Q-COLD state owner. Start new remote work with
 `qcold task open-remote --via remote-dev-env <task-slug> [profile]`; this
 creates the local task record first, reserves the local repo-scoped sequence,
-and passes that sequence to the remote task adapter as `QCOLD_TASK_SEQUENCE`.
+and runs the remote repository adapter as `cargo xtask task open <task-slug>
+[profile]` by default. Q-COLD passes the reserved sequence to that adapter as
+`QCOLD_TASK_SEQUENCE`; it also forwards `QCOLD_TASKFLOW_DESCRIPTION`,
+`QCOLD_TASKFLOW_PROMPT`, `CODEX_THREAD_ID`, and `CODEX_ROLLOUT_PATH` when
+available. Repository adapters with their own environment namespace can add
+aliases with repeated `--remote-task-sequence-env <name>`,
+`--remote-task-description-env <name>`, `--remote-task-prompt-env <name>`,
+`--remote-codex-thread-env <name>`, and `--remote-codex-rollout-env <name>`.
+For example, a repository-local adapter can receive both Q-COLD's generic
+sequence value and its own task-flow sequence variable in the same remote
+`env` invocation. Use
+`--remote-adapter <program>` plus repeated `--remote-adapter-arg <arg>` when a
+remote repository exposes a different adapter command, or
+`--no-default-remote-adapter-arg` when the adapter program should receive
+`task ...` directly instead of the default `xtask` prefix.
 Refresh local monitoring with
 `qcold task-record sync-remote --via remote-dev-env --local-repo-root <local>
---remote-repo-root <remote>`. The sync imports remote task-flow records into the
-local SQLite DB, maps them to the local repository root for common numbering and
-dashboard filtering, preserves remote paths and remote sequence values in
-metadata, and imports exported token telemetry when the remote Q-COLD binary
-provides it. `qcold task-record export` is the full-record JSONL surface used by
-that sync path; it is primarily for Q-COLD-to-Q-COLD replication rather than
-manual dashboards.
+--remote-repo-root <remote>`. The sync runs the remote repository adapter as
+`cargo xtask task export-records --limit <n>` by default and imports emitted
+`task-record-json<TAB>{...}` rows into the local SQLite DB. Imported rows are
+mapped to the local repository root for common numbering and dashboard
+filtering, while remote paths and remote sequence values are preserved in
+metadata. `qcold task-record sync-remote --legacy-remote-qcold` keeps the old
+Q-COLD-to-Q-COLD replication path for hosts that have not migrated yet; new
+remote task hosts should provide the repo-owned adapter export instead.
+`qcold task-record export` remains the local full-record JSONL surface for
+manual diagnostics and compatibility.
 Read-only task-record commands keep serving the last stored records if a
 concurrent dashboard or agent process temporarily blocks the telemetry refresh;
 they print a warning instead of failing the read. SQLite lock waits default to

@@ -76,6 +76,8 @@ repo-local code owns it.
 - `qcold task-record audit [--repo-root <path>] [--top <n>] [--record-limit <n>]`
 - `qcold task-record export [--status <status>] [--limit <n>]`
 - `qcold task-record sync-remote [--via <remote-launcher>]`
+  `[--remote-adapter <program>] [--remote-adapter-arg <arg>]`
+  `[--no-default-remote-adapter-arg] [--legacy-remote-qcold]`
   `[--local-repo-root <path>] [--remote-repo-root <path>]`
 - `qcold task-record create --description "<task description>"`
 - `qcold task-record show <task-id>`
@@ -93,7 +95,11 @@ repo-local code owns it.
 - `qcold bundle`
 - `qcold guard -- <command>...`
 - `qcold task pause --reason "<reason>"`
-- `qcold task open-remote [--via <remote-launcher>] <task-slug> [profile]`
+- `qcold task open-remote [--via <remote-launcher>] [--remote-adapter <program>]`
+  `[--remote-adapter-arg <arg>] [--no-default-remote-adapter-arg]`
+  `[--remote-task-sequence-env <name>] [--remote-task-prompt-env <name>]`
+  `[--remote-task-description-env <name>] [--remote-codex-thread-env <name>]`
+  `[--remote-codex-rollout-env <name>] <task-slug> [profile]`
 - `qcold repo list`
 - `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>]`
   with optional `--default-branch <branch>` and `--set-active`
