@@ -226,6 +226,42 @@ fn write_queue_output_guard_policy(packet: &mut String) {
     );
 }
 
-fn queue_agent_launch_command(item: &state::QueueItemRow, _task: &QueueLaunchWorkspace) -> String {
-    item.agent_command.clone()
+fn write_queue_task_packet_file(
+    item: &state::QueueItemRow,
+    task: &QueueLaunchWorkspace,
+) -> Result<PathBuf> {
+    let directory = state::state_dir()?.join("queue-task-packets");
+    fs::create_dir_all(&directory)
+        .with_context(|| format!("failed to create {}", directory.display()))?;
+    let path = directory.join(queue_task_packet_file_name(item));
+    fs::write(&path, queue_task_instruction_with_task(item, task))
+        .with_context(|| format!("failed to write queue task packet {}", path.display()))?;
+    Ok(path)
+}
+
+fn queue_task_packet_file_name(item: &state::QueueItemRow) -> String {
+    let base = sanitize_daemon_id(&format!("{}-{}", item.run_id, item.id));
+    let base = if base.is_empty() {
+        "queue-task".to_string()
+    } else {
+        base.chars().take(80).collect()
+    };
+    format!("{}-{}.prompt", base, stable_short_hash(&format!("{}:{}", item.run_id, item.id)))
+}
+
+fn cleanup_queue_task_packet_file(path: &Path) {
+    let _ = fs::remove_file(path);
+}
+
+fn queue_agent_launch_command(
+    item: &state::QueueItemRow,
+    task: &QueueLaunchWorkspace,
+    prompt_file: &Path,
+) -> String {
+    format!(
+        "{} exec --dangerously-bypass-approvals-and-sandbox -C {} - < {}",
+        queue_shell_quote(&item.agent_command),
+        queue_shell_quote(&task.worktree.display().to_string()),
+        queue_shell_quote(&prompt_file.display().to_string())
+    )
 }

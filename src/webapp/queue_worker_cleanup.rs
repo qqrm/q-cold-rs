@@ -5,11 +5,6 @@ fn retry_after_queue_agent_launch_failure(agent_id: &str, message: &str) -> Queu
     QueueItemOutcome::retryable_failure(format!("{message}; {cleanup}"))
 }
 
-fn retry_after_queue_agent_launch_update(agent_id: &str) -> QueueItemOutcome {
-    let cleanup = cleanup_queue_agent(agent_id);
-    QueueItemOutcome::retryable_failure(format!("{CODEX_UPDATE_RESTART_RETRY}; {cleanup}"))
-}
-
 fn queue_failure_retries_immediately(message: &str) -> bool {
     message.contains(CODEX_UPDATE_RESTART_RETRY)
 }

@@ -347,10 +347,13 @@ authenticated available account (`c1`, `c2`, or `codexN`) with readiness
 status, and starts one fresh executor per queued prompt, with internal agent
 track and task slug names generated automatically.
 The Queue does not pre-open queued rows or choose a task profile/container from
-repository policy text. It starts the selected Codex-like executor in the
-repository root, sends the task slug and prompt, and tells that executor to use
-the repository-native task-flow contract from `AGENTS.md` and the operator
-request. If remote work, a devcontainer, full-QEMU, or another proof
+repository policy text. For local queue execution, it writes the generated
+task packet under Q-COLD state and starts the selected Codex-like executor as
+`<agent> exec --dangerously-bypass-approvals-and-sandbox -C <repo-or-task-cwd> -`
+with that packet on stdin, avoiding interactive paste/Enter handoff races. The
+packet carries the task slug and prompt and tells that executor to use the
+repository-native task-flow contract from `AGENTS.md` and the operator request.
+If remote work, a devcontainer, full-QEMU, or another proof
 environment is required, the executor opens or enters that environment itself.
 `QCOLD_QUEUE_REMOTE_LAUNCHER=<launcher>` from the submitting CLI process,
 `selected_remote_launcher` on a queue JSON payload, or per-item
@@ -401,19 +404,15 @@ full-prompt action, and a `Blocks next wave` toggle that controls whether the
 card blocks later waves. In Graph execution, all queued tasks whose prerequisites have
 reached `closed:success` are started in parallel through separate Q-COLD
 terminal agents; downstream tasks wait until their dependency set succeeds.
-Each queued row starts the selected Codex-like command without an argv prompt,
-waits for the attachable terminal pane, sends `/new`, and then sends the
-generated managed-task instruction so the row does not inherit the previous
-Codex chat context. That instruction is a compact `Q-COLD_TASK_PACKET` with
+Each queued row starts a fresh selected Codex-like command through `codex exec`
+with no argv prompt and no inherited chat context. The generated instruction is
+a compact `Q-COLD_TASK_PACKET` with
 the repository root, task slug, selected command, required task-flow commands,
 validation and closeout expectation, blocker boundary, state pointers for the
 eventual `.task/task.env` and task logs, an output guard policy, a bounded
 operator-request snippet, and the full operator request for the executor.
-If the Codex CLI presents its interactive update menu during queue launch,
-the backend accepts the default update action. When Codex exits after a
-successful self-update and asks to restart, the backend removes that stale
-executor record and retries the launch immediately before sending the task
-packet.
+Remote-native queue execution still uses the repository remote-agent contract
+and sends the generated packet into that remote tmux-backed executor session.
 Queue launcher agents use slug/repository-derived display labels and short
 session ids rather than prompt-derived labels. They are internal transport and do not create
 separate ad-hoc task records; the visible task state belongs to the managed

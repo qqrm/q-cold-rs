@@ -2,6 +2,8 @@
 mod queue_prompt_tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::fs;
+
     use crate::{state, test_support};
 
     use super::*;
@@ -80,7 +82,10 @@ mod queue_prompt_tests {
     }
 
     #[test]
-    fn queue_remote_agent_command_stays_local() {
+    fn queue_local_agent_command_uses_codex_exec_stdin_packet() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
         let item = queue_prompt_item("task-remote-01", Some("remote-dev-env"));
         let task = QueueLaunchWorkspace {
             worktree: "/local/repo".into(),
@@ -89,9 +94,20 @@ mod queue_prompt_tests {
             existing_task: false,
         };
 
-        let command = queue_agent_launch_command(&item, &task);
+        let prompt_file = write_queue_task_packet_file(&item, &task).unwrap();
+        let command = queue_agent_launch_command(&item, &task, &prompt_file);
+        let packet = fs::read_to_string(&prompt_file).unwrap();
 
-        assert_eq!(command, "c1");
+        assert_eq!(
+            command,
+            format!(
+                "c1 exec --dangerously-bypass-approvals-and-sandbox -C /local/repo - < {}",
+                queue_shell_quote(&prompt_file.display().to_string())
+            )
+        );
+        assert!(packet.contains("Q-COLD_TASK_PACKET"));
+        assert!(packet.contains("task_slug: task-remote-01"));
+        assert!(prompt_file.starts_with(temp.path().join("state/queue-task-packets")));
     }
 
     #[test]

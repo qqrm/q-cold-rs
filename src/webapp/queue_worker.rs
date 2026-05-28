@@ -585,16 +585,35 @@ fn start_web_queue_item(
             return Ok(QueueItemOutcome::failed(message));
         }
     };
-    let command = queue_agent_launch_command(item, &task);
+    let prompt_file = match write_queue_task_packet_file(item, &task) {
+        Ok(path) => path,
+        Err(err) => {
+            let message = format!("{err:#}");
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "failed",
+                &message,
+                None,
+                attempts,
+                None,
+            )?;
+            return Ok(QueueItemOutcome::failed(message));
+        }
+    };
+    let command = queue_agent_launch_command(item, &task, &prompt_file);
     let request = AgentStartRequest {
         id: Some(queue_agent_id(item)),
-        cwd: Some(task.worktree.clone()),
+        cwd: Some(task.worktree),
         track: queue_track(run_id),
         command,
     };
     let agent = match start_web_agent(&request) {
         Ok(agent) => agent,
-        Err(err) => return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}"))),
+        Err(err) => {
+            cleanup_queue_task_packet_file(&prompt_file);
+            return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+        }
     };
     state::update_web_queue_item(
         run_id,
@@ -607,6 +626,7 @@ fn start_web_queue_item(
     )?;
     remember_queue_task_agent(item, &agent.id)?;
     let Some(target) = wait_for_agent_terminal_target(&agent.id) else {
+        cleanup_queue_task_packet_file(&prompt_file);
         return Ok(retry_after_queue_agent_launch_failure(
             &agent.id,
             "agent terminal did not appear",
@@ -616,43 +636,15 @@ fn start_web_queue_item(
     state::update_web_queue_item(
         run_id,
         &item.id,
-        "starting",
-        "waiting for agent prompt",
-        Some(&agent.id),
-        attempts,
-        None,
-    )?;
-    match wait_for_agent_terminal_ready(&agent.id) {
-        QueueTerminalReadiness::Ready => {}
-        QueueTerminalReadiness::RestartAfterUpdate => {
-            return Ok(retry_after_queue_agent_launch_update(&agent.id));
-        }
-        QueueTerminalReadiness::Failed => {
-            return Ok(retry_after_queue_agent_launch_failure(
-                &agent.id,
-                "agent terminal did not become ready for input",
-            ));
-        }
-    }
-    let instruction = queue_task_instruction_with_task(item, &task);
-    if let Err(err) = send_terminal_text_to_target(&target, &instruction) {
-        return Ok(retry_after_queue_agent_launch_failure(
-            &agent.id,
-            &format!("{err:#}"),
-        ));
-    }
-    thread::sleep(terminal_paste_submit_retry_delay());
-    let _ = submit_agent_terminal_pending_paste(&agent.id);
-    state::update_web_queue_item(
-        run_id,
-        &item.id,
         "running",
         &format!("{} ({})", queue_display_label(item), agent.id),
         Some(&agent.id),
         attempts,
         None,
     )?;
-    wait_for_queue_item_closeout(run_id, item, &agent.id, attempts)
+    let outcome = wait_for_queue_item_closeout(run_id, item, &agent.id, attempts);
+    cleanup_queue_task_packet_file(&prompt_file);
+    outcome
 }
 
 fn set_queue_terminal_scope(target: &str, item: &state::QueueItemRow) -> Result<()> {
@@ -932,10 +924,6 @@ fn wait_for_agent_terminal_target(agent_id: &str) -> Option<String> {
         thread::sleep(Duration::from_millis(500));
     }
     None
-}
-
-fn send_terminal_text_to_target(target: &str, text: &str) -> Result<()> {
-    send_terminal_paste(target, text, true)
 }
 
 fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
