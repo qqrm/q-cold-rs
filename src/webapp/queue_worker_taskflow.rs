@@ -171,7 +171,7 @@ fn send_remote_native_instruction(
     let target = format!("{session}:0.0");
     let buffer = format!("{session}-task-packet");
     let script = format!(
-        "tmux load-buffer -b {} -w - && tmux paste-buffer -b {} -t {} && tmux send-keys -t {} Enter",
+        "tmux load-buffer -b {} -w - && tmux paste-buffer -b {} -t {} && tmux send-keys -t {} C-m",
         queue_shell_quote(&buffer),
         queue_shell_quote(&buffer),
         queue_shell_quote(&target),

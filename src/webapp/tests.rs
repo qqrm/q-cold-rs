@@ -97,6 +97,10 @@ mod tests {
         assert_eq!(key, TerminalKey::Up);
         assert_eq!(key.tmux(), "Up");
         assert_eq!(key.zellij(), "Up");
+        let enter = clean_terminal_key("Enter").unwrap();
+        assert_eq!(enter, TerminalKey::Enter);
+        assert_eq!(enter.tmux(), "C-m");
+        assert_eq!(enter.zellij(), "Enter");
         assert!(clean_terminal_key("$(touch /tmp/nope)").is_err());
     }
 

@@ -589,7 +589,7 @@ impl TerminalKey {
             Self::Down => "Down",
             Self::Left => "Left",
             Self::Right => "Right",
-            Self::Enter => "Enter",
+            Self::Enter => "C-m",
             Self::Backspace => "BSpace",
             Self::Delete => "DC",
             Self::Escape => "Escape",
