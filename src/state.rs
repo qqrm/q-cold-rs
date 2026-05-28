@@ -519,19 +519,33 @@ pub fn request_web_queue_stop(run_id: Option<&str>) -> Result<()> {
 }
 
 pub fn continue_web_queue_run(run_id: &str) -> Result<()> {
-    let connection = open_db()?;
-    let updated = connection
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction()
+        .context("failed to start web queue continue transaction")?;
+    let now = unix_now();
+    let updated = tx
         .execute(
             "update web_queue_runs
              set stop_requested = 0, status = 'running', message = 'continued',
                  updated_at_unix = ?2
              where id = ?1 and status = 'stopped'",
-            params![run_id, unix_now()],
+            params![run_id, now],
         )
         .context("failed to continue web queue")?;
     if updated == 0 {
         bail!("queue is not stopped: {run_id}");
     }
+    tx.execute(
+        "update web_queue_items
+         set status = 'pending', message = 'pending after queue continue',
+             updated_at_unix = ?2
+         where run_id = ?1 and status = 'stopped' and agent_id is null",
+        params![run_id, now],
+    )
+    .context("failed to restore stopped future queue items")?;
+    tx.commit()
+        .context("failed to commit web queue continue transaction")?;
     Ok(())
 }
 

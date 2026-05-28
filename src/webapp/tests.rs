@@ -262,7 +262,8 @@ mod tests {
         let items = vec![
             queue_item_fixture("run-stopped", "first", 0, "success", Some("agent-1")),
             queue_item_fixture("run-stopped", "second", 1, "stopped", Some("agent-2")),
-            queue_item_fixture("run-stopped", "third", 2, "pending", None),
+            queue_item_fixture("run-stopped", "third", 2, "stopped", None),
+            queue_item_fixture("run-stopped", "fourth", 3, "pending", None),
         ];
 
         state::replace_web_queue(&run, &items).unwrap();
@@ -280,7 +281,8 @@ mod tests {
             [
                 ("first", "success"),
                 ("second", "stopped"),
-                ("third", "pending")
+                ("third", "pending"),
+                ("fourth", "pending")
             ]
         );
     }
