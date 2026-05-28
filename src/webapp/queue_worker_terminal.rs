@@ -27,17 +27,20 @@ fn agent_terminal_target(agent_id: &str) -> Option<String> {
 }
 
 fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
-    let Some(output) = agent_terminal_output(agent_id) else {
-        return Ok(false);
-    };
-    if !terminal_output_has_pending_paste(&output) {
-        return Ok(false);
-    }
     let Some(target) = agent_terminal_target(agent_id) else {
         return Ok(false);
     };
-    send_terminal_submit(&target)?;
-    Ok(true)
+    let mut submitted = false;
+    for _ in 0..2 {
+        let output = capture_agent_terminal_output(&target)?;
+        if !terminal_output_has_pending_paste(&output) {
+            return Ok(submitted);
+        }
+        send_terminal_submit(&target)?;
+        submitted = true;
+        thread::sleep(terminal_paste_submit_retry_delay());
+    }
+    Ok(submitted)
 }
 
 enum QueueTerminalReadiness {
@@ -158,6 +161,10 @@ fn terminal_output_has_unsubmitted_task_packet(output: &str) -> bool {
         .iter()
         .any(|line| line.trim_start().starts_with("gpt-"));
     has_idle_prompt && !has_activity
+}
+
+fn terminal_paste_submit_retry_delay() -> Duration {
+    Duration::from_millis(1500)
 }
 
 fn capture_agent_terminal_output(target: &str) -> Result<String> {

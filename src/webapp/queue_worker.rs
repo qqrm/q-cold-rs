@@ -641,7 +641,7 @@ fn start_web_queue_item(
             &format!("{err:#}"),
         ));
     }
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(terminal_paste_submit_retry_delay());
     let _ = submit_agent_terminal_pending_paste(&agent.id);
     state::update_web_queue_item(
         run_id,

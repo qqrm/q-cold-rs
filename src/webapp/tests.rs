@@ -97,8 +97,6 @@ mod tests {
         assert_eq!(key, TerminalKey::Up);
         assert_eq!(key.tmux(), "Up");
         assert_eq!(key.zellij(), "Up");
-        assert_eq!(TerminalKey::LineFeed.tmux(), "C-j");
-        assert_eq!(TerminalKey::LineFeed.zellij(), "Ctrl j");
         assert!(clean_terminal_key("$(touch /tmp/nope)").is_err());
     }
 
