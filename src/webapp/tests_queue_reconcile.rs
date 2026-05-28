@@ -92,6 +92,65 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    fn failed_graph_queue_reconciles_remote_imported_success_for_legacy_local_item() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("graph-remote-import", "failed", 0);
+        run.execution_mode = "graph".to_string();
+        let mut first = queue_item_fixture(&run.id, "first", 0, "failed", Some("qa-first"));
+        first.repo_root = Some(repo.clone());
+        first.message = "agent reached idle prompt after failed Q-COLD closeout".to_string();
+        let mut second = queue_item_fixture(&run.id, "second", 1, "pending", None);
+        second.repo_root = Some(repo.clone());
+        second.depends_on = vec!["first".to_string()];
+        state::replace_web_queue(&run, &[first, second]).unwrap();
+        let metadata = format!(
+            r#"{{"canonical_repo_root":"{repo}","remote_launcher":"remote-dev-env","remote_repo_root":"/remote/repo"}}"#
+        );
+        state::upsert_task_record(&state::new_task_record(
+            "task/task-first".to_string(),
+            "task-flow".to_string(),
+            "first".to_string(),
+            "prompt first".to_string(),
+            "closed:success".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo".to_string()),
+            Some("remote-user".to_string()),
+            Some(metadata),
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(queue_run_needs_stale_reconcile(&run, &stored_items).unwrap());
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let Some((restarted_run, restarted_items)) =
+            restart_resolved_failed_queue_run(&stored_run.unwrap(), &stored_items).unwrap()
+        else {
+            panic!("expected remote-imported success record to restart queue");
+        };
+
+        assert_eq!(restarted_run.status, "running");
+        assert_eq!(
+            restarted_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [("first", "success"), ("second", "pending")]
+        );
+        assert_eq!(queue_ready_item_ids(&restarted_run, &restarted_items), ids(&["second"]));
+    }
+
+    #[test]
     fn remote_native_running_item_skips_local_agent_failure_message() {
         let mut item = queue_item_fixture(
             "remote-native-run",

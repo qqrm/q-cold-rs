@@ -436,9 +436,24 @@ fn queue_task_record_matches_item(
     item: &state::QueueItemRow,
     record: &state::TaskRecordRow,
 ) -> bool {
-    (queue_task_record_repo_matches_item(item, record)
-        && queue_task_record_launcher_matches_item(item, record))
-        || queue_task_record_agent_matches_item(item, record)
+    if queue_task_record_agent_matches_item(item, record) {
+        return true;
+    }
+    if !queue_task_record_repo_matches_item(item, record) {
+        return false;
+    }
+    queue_task_record_launcher_matches_item(item, record)
+        || legacy_local_item_matches_remote_terminal_record(item, record)
+}
+
+fn legacy_local_item_matches_remote_terminal_record(
+    item: &state::QueueItemRow,
+    record: &state::TaskRecordRow,
+) -> bool {
+    item.remote_launcher.is_none()
+        && record.source == "task-flow"
+        && record.status.starts_with("closed")
+        && task_record_remote_launcher(record).is_some()
 }
 
 fn queue_task_record_agent_matches_item(
