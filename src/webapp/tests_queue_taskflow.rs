@@ -208,6 +208,177 @@ mod queue_taskflow_tests {
         );
     }
 
+    #[test]
+    fn remote_agent_contract_gets_selected_launcher_env() {
+        let _guard = test_support::env_guard();
+        let mut command = std::process::Command::new("cargo");
+
+        set_remote_agent_launcher_env(&mut command, "/tmp/remote-dev-env");
+
+        assert_eq!(
+            command_env_value(&command, "QCOLD_REMOTE_DEV_ENV_WRAPPER").as_deref(),
+            Some("/tmp/remote-dev-env")
+        );
+        assert_eq!(
+            command_env_value(&command, "VITASTOR_REMOTE_DEV_ENV_WRAPPER").as_deref(),
+            None
+        );
+    }
+
+    #[test]
+    fn remote_agent_contract_uses_configured_launcher_env_alias() {
+        let _guard = test_support::env_guard();
+        std::env::set_var(
+            "QCOLD_QUEUE_REMOTE_AGENT_LAUNCHER_ENV",
+            "TARGET_REMOTE_DEV_ENV_WRAPPER",
+        );
+        let mut command = std::process::Command::new("cargo");
+
+        set_remote_agent_launcher_env(&mut command, "/tmp/remote-dev-env");
+
+        assert_eq!(
+            command_env_value(&command, "TARGET_REMOTE_DEV_ENV_WRAPPER").as_deref(),
+            Some("/tmp/remote-dev-env")
+        );
+    }
+
+    #[test]
+    fn remote_native_launch_failure_uses_retry_failure_state() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-retry", &repo);
+        let mut item = queue_taskflow_item("task-remote-native-retry", &repo, Some("/bin/false"));
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.attempts = WEB_QUEUE_RETRY_DELAYS.len() as i64;
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let outcome = run_web_queue_item(&run.id, &item).unwrap();
+
+        assert!(matches!(
+            outcome,
+            QueueItemOutcome::Failed {
+                retryable: false,
+                ..
+            }
+        ));
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(items[0].status, "failed");
+        assert_eq!(items[0].attempts, WEB_QUEUE_RETRY_DELAYS.len() as i64);
+        assert!(items[0].next_attempt_at.is_none());
+        assert_eq!(items[0].agent_id.as_deref(), Some("qa-task-remote-native-retry"));
+        assert!(
+            items[0]
+                .message
+                .contains("repository remote-agent doctor contract failed"),
+            "{}",
+            items[0].message
+        );
+    }
+
+    #[test]
+    fn remote_native_task_status_propagates_sync_failure() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/false"));
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+
+        let err = queue_task_status(&item).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("remote-native task-record sync failed"),
+            "{err:#}"
+        );
+    }
+
+    #[test]
+    fn remote_native_launch_wait_item_forces_task_record_sync() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item("task-remote-native-wait", &repo, Some("remote-dev-env"));
+        item.execution_host = "remote-native".to_string();
+
+        let wait_item = remote_native_running_wait_item(&item);
+
+        assert!(!remote_native_requires_task_record_sync(&item));
+        assert!(remote_native_requires_task_record_sync(&wait_item));
+        assert_eq!(wait_item.remote_launcher, item.remote_launcher);
+        assert_eq!(wait_item.slug, item.slug);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn remote_native_cleanup_stops_remote_agent_session() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let log = install_fake_cargo_logger(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item(
+            "task-remote-native-cleanup",
+            &repo,
+            Some("remote-dev-env"),
+        );
+        item.execution_host = "remote-native".to_string();
+        item.status = "failed".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+        let mut task = task_record_fixture("task-remote-native-cleanup", "open", &repo);
+        task.agent_id = item.agent_id.clone();
+        state::upsert_task_record(&task).unwrap();
+
+        cleanup_queue_item_artifacts(&item, None, None).unwrap();
+
+        assert!(
+            state::get_task_record("task/task-remote-native-cleanup")
+                .unwrap()
+                .is_none()
+        );
+        let log = fs::read_to_string(log).unwrap();
+        assert!(log.contains("xtask remote-agent down --session qcold-qa-task-remote-native-cleanup"));
+        assert!(log.contains("QCOLD_REMOTE_DEV_ENV_WRAPPER=remote-dev-env"));
+        assert!(!log.contains("remote-agent open"));
+    }
+
+    #[test]
+    fn remote_native_stopped_item_resumes_without_reopening() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-stopped", &repo);
+        let mut item = queue_taskflow_item("task-remote-native-stopped", &repo, None);
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.status = "stopped".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let outcome = run_web_queue_item(&run.id, &item).unwrap();
+
+        assert!(matches!(outcome, QueueItemOutcome::Failed { .. }));
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(items[0].status, "failed");
+        assert!(
+            items[0]
+                .message
+                .contains("remote-native task record was not visible"),
+            "{}",
+            items[0].message
+        );
+        assert!(!items[0].message.contains("requires remote_launcher"));
+    }
+
     #[cfg(unix)]
     fn make_executable(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
@@ -220,13 +391,43 @@ mod queue_taskflow_tests {
     #[cfg(not(unix))]
     fn make_executable(_path: &Path) {}
 
+    #[cfg(unix)]
+    fn install_fake_cargo_logger(temp: &Path) -> PathBuf {
+        let bin = temp.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let log = temp.join("cargo.log");
+        let cargo = bin.join("cargo");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$PWD|$*|QCOLD_REMOTE_DEV_ENV_WRAPPER=$QCOLD_REMOTE_DEV_ENV_WRAPPER\" \
+             >> {}\n",
+            shell_quote(&log)
+        );
+        fs::write(&cargo, script).unwrap();
+        make_executable(&cargo);
+
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        log
+    }
+
+    #[cfg(unix)]
+    fn shell_quote(path: &Path) -> String {
+        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+    }
+
     fn queue_run_fixture(id: &str, repo: &Path) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
             status: "running".to_string(),
             execution_mode: "sequence".to_string(),
+            execution_host: "local".to_string(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             selected_repo_root: Some(repo.display().to_string()),
             selected_repo_name: Some("repo".to_string()),
             track: queue_track(id),
@@ -275,8 +476,11 @@ mod queue_taskflow_tests {
             slug: slug.to_string(),
             repo_root: Some(repo.display().to_string()),
             repo_name: Some("repo".to_string()),
+            execution_host: "local".to_string(),
             agent_command: "c1".to_string(),
             remote_launcher: remote_launcher.map(str::to_string),
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             agent_id: None,
             status: "pending".to_string(),
             message: String::new(),
@@ -285,5 +489,11 @@ mod queue_taskflow_tests {
             started_at: 0,
             updated_at: 0,
         }
+    }
+
+    fn command_env_value(command: &std::process::Command, name: &str) -> Option<String> {
+        command.get_envs().find_map(|(key, value)| {
+            (key == name).then(|| value.map(|value| value.to_string_lossy().into_owned()))?
+        })
     }
 }

@@ -54,6 +54,47 @@ fn json_plan_preserves_remote_launcher_hints() {
 }
 
 #[test]
+fn json_plan_preserves_remote_native_contract() {
+    let package = parse_json_package(
+        r#"{
+            "selected_execution_host": "remote-native",
+            "selected_remote_launcher": "remote-dev-env",
+            "selected_remote_agent_local_proxy": "127.0.0.1:3128",
+            "selected_remote_agent_remote_proxy": "127.0.0.1:18100",
+            "items": [
+                {"slug":"remote","prompt":"do remote"},
+                {
+                    "slug":"local",
+                    "prompt":"do local",
+                    "execution_host":"local",
+                    "remote_agent_local_proxy":"none"
+                }
+            ]
+        }"#,
+        "test",
+    )
+    .unwrap();
+
+    assert_eq!(
+        package.selected_execution_host.as_deref(),
+        Some("remote-native")
+    );
+    assert_eq!(
+        package.selected_remote_agent_local_proxy.as_deref(),
+        Some("127.0.0.1:3128")
+    );
+    assert_eq!(
+        package.selected_remote_agent_remote_proxy.as_deref(),
+        Some("127.0.0.1:18100")
+    );
+    assert_eq!(package.items[1].execution_host.as_deref(), Some("local"));
+    assert_eq!(
+        package.items[1].remote_agent_local_proxy.as_deref(),
+        Some("none")
+    );
+}
+
+#[test]
 fn json_item_layers_can_override_defaults() {
     let package = parse_json_package(
         r#"{

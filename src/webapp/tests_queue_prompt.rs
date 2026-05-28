@@ -95,6 +95,21 @@ mod queue_prompt_tests {
     }
 
     #[test]
+    fn remote_native_packet_marks_remote_executor_contract() {
+        let mut item = queue_prompt_item("task-remote-native-01", Some("remote-dev-env"));
+        item.execution_host = "remote-native".to_string();
+
+        let instruction = queue_remote_native_task_instruction(&item);
+
+        assert!(instruction.contains("execution_host: remote-native"));
+        assert!(instruction.contains("repository remote-agent contract"));
+        assert!(instruction.contains("do not reopen task_slug"));
+        assert!(instruction.contains("local launcher Q-COLD used to reach this remote session"));
+        assert!(instruction.contains("Codex executor chat is running on the remote host"));
+        assert!(!instruction.contains("keep this Codex executor chat local"));
+    }
+
+    #[test]
     fn queue_task_record_agent_updates_after_executor_start() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
@@ -131,8 +146,11 @@ mod queue_prompt_tests {
             slug: slug.to_string(),
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
+            execution_host: "local".to_string(),
             agent_command: "c1".to_string(),
             remote_launcher: remote_launcher.map(str::to_string),
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             agent_id: None,
             status: "pending".to_string(),
             message: String::new(),

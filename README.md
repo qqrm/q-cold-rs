@@ -344,9 +344,8 @@ state in a compact always-visible status strip. Its Queue view accepts
 one task prompt at a time, appends it to a visible ordered queue, shows a
 dropdown of registered repositories plus one preferred Codex-like command per
 authenticated available account (`c1`, `c2`, or `codexN`) with readiness
-status, and starts
-one fresh Q-COLD terminal agent per queued prompt through `/agent_start --cwd
-<repo>`, with internal agent track and task slug names generated automatically.
+status, and starts one fresh executor per queued prompt, with internal agent
+track and task slug names generated automatically.
 The Queue does not pre-open queued rows or choose a task profile/container from
 repository policy text. It starts the selected Codex-like executor in the
 repository root, sends the task slug and prompt, and tells that executor to use
@@ -360,6 +359,27 @@ executor; it is not a selected profile and Q-COLD does not run
 `qcold task open-remote` on the executor's behalf. Set
 `QCOLD_QUEUE_REMOTE_LAUNCHER=local` or a JSON launcher value of `local` to
 suppress that launcher hint.
+Set `QCOLD_QUEUE_EXECUTION_HOST=remote-native`, top-level
+`selected_execution_host: "remote-native"`, or per-item
+`execution_host: "remote-native"` to use the repository adapter-backed
+remote-agent contract instead of a local terminal agent. During incubation,
+Q-COLD supports this mode for repositories that expose the contract as
+`cargo xtask remote-agent doctor/open/down`; it is not a generic Q-COLD remote
+protocol. Remote-native queue items require a
+`remote_launcher`/`selected_remote_launcher`, run the repository
+`remote-agent doctor` and `remote-agent open <slug>` commands from the local
+repository control plane with that launcher exported to the repository
+contract as `QCOLD_REMOTE_DEV_ENV_WRAPPER`, and paste the generated task packet
+into the remote tmux-backed Codex session. If an incubating repository adapter
+expects a different launcher environment variable, set
+`QCOLD_QUEUE_REMOTE_AGENT_LAUNCHER_ENV` to that variable name in Q-COLD's
+operator environment. Optional proxy endpoints belong to Q-COLD queue
+configuration:
+`QCOLD_QUEUE_REMOTE_AGENT_LOCAL_PROXY`,
+`QCOLD_QUEUE_REMOTE_AGENT_REMOTE_PROXY`, top-level
+`selected_remote_agent_local_proxy`/`selected_remote_agent_remote_proxy`, or
+matching per-item fields. Those endpoints are local operator/control-plane
+state and should not be committed into a target product repository.
 Direct terminal agents started from a repository through Q-COLD wrappers are
 also valid task entry points. Those agents run from
 `../WT/<repo>/agents/<agent>` worktrees with `QCOLD_REPO_ROOT` pointing at the
@@ -707,11 +727,14 @@ This repository follows the task-flow and delegation discipline captured in
 for dogfooding: managed worktrees are created under `../WT/qcold/`, success
 closeout runs `cargo fmt --check` plus the serial `cargo-qcold` unit suite,
 then runs a mandatory pre-merge quality review before delivery. The reviewer
-must return `REVIEW_STATUS=pass` or `REVIEW_STATUS=block` plus argued
-criticism, a `REVIEW_SUMMARY=...` line, and at least one argued finding
-bullet. Missing, failed, vacuous, or blocking review output stops success
-closeout before merge/push. Set `QCOLD_CLOSEOUT_REVIEWER_COMMAND` to an
-injectable reviewer command for one process. Q-COLD passes
+prompt includes the original task request and requires the reviewer to check
+request fit, completeness, tests/docs for changed behavior, adapter
+boundaries, and implementation quality. The reviewer must return
+`REVIEW_STATUS=pass` or `REVIEW_STATUS=block` plus argued criticism, a
+`REVIEW_SUMMARY=...` line, and at least one argued finding bullet. Missing,
+failed, vacuous, or blocking review output stops success closeout before
+merge/push. Set `QCOLD_CLOSEOUT_REVIEWER_COMMAND` to an injectable reviewer
+command for one process. Q-COLD passes
 `QCOLD_REVIEW_PROMPT` and `QCOLD_REVIEW_OUTPUT`; the command should read the
 prompt and write the final report to the output path. Without that override,
 the self-hosted adapter uses `c1 exec` in read-only mode for the review.

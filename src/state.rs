@@ -64,8 +64,11 @@ pub struct QueueRunRow {
     pub id: String,
     pub status: String,
     pub execution_mode: String,
+    pub execution_host: String,
     pub selected_agent_command: String,
     pub remote_launcher: Option<String>,
+    pub remote_agent_local_proxy: Option<String>,
+    pub remote_agent_remote_proxy: Option<String>,
     pub selected_repo_root: Option<String>,
     pub selected_repo_name: Option<String>,
     pub track: String,
@@ -97,8 +100,11 @@ pub struct QueueItemRow {
     pub slug: String,
     pub repo_root: Option<String>,
     pub repo_name: Option<String>,
+    pub execution_host: String,
     pub agent_command: String,
     pub remote_launcher: Option<String>,
+    pub remote_agent_local_proxy: Option<String>,
+    pub remote_agent_remote_proxy: Option<String>,
     pub agent_id: Option<String>,
     pub status: String,
     pub message: String,
@@ -166,15 +172,18 @@ fn replace_web_queue_with_assignment(
         .context("failed to clear web queue items")?;
     tx.execute(
         "insert into web_queue_runs
-             (id, status, execution_mode, selected_agent_command, remote_launcher,
-              selected_repo_root, selected_repo_name, track, current_index, stop_requested,
-              message, created_at_unix, updated_at_unix)
-         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             (id, status, execution_mode, execution_host, selected_agent_command, remote_launcher,
+              remote_agent_local_proxy, remote_agent_remote_proxy, selected_repo_root, selected_repo_name,
+              track, current_index, stop_requested, message, created_at_unix, updated_at_unix)
+         values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          on conflict(id) do update set
              status = excluded.status,
              execution_mode = excluded.execution_mode,
+             execution_host = excluded.execution_host,
              selected_agent_command = excluded.selected_agent_command,
              remote_launcher = excluded.remote_launcher,
+             remote_agent_local_proxy = excluded.remote_agent_local_proxy,
+             remote_agent_remote_proxy = excluded.remote_agent_remote_proxy,
              selected_repo_root = excluded.selected_repo_root,
              selected_repo_name = excluded.selected_repo_name,
              track = excluded.track,
@@ -186,8 +195,11 @@ fn replace_web_queue_with_assignment(
             run.id,
             run.status,
             run.execution_mode,
+            run.execution_host,
             run.selected_agent_command,
             run.remote_launcher,
+            run.remote_agent_local_proxy,
+            run.remote_agent_remote_proxy,
             run.selected_repo_root,
             run.selected_repo_name,
             run.track,
@@ -203,9 +215,9 @@ fn replace_web_queue_with_assignment(
         tx.execute(
             "insert into web_queue_items
                  (id, run_id, position, depends_on_json, prompt, slug, repo_root, repo_name, agent_command,
-                  remote_launcher, agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                  updated_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                  execution_host, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
+                  agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix, updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 item.id,
                 item.run_id,
@@ -216,7 +228,10 @@ fn replace_web_queue_with_assignment(
                 item.repo_root,
                 item.repo_name,
                 item.agent_command,
+                item.execution_host,
                 item.remote_launcher,
+                item.remote_agent_local_proxy,
+                item.remote_agent_remote_proxy,
                 item.agent_id,
                 item.status,
                 item.message,
@@ -264,9 +279,9 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
         tx.execute(
             "insert into web_queue_items
                  (id, run_id, position, depends_on_json, prompt, slug, repo_root, repo_name, agent_command,
-                  remote_launcher, agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                  updated_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+                  execution_host, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
+                  agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix, updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             params![
                 item.id,
                 item.run_id,
@@ -277,7 +292,10 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
                 item.repo_root,
                 item.repo_name,
                 item.agent_command,
+                item.execution_host,
                 item.remote_launcher,
+                item.remote_agent_local_proxy,
+                item.remote_agent_remote_proxy,
                 item.agent_id,
                 item.status,
                 item.message,
@@ -318,7 +336,9 @@ pub fn update_web_queue_item_plans(run_id: &str, items: &[QueueItemRow]) -> Resu
         tx.execute(
             "update web_queue_items
              set position = ?3, depends_on_json = ?4, prompt = ?5, repo_root = ?6,
-                 repo_name = ?7, agent_command = ?8, remote_launcher = ?9, updated_at_unix = ?10
+                 repo_name = ?7, execution_host = ?8, agent_command = ?9, remote_launcher = ?10,
+                 remote_agent_local_proxy = ?11, remote_agent_remote_proxy = ?12,
+                 updated_at_unix = ?13
              where run_id = ?1 and id = ?2",
             params![
                 run_id,
@@ -328,8 +348,11 @@ pub fn update_web_queue_item_plans(run_id: &str, items: &[QueueItemRow]) -> Resu
                 item.prompt,
                 item.repo_root,
                 item.repo_name,
+                item.execution_host,
                 item.agent_command,
                 item.remote_launcher,
+                item.remote_agent_local_proxy,
+                item.remote_agent_remote_proxy,
                 now,
             ],
         )
@@ -361,10 +384,10 @@ pub fn load_web_queue_runs() -> Result<Vec<(QueueRunRow, Vec<QueueItemRow>)>> {
     ensure_default_web_queue_tab(&connection)?;
     let mut statement = connection
         .prepare(
-            "select distinct r.id, r.status, r.execution_mode, r.selected_agent_command,
-                    r.remote_launcher, r.selected_repo_root, r.selected_repo_name, r.track,
-                    r.current_index, r.stop_requested, r.message, r.created_at_unix,
-                    r.updated_at_unix
+            "select distinct r.id, r.status, r.execution_mode, r.execution_host, r.selected_agent_command,
+                    r.remote_launcher, r.remote_agent_local_proxy, r.remote_agent_remote_proxy,
+                    r.selected_repo_root, r.selected_repo_name, r.track, r.current_index, r.stop_requested,
+                    r.message, r.created_at_unix, r.updated_at_unix
              from web_queue_runs r
              join web_queue_tabs t on t.run_id = r.id
              order by r.updated_at_unix desc, r.id",
@@ -386,9 +409,10 @@ pub fn load_web_queue_items() -> Result<Vec<QueueItemRow>> {
     ensure_default_web_queue_tab(&connection)?;
     let mut statement = connection
         .prepare(
-            "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
-                    remote_launcher, agent_id, status, message, attempts, next_attempt_at_unix,
-                    started_at_unix, updated_at_unix, depends_on_json
+            "select id, run_id, position, prompt, slug, repo_root, repo_name, execution_host,
+                    agent_command, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
+                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                    updated_at_unix, depends_on_json
              from web_queue_items
              where exists (
                  select 1 from web_queue_tabs where web_queue_tabs.run_id = web_queue_items.run_id
@@ -410,7 +434,8 @@ fn load_web_queue_run_with_connection(
 ) -> Result<(Option<QueueRunRow>, Vec<QueueItemRow>)> {
     let run = connection
         .query_row(
-            "select id, status, execution_mode, selected_agent_command, remote_launcher,
+            "select id, status, execution_mode, execution_host, selected_agent_command,
+                    remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
                     selected_repo_root, selected_repo_name, track, current_index, stop_requested,
                     message, created_at_unix, updated_at_unix
              from web_queue_runs
@@ -432,9 +457,10 @@ fn load_web_queue_items_for_run(
 ) -> Result<(QueueRunRow, Vec<QueueItemRow>)> {
     let mut statement = connection
         .prepare(
-            "select id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
-                    remote_launcher, agent_id, status, message, attempts, next_attempt_at_unix,
-                    started_at_unix, updated_at_unix, depends_on_json
+            "select id, run_id, position, prompt, slug, repo_root, repo_name, execution_host,
+                    agent_command, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
+                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                    updated_at_unix, depends_on_json
              from web_queue_items
              where run_id = ?1
              order by position, id",

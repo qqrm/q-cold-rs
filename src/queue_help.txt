@@ -42,4 +42,14 @@ Directory or ZIP package convention:
 Graph execution is available with `execution_mode: "graph"` and per-item
 `depends_on` arrays in JSON. Dependencies may reference item ids or slugs and
 are stored as item ids. Queue items are still executed through managed
-`qcold task open` plus terminal closeout; the queue owns the agent lifecycle.
+task open plus terminal closeout; the queue owns the agent lifecycle.
+
+Remote-native execution is available with top-level `selected_execution_host:
+"remote-native"` or per-item `execution_host: "remote-native"`. It requires a
+`selected_remote_launcher` or per-item `remote_launcher` and currently applies
+to repositories whose adapter exposes the `cargo xtask remote-agent
+doctor/open/down` contract. Q-COLD exports the selected launcher as
+`QCOLD_REMOTE_DEV_ENV_WRAPPER`; set `QCOLD_QUEUE_REMOTE_AGENT_LAUNCHER_ENV`
+when an incubating adapter requires an additional launcher environment name.
+Proxy endpoints can be supplied through `QCOLD_QUEUE_REMOTE_AGENT_LOCAL_PROXY`,
+`QCOLD_QUEUE_REMOTE_AGENT_REMOTE_PROXY`, or matching JSON fields.

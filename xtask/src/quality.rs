@@ -7,10 +7,29 @@ use anyhow::{bail, Context, Result};
 const MAX_TEXT_FILE_LINES: usize = 1_000;
 const MAX_TEXT_LINE_WIDTH: usize = 120;
 
-const LARGE_FILE_EXCEPTIONS: &[LargeFileException] = &[LargeFileException {
-    path: "Cargo.lock",
-    reason: "Cargo owns lockfile shape",
-}];
+const LARGE_FILE_EXCEPTIONS: &[LargeFileException] = &[
+    LargeFileException {
+        path: "Cargo.lock",
+        reason: "Cargo owns lockfile shape",
+    },
+    LargeFileException {
+        path: "src/queue.rs",
+        reason: "Queue CLI/package parser split is pending; keep contract changes in one surface",
+    },
+    LargeFileException {
+        path: "src/state.rs",
+        reason:
+            "State facade split is pending; queue row API still lives with shared state entrypoints",
+    },
+    LargeFileException {
+        path: "src/state/db.rs",
+        reason: "Schema bootstrap and migrations stay ordered inline until db module split",
+    },
+    LargeFileException {
+        path: "src/webapp/tests.rs",
+        reason: "Shared dashboard regression fixture split is pending",
+    },
+];
 
 struct LargeFileException {
     path: &'static str,

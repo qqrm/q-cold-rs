@@ -3,15 +3,37 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "xtask includes this module and uses the shared test env lock"
+)]
 pub(crate) static ROLLOUT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub(crate) fn current_codex_rollout_path(codex_thread_id: Option<&str>) -> Option<PathBuf> {
-    if let Some(path) = nonempty_env("CODEX_ROLLOUT_PATH").map(PathBuf::from) {
+    current_codex_rollout_path_from_inputs(
+        nonempty_env("CODEX_ROLLOUT_PATH").map(PathBuf::from),
+        codex_thread_id,
+        codex_session_roots_from_env(),
+    )
+}
+
+fn current_codex_rollout_path_from_inputs(
+    explicit_path: Option<PathBuf>,
+    codex_thread_id: Option<&str>,
+    roots: impl IntoIterator<Item = PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(path) = explicit_path {
         return Some(path);
     }
-    let thread_id = codex_thread_id?;
+    current_codex_rollout_path_from_roots(codex_thread_id?, roots)
+}
+
+fn current_codex_rollout_path_from_roots(
+    thread_id: &str,
+    roots: impl IntoIterator<Item = PathBuf>,
+) -> Option<PathBuf> {
     let mut matches = Vec::new();
-    for root in codex_session_roots_from_env() {
+    for root in roots {
         matches.extend(find_rollout_paths_for_thread(&root, thread_id));
     }
     matches.sort();
@@ -89,22 +111,19 @@ mod tests {
 
     #[test]
     fn explicit_rollout_env_wins() {
-        let _lock = ROLLOUT_ENV_LOCK.lock().unwrap();
-        let _rollout = EnvVarGuard::capture("CODEX_ROLLOUT_PATH");
-        std::env::set_var("CODEX_ROLLOUT_PATH", " /tmp/current.jsonl ");
-
         assert_eq!(
-            current_codex_rollout_path(Some("thread")).as_deref(),
+            current_codex_rollout_path_from_inputs(
+                Some(PathBuf::from("/tmp/current.jsonl")),
+                Some("thread"),
+                [PathBuf::from("/tmp/unused")],
+            )
+            .as_deref(),
             Some(Path::new("/tmp/current.jsonl"))
         );
     }
 
     #[test]
     fn finds_latest_rollout_by_thread_id_under_codex_home() {
-        let _lock = ROLLOUT_ENV_LOCK.lock().unwrap();
-        let _rollout = EnvVarGuard::capture("CODEX_ROLLOUT_PATH");
-        let _codex_home = EnvVarGuard::capture("CODEX_HOME");
-        let _home = EnvVarGuard::capture("HOME");
         let root = unique_test_dir("qcold-shared-rollout-resolver");
         let codex_home = root.join("codex-home");
         let thread_id = "019e2a5a-96d5-72d0-9eaa-530232011047";
@@ -118,11 +137,10 @@ mod tests {
         fs::create_dir_all(newer.parent().unwrap()).unwrap();
         fs::write(&older, "{}\n").unwrap();
         fs::write(&newer, "{}\n").unwrap();
-        std::env::remove_var("CODEX_ROLLOUT_PATH");
-        std::env::set_var("CODEX_HOME", &codex_home);
 
         assert_eq!(
-            current_codex_rollout_path(Some(thread_id)).as_deref(),
+            current_codex_rollout_path_from_roots(thread_id, [codex_home.join("sessions")])
+                .as_deref(),
             Some(newer.as_path())
         );
 
@@ -140,29 +158,5 @@ mod tests {
         }
         fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    struct EnvVarGuard {
-        name: &'static str,
-        value: Option<std::ffi::OsString>,
-    }
-
-    impl EnvVarGuard {
-        fn capture(name: &'static str) -> Self {
-            Self {
-                name,
-                value: std::env::var_os(name),
-            }
-        }
-    }
-
-    impl Drop for EnvVarGuard {
-        fn drop(&mut self) {
-            if let Some(value) = &self.value {
-                std::env::set_var(self.name, value);
-            } else {
-                std::env::remove_var(self.name);
-            }
-        }
     }
 }

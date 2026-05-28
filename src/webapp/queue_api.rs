@@ -19,7 +19,17 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     if selected_agent_command.is_empty() {
         bail!("queue agent command is empty");
     }
-    if !agents::available_agent_commands()
+    let run_execution_host = resolve_queue_execution_host(payload.selected_execution_host.as_deref());
+    let has_local_item = payload.items.iter().any(|item| {
+        !item.prompt.trim().is_empty()
+            && resolve_queue_item_execution_host(
+                item.execution_host.as_deref(),
+                None,
+                run_execution_host.clone(),
+            ) == "local"
+    });
+    if has_local_item
+        && !agents::available_agent_commands()
         .iter()
         .any(|agent| agent.command == selected_agent_command)
     {
@@ -51,6 +61,7 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     }
     let mut used_slugs = HashSet::new();
     let mut items = queue_items_from_requests(&run, prompts, 0, &mut used_slugs, now);
+    validate_queue_execution_hosts(&run, &items)?;
     normalize_queue_dependencies(&run.execution_mode, &mut items)?;
     if let Some(tab_id) = tab_id.as_deref() {
         state::replace_web_queue_for_tab(tab_id, &run, &items)?;
@@ -109,6 +120,7 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
         .unwrap_or(-1)
         .saturating_add(1);
     let mut items = queue_items_from_requests(&run, prompts, start_position, &mut used_slugs, now);
+    validate_queue_execution_hosts(&run, &items)?;
     let mut all_items = existing_items;
     all_items.extend(items.clone());
     normalize_queue_dependencies(&run.execution_mode, &mut all_items)?;
@@ -194,17 +206,33 @@ fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) 
             .clone()
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| run.selected_agent_command.clone());
+        item.execution_host = resolve_queue_item_execution_host(
+            request.execution_host.as_deref(),
+            Some(item.execution_host.clone()),
+            run.execution_host.clone(),
+        );
         item.remote_launcher = update_queue_item_remote_launcher(
             request.remote_launcher.as_deref(),
             item.remote_launcher.clone(),
             run.remote_launcher.clone(),
             item.repo_root.as_deref(),
         );
+        item.remote_agent_local_proxy = resolve_queue_item_optional_setting(
+            request.remote_agent_local_proxy.as_deref(),
+            item.remote_agent_local_proxy.clone(),
+            run.remote_agent_local_proxy.clone(),
+        );
+        item.remote_agent_remote_proxy = resolve_queue_item_optional_setting(
+            request.remote_agent_remote_proxy.as_deref(),
+            item.remote_agent_remote_proxy.clone(),
+            run.remote_agent_remote_proxy.clone(),
+        );
         updated_ids.insert(item.id.clone());
     }
     if updated_ids.len() != requested.len() {
         bail!("queue update references unknown item");
     }
+    validate_queue_execution_hosts(&run, &all_items)?;
     normalize_queue_dependencies(&run.execution_mode, &mut all_items)?;
     let updates = all_items
         .into_iter()
@@ -456,12 +484,22 @@ fn queue_run_from_request(
         payload.selected_remote_launcher.as_deref(),
         selected_repo_root.as_deref(),
     );
+    let execution_host = resolve_queue_execution_host(payload.selected_execution_host.as_deref());
     state::QueueRunRow {
         id: run_id.to_string(),
         status: "running".to_string(),
         execution_mode,
+        execution_host,
         selected_agent_command: selected_agent_command.to_string(),
         remote_launcher,
+        remote_agent_local_proxy: resolve_queue_remote_agent_proxy(
+            payload.selected_remote_agent_local_proxy.as_deref(),
+            "QCOLD_QUEUE_REMOTE_AGENT_LOCAL_PROXY",
+        ),
+        remote_agent_remote_proxy: resolve_queue_remote_agent_proxy(
+            payload.selected_remote_agent_remote_proxy.as_deref(),
+            "QCOLD_QUEUE_REMOTE_AGENT_REMOTE_PROXY",
+        ),
         selected_repo_root,
         selected_repo_name,
         track: queue_track(run_id),
@@ -522,6 +560,11 @@ fn queue_item_from_request(
         run.remote_launcher.clone(),
         repo_root.as_deref(),
     );
+    let execution_host = resolve_queue_item_execution_host(
+        request.execution_host.as_deref(),
+        None,
+        run.execution_host.clone(),
+    );
     state::QueueItemRow {
         id: request
             .id
@@ -534,11 +577,22 @@ fn queue_item_from_request(
         slug,
         repo_root,
         repo_name,
+        execution_host,
         agent_command: request
             .agent_command
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| run.selected_agent_command.clone()),
         remote_launcher,
+        remote_agent_local_proxy: resolve_queue_item_optional_setting(
+            request.remote_agent_local_proxy.as_deref(),
+            None,
+            run.remote_agent_local_proxy.clone(),
+        ),
+        remote_agent_remote_proxy: resolve_queue_item_optional_setting(
+            request.remote_agent_remote_proxy.as_deref(),
+            None,
+            run.remote_agent_remote_proxy.clone(),
+        ),
         agent_id: None,
         status: "pending".to_string(),
         message: String::new(),
@@ -547,6 +601,24 @@ fn queue_item_from_request(
         started_at: now,
         updated_at: now,
     }
+}
+
+fn resolve_queue_execution_host(requested: Option<&str>) -> String {
+    if let Some(host) = queue_execution_host_setting(requested) {
+        return host;
+    }
+    let env_host = env::var("QCOLD_QUEUE_EXECUTION_HOST").ok();
+    queue_execution_host_setting(env_host.as_deref()).unwrap_or_else(|| "local".to_string())
+}
+
+fn resolve_queue_item_execution_host(
+    requested: Option<&str>,
+    current: Option<String>,
+    inherited: String,
+) -> String {
+    queue_execution_host_setting(requested)
+        .or(current)
+        .unwrap_or(inherited)
 }
 
 fn resolve_queue_remote_launcher(requested: Option<&str>, _repo_root: Option<&str>) -> Option<String> {
@@ -581,6 +653,79 @@ fn update_queue_item_remote_launcher(
         return setting.into_launcher();
     }
     current.or(inherited)
+}
+
+fn resolve_queue_remote_agent_proxy(requested: Option<&str>, env_name: &str) -> Option<String> {
+    if let Some(setting) = queue_optional_setting(requested) {
+        return setting.into_value();
+    }
+    env::var(env_name)
+        .ok()
+        .and_then(|value| queue_optional_setting(Some(&value)).and_then(QueueOptionalSetting::into_value))
+}
+
+fn resolve_queue_item_optional_setting(
+    requested: Option<&str>,
+    current: Option<String>,
+    inherited: Option<String>,
+) -> Option<String> {
+    queue_optional_setting(requested)
+        .map_or_else(|| current.or(inherited), QueueOptionalSetting::into_value)
+}
+
+fn queue_execution_host_setting(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    match value {
+        "local" => Some("local".to_string()),
+        "remote" | "remote-native" | "remote_native" => Some("remote-native".to_string()),
+        _ => Some(value.to_string()),
+    }
+}
+
+fn validate_queue_execution_hosts(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+) -> Result<()> {
+    validate_queue_execution_host_value(&run.execution_host)?;
+    for item in items {
+        validate_queue_execution_host_value(&item.execution_host)?;
+    }
+    Ok(())
+}
+
+fn validate_queue_execution_host_value(value: &str) -> Result<()> {
+    match value {
+        "local" | "remote-native" => Ok(()),
+        _ => bail!("unknown queue execution host: {value}"),
+    }
+}
+
+enum QueueOptionalSetting {
+    Clear,
+    Value(String),
+}
+
+impl QueueOptionalSetting {
+    fn into_value(self) -> Option<String> {
+        match self {
+            Self::Clear => None,
+            Self::Value(value) => Some(value),
+        }
+    }
+}
+
+fn queue_optional_setting(value: Option<&str>) -> Option<QueueOptionalSetting> {
+    let value = value?.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if matches!(value, "local" | "none" | "off" | "false" | "0") {
+        return Some(QueueOptionalSetting::Clear);
+    }
+    Some(QueueOptionalSetting::Value(value.to_string()))
 }
 
 enum QueueRemoteLauncherSetting {
@@ -807,44 +952,4 @@ fn handle_queue_clear_result(headers: &HeaderMap, payload: &QueueClearRequest) -
     }
     state::delete_empty_web_queue_run(&run.id)?;
     Ok(removed)
-}
-
-fn cleanup_queue_item_artifacts(
-    item: &state::QueueItemRow,
-    task_id: Option<&str>,
-    agent_id: Option<&str>,
-) -> Result<()> {
-    let default_task_id = format!("task/{}", item.slug);
-    let task_id = task_id
-        .filter(|id| !id.trim().is_empty())
-        .map_or(default_task_id, str::to_string);
-    let task = state::get_task_record(&task_id)?
-        .filter(|task| queue_task_record_matches_item(item, task));
-    let agent_id = agent_id
-        .filter(|id| !id.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| item.agent_id.clone())
-        .or_else(|| task.as_ref().and_then(|task| task.agent_id.clone()));
-    cleanup_existing_task_agent_artifacts(&task_id, task.as_ref(), agent_id)
-}
-
-fn cleanup_task_agent_artifacts(task_id: Option<&str>, agent_id: Option<&str>) -> Result<()> {
-    let task_id = task_id
-        .filter(|id| !id.trim().is_empty())
-        .map(str::to_string);
-    let task = task_id
-        .as_deref()
-        .map(state::get_task_record)
-        .transpose()?
-        .flatten();
-    let agent_id = agent_id
-        .filter(|id| !id.trim().is_empty())
-        .map(str::to_string)
-        .or_else(|| task.as_ref().and_then(|task| task.agent_id.clone()));
-    if let Some(task_id) = task_id {
-        cleanup_existing_task_agent_artifacts(&task_id, task.as_ref(), agent_id)?;
-    } else if let Some(agent_id) = agent_id {
-        let _ = agents::terminate_agent(&agent_id);
-    }
-    Ok(())
 }

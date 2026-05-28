@@ -7,6 +7,10 @@ struct QueueLaunchWorkspace {
     existing_task: bool,
 }
 
+fn queue_item_remote_native(item: &state::QueueItemRow) -> bool {
+    item.execution_host == "remote-native"
+}
+
 fn queue_launch_workspace(item: &state::QueueItemRow) -> Result<QueueLaunchWorkspace> {
     let repo_root = queue_item_repo_root(item)?;
     ensure_queue_item_slug_available(item)?;
@@ -31,6 +35,175 @@ fn queue_launch_workspace(item: &state::QueueItemRow) -> Result<QueueLaunchWorks
         remote_worktree: None,
         existing_task: false,
     })
+}
+
+fn start_remote_native_queue_item(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    attempts: i64,
+) -> Result<QueueItemOutcome> {
+    let repo_root = queue_item_repo_root(item)?;
+    ensure_queue_item_slug_available(item)?;
+    ensure_queue_task_record_scope_available(item)?;
+    let launcher = item
+        .remote_launcher
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .context("remote-native queue item requires remote_launcher or selected_remote_launcher")?;
+    let agent_id = queue_agent_id(item);
+    let session = remote_native_queue_session(&agent_id);
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "starting",
+        "checking remote-agent prerequisites",
+        Some(&agent_id),
+        attempts,
+        None,
+    )?;
+    if let Err(err) = run_remote_agent_contract(item, &repo_root, "doctor", &session, None) {
+        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+    }
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "starting",
+        "opening remote-native agent",
+        Some(&agent_id),
+        attempts,
+        None,
+    )?;
+    if let Err(err) = run_remote_agent_contract(item, &repo_root, "open", &session, Some(&item.slug)) {
+        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+    }
+    thread::sleep(Duration::from_secs(4));
+    let instruction = queue_remote_native_task_instruction(item);
+    if let Err(err) = send_remote_native_instruction(launcher, &repo_root, &session, &instruction) {
+        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+    }
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "running",
+        &format!("{} ({agent_id})", queue_display_label(item)),
+        Some(&agent_id),
+        attempts,
+        None,
+    )?;
+    let wait_item = remote_native_running_wait_item(item);
+    wait_for_queue_item_closeout(run_id, &wait_item, &agent_id, attempts)
+}
+
+fn remote_native_queue_session(agent_id: &str) -> String {
+    format!("qcold-{agent_id}")
+}
+
+fn remote_native_running_wait_item(item: &state::QueueItemRow) -> state::QueueItemRow {
+    let mut item = item.clone();
+    item.status = "running".to_string();
+    item
+}
+
+fn run_remote_agent_contract(
+    item: &state::QueueItemRow,
+    repo_root: &Path,
+    subcommand: &str,
+    session: &str,
+    task_slug: Option<&str>,
+) -> Result<()> {
+    let mut command = Command::new("cargo");
+    command
+        .current_dir(repo_root)
+        .arg("xtask")
+        .arg("remote-agent")
+        .arg(subcommand)
+        .arg("--session")
+        .arg(session);
+    if let Some(launcher) = item.remote_launcher.as_deref() {
+        set_remote_agent_launcher_env(&mut command, launcher);
+    }
+    if let Some(proxy) = item.remote_agent_local_proxy.as_deref() {
+        command.arg("--local-proxy").arg(proxy);
+    }
+    if let Some(proxy) = item.remote_agent_remote_proxy.as_deref() {
+        command.arg("--remote-proxy").arg(proxy);
+    }
+    if let Some(slug) = task_slug {
+        command.arg(slug);
+    }
+    let output = command
+        .output()
+        .with_context(|| format!("failed to run repository remote-agent {subcommand} contract"))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "repository remote-agent {subcommand} contract failed with {}: {}",
+            output.status,
+            compact_process_output(&stdout, &stderr)
+        );
+    }
+    Ok(())
+}
+
+fn set_remote_agent_launcher_env(command: &mut Command, launcher: &str) {
+    command.env("QCOLD_REMOTE_DEV_ENV_WRAPPER", launcher);
+    if let Some(name) = remote_agent_launcher_env_alias() {
+        command.env(name, launcher);
+    }
+}
+
+fn remote_agent_launcher_env_alias() -> Option<String> {
+    let name = env::var("QCOLD_QUEUE_REMOTE_AGENT_LAUNCHER_ENV").ok()?;
+    let name = name.trim();
+    if name.is_empty() || name.contains('=') || name.contains('\0') {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+fn send_remote_native_instruction(
+    launcher: &str,
+    repo_root: &Path,
+    session: &str,
+    instruction: &str,
+) -> Result<()> {
+    let target = format!("{session}:0.0");
+    let buffer = format!("{session}-task-packet");
+    let script = format!(
+        "tmux load-buffer -b {} -w - && tmux paste-buffer -b {} -t {} && tmux send-keys -t {} Enter",
+        queue_shell_quote(&buffer),
+        queue_shell_quote(&buffer),
+        queue_shell_quote(&target),
+        queue_shell_quote(&target),
+    );
+    let mut child = Command::new(launcher)
+        .current_dir(repo_root)
+        .args(["bash", "-lc", &script])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to send prompt through remote launcher {launcher}"))?;
+    {
+        let stdin = child.stdin.as_mut().context("remote launcher stdin was not piped")?;
+        stdin
+            .write_all(instruction.as_bytes())
+            .context("failed to write remote-native task packet")?;
+    }
+    let output = child
+        .wait_with_output()
+        .context("failed to wait for remote-native task packet send")?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "remote-native task packet send through {launcher} failed with {}: {}",
+            output.status,
+            compact_process_output(&stdout, &stderr)
+        );
+    }
+    Ok(())
 }
 
 fn queue_qcold_executable() -> Result<PathBuf> {
@@ -183,6 +356,19 @@ fn shell_env_value(raw: &str) -> String {
     raw.to_string()
 }
 
+fn queue_shell_quote(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'/' | b':' | b'='))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 fn queue_item_repo_root(item: &state::QueueItemRow) -> Result<PathBuf> {
     let repo_root = item
         .repo_root
@@ -324,11 +510,11 @@ fn same_filesystem_path(left: &str, right: &str) -> bool {
     }
 }
 
-fn sync_remote_queue_task_records(item: &state::QueueItemRow) -> Result<()> {
+fn sync_remote_queue_task_records(item: &state::QueueItemRow, force: bool) -> Result<()> {
     let Some(launcher) = item.remote_launcher.as_deref() else {
         return Ok(());
     };
-    if !remote_queue_sync_due(item, launcher) {
+    if !force && !remote_queue_sync_due(item, launcher) {
         return Ok(());
     }
     let repo_root = queue_item_repo_root(item)?;

@@ -320,10 +320,17 @@ fn render_pre_merge_review_prompt(task: &TaskEnv, target: &ReviewTargetFingerpri
          Base head: {base_head}\n\
          Task head: {task_head}\n\
          Review fingerprint: {fingerprint}\n\n\
+         Original task request:\n\
+         {task_description}\n\n\
          Scope:\n\
+         - Compare the implementation against the original task request above.\n\
+         - Block if the patch omits required behavior, implements a different \
+         behavior, or overbuilds beyond the requested scope in a risky way.\n\
+         - Check whether the implementation is complete, tested, documented \
+         where behavior or operator expectations changed, and operationally \
+         usable by the intended caller.\n\
          - Check architecture and adapter boundaries.\n\
          - Check for hacks, brittle shortcuts, and poor engineering practice.\n\
-         - Check task fit and whether the patch solves only the requested scope.\n\
          - Check minimal code growth and avoidable complexity.\n\
          - Prefer concrete file/line findings over broad commentary.\n\n\
          Current git status:\n\
@@ -348,6 +355,7 @@ fn render_pre_merge_review_prompt(task: &TaskEnv, target: &ReviewTargetFingerpri
         base_head = task.base_head,
         task_head = target.head,
         fingerprint = target.fingerprint,
+        task_description = empty_marker(&task.task_description),
         status = empty_marker(&target.status_short),
         changed_files = empty_marker(&target.changed_files),
         diff_stat = empty_marker(&target.diff_stat),

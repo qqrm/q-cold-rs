@@ -139,8 +139,11 @@ impl QueueExecutionMode {
 struct QueuePackage {
     run_id: Option<String>,
     execution_mode: Option<String>,
+    selected_execution_host: Option<String>,
     selected_agent_command: Option<String>,
     selected_remote_launcher: Option<String>,
+    selected_remote_agent_local_proxy: Option<String>,
+    selected_remote_agent_remote_proxy: Option<String>,
     selected_repo_root: Option<String>,
     selected_repo_name: Option<String>,
     items: Vec<QueuePackageItem>,
@@ -154,8 +157,11 @@ struct QueuePackageItem {
     depends_on: Vec<String>,
     repo_root: Option<String>,
     repo_name: Option<String>,
+    execution_host: Option<String>,
     agent_command: Option<String>,
     remote_launcher: Option<String>,
+    remote_agent_local_proxy: Option<String>,
+    remote_agent_remote_proxy: Option<String>,
 }
 
 #[derive(Clone)]
@@ -169,8 +175,11 @@ struct QueueRunRequest {
     run_id: Option<String>,
     tab_id: Option<String>,
     execution_mode: Option<String>,
+    selected_execution_host: Option<String>,
     selected_agent_command: String,
     selected_remote_launcher: Option<String>,
+    selected_remote_agent_local_proxy: Option<String>,
+    selected_remote_agent_remote_proxy: Option<String>,
     selected_repo_root: Option<String>,
     selected_repo_name: Option<String>,
     items: Vec<QueueRunItemRequest>,
@@ -184,8 +193,11 @@ struct QueueRunItemRequest {
     depends_on: Option<Vec<String>>,
     repo_root: Option<String>,
     repo_name: Option<String>,
+    execution_host: Option<String>,
     agent_command: Option<String>,
     remote_launcher: Option<String>,
+    remote_agent_local_proxy: Option<String>,
+    remote_agent_remote_proxy: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -252,8 +264,17 @@ fn run_queue(args: QueueRunArgs) -> Result<u8> {
                 .execution_mode
                 .unwrap_or_else(|| args.execution_mode.as_str().to_string()),
         ),
+        selected_execution_host: package
+            .selected_execution_host
+            .or_else(queue_execution_host_from_env),
         selected_agent_command,
         selected_remote_launcher: package.selected_remote_launcher.or_else(queue_remote_launcher_from_env),
+        selected_remote_agent_local_proxy: package
+            .selected_remote_agent_local_proxy
+            .or_else(queue_remote_agent_local_proxy_from_env),
+        selected_remote_agent_remote_proxy: package
+            .selected_remote_agent_remote_proxy
+            .or_else(queue_remote_agent_remote_proxy_from_env),
         selected_repo_root: Some(selected_repo_root.display().to_string()),
         selected_repo_name,
         items: package.items.into_iter().map(QueueRunItemRequest::from).collect(),
@@ -269,6 +290,18 @@ fn append_queue(args: QueueAppendArgs) -> Result<u8> {
         .selected_remote_launcher
         .clone()
         .or_else(queue_remote_launcher_from_env);
+    let package_execution_host = package
+        .selected_execution_host
+        .clone()
+        .or_else(queue_execution_host_from_env);
+    let package_remote_agent_local_proxy = package
+        .selected_remote_agent_local_proxy
+        .clone()
+        .or_else(queue_remote_agent_local_proxy_from_env);
+    let package_remote_agent_remote_proxy = package
+        .selected_remote_agent_remote_proxy
+        .clone()
+        .or_else(queue_remote_agent_remote_proxy_from_env);
     let run_id = args
         .run_id
         .or(package.run_id)
@@ -295,6 +328,17 @@ fn append_queue(args: QueueAppendArgs) -> Result<u8> {
             }
             if item.remote_launcher.is_none() {
                 item.remote_launcher.clone_from(&package_remote_launcher);
+            }
+            if item.execution_host.is_none() {
+                item.execution_host.clone_from(&package_execution_host);
+            }
+            if item.remote_agent_local_proxy.is_none() {
+                item.remote_agent_local_proxy
+                    .clone_from(&package_remote_agent_local_proxy);
+            }
+            if item.remote_agent_remote_proxy.is_none() {
+                item.remote_agent_remote_proxy
+                    .clone_from(&package_remote_agent_remote_proxy);
             }
             QueueRunItemRequest::from(item)
         })
@@ -447,6 +491,26 @@ fn queue_remote_launcher_from_env() -> Option<String> {
     (!value.is_empty()).then(|| value.to_string())
 }
 
+fn queue_execution_host_from_env() -> Option<String> {
+    let value = std::env::var("QCOLD_QUEUE_EXECUTION_HOST").ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn queue_remote_agent_local_proxy_from_env() -> Option<String> {
+    queue_non_empty_env("QCOLD_QUEUE_REMOTE_AGENT_LOCAL_PROXY")
+}
+
+fn queue_remote_agent_remote_proxy_from_env() -> Option<String> {
+    queue_non_empty_env("QCOLD_QUEUE_REMOTE_AGENT_REMOTE_PROXY")
+}
+
+fn queue_non_empty_env(name: &str) -> Option<String> {
+    let value = std::env::var(name).ok()?;
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
 fn current_queue_run_id() -> Result<String> {
     let (run, _) = state::load_web_queue()?;
     run.map(|run| run.id)
@@ -472,8 +536,11 @@ impl From<QueuePackageItem> for QueueRunItemRequest {
             depends_on: (!item.depends_on.is_empty()).then_some(item.depends_on),
             repo_root: item.repo_root,
             repo_name: item.repo_name,
+            execution_host: item.execution_host,
             agent_command: item.agent_command,
             remote_launcher: item.remote_launcher,
+            remote_agent_local_proxy: item.remote_agent_local_proxy,
+            remote_agent_remote_proxy: item.remote_agent_remote_proxy,
         }
     }
 }
@@ -764,10 +831,22 @@ fn package_from_json_value(value: Value) -> Result<QueuePackage> {
             Ok(QueuePackage {
                 run_id: json_string_field(&object, "run_id"),
                 execution_mode: json_string_field(&object, "execution_mode"),
+                selected_execution_host: json_string_field(&object, "selected_execution_host")
+                    .or_else(|| json_string_field(&object, "execution_host")),
                 selected_agent_command: json_string_field(&object, "selected_agent_command")
                     .or_else(|| json_string_field(&object, "agent_command")),
                 selected_remote_launcher: json_string_field(&object, "selected_remote_launcher")
                     .or_else(|| json_string_field(&object, "remote_launcher")),
+                selected_remote_agent_local_proxy: json_string_field(
+                    &object,
+                    "selected_remote_agent_local_proxy",
+                )
+                .or_else(|| json_string_field(&object, "remote_agent_local_proxy")),
+                selected_remote_agent_remote_proxy: json_string_field(
+                    &object,
+                    "selected_remote_agent_remote_proxy",
+                )
+                .or_else(|| json_string_field(&object, "remote_agent_remote_proxy")),
                 selected_repo_root: json_string_field(&object, "selected_repo_root")
                     .or_else(|| json_string_field(&object, "repo_root")),
                 selected_repo_name: json_string_field(&object, "selected_repo_name")
@@ -819,8 +898,11 @@ fn json_item(
                     .unwrap_or_default(),
                 repo_root: json_string_field(object, "repo_root"),
                 repo_name: json_string_field(object, "repo_name"),
+                execution_host: json_string_field(object, "execution_host"),
                 agent_command: json_string_field(object, "agent_command"),
                 remote_launcher: json_string_field(object, "remote_launcher"),
+                remote_agent_local_proxy: json_string_field(object, "remote_agent_local_proxy"),
+                remote_agent_remote_proxy: json_string_field(object, "remote_agent_remote_proxy"),
             })
         }
         _ => bail!("queue item must be a string or object"),

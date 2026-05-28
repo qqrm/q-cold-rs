@@ -399,6 +399,9 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
     }
     if matches!(item.status.as_str(), "running" | "starting") {
         if let Some(agent_id) = item.agent_id.as_deref() {
+            if queue_item_remote_native(item) {
+                return wait_for_queue_item_closeout(run_id, item, agent_id, item.attempts);
+            }
             if agent_running(agent_id) {
                 if agent_terminal_closeout_failed(agent_id) {
                     let message = "agent reached idle prompt after failed Q-COLD closeout";
@@ -430,6 +433,19 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
     }
     if matches!(item.status.as_str(), "stopped" | "paused") {
         if let Some(agent_id) = item.agent_id.as_deref() {
+            if queue_item_remote_native(item) {
+                state::update_web_queue_item(
+                    run_id,
+                    &item.id,
+                    "running",
+                    &format!("resumed remote-native agent {agent_id}"),
+                    Some(agent_id),
+                    item.attempts,
+                    None,
+                )?;
+                let resumed_item = remote_native_running_wait_item(item);
+                return wait_for_queue_item_closeout(run_id, &resumed_item, agent_id, item.attempts);
+            }
             if agent_running(agent_id) {
                 state::update_web_queue_item(
                     run_id,
@@ -450,6 +466,25 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
         if state::web_queue_stop_requested(run_id)? {
             pause_web_queue_item(run_id, item, None, retries)?;
             return Ok(QueueItemOutcome::Stopped);
+        }
+
+        if queue_item_remote_native(item) {
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "starting",
+                "starting remote-native agent context",
+                None,
+                retries,
+                None,
+            )?;
+            let outcome = start_remote_native_queue_item(run_id, item, retries)?;
+            if let Some(outcome) =
+                handle_queue_launch_outcome(run_id, item, &mut retries, outcome)?
+            {
+                return Ok(outcome);
+            }
+            continue;
         }
 
         if let Some(limit) = queue_agent_limit_for_command(&item.agent_command) {
@@ -522,72 +557,9 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             retries,
             None,
         )?;
-        match start_web_queue_item(run_id, item, retries)? {
-            QueueItemOutcome::Failed {
-                message,
-                retryable: true,
-            } if queue_failure_retries_immediately(&message)
-                && retry_index(retries) < WEB_QUEUE_RETRY_DELAYS.len() =>
-            {
-                retries += 1;
-                let retry_message = format!(
-                    "{message}; retry {}/{} now",
-                    retries,
-                    WEB_QUEUE_RETRY_DELAYS.len()
-                );
-                state::update_web_queue_item(
-                    run_id,
-                    &item.id,
-                    "waiting",
-                    &retry_message,
-                    None,
-                    retries,
-                    None,
-                )?;
-            }
-            QueueItemOutcome::Failed {
-                message,
-                retryable: true,
-            } if retry_index(retries) < WEB_QUEUE_RETRY_DELAYS.len() =>
-            {
-                let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(retries)];
-                retries += 1;
-                let next_attempt_at = unix_now().saturating_add(delay);
-                let retry_message = format!(
-                    "{message}; retry {}/{} in {}s",
-                    retries,
-                    WEB_QUEUE_RETRY_DELAYS.len(),
-                    delay
-                );
-                state::update_web_queue_item(
-                    run_id,
-                    &item.id,
-                    "waiting",
-                    &retry_message,
-                    None,
-                    retries,
-                    Some(next_attempt_at),
-                )?;
-                if !sleep_queue_retry(run_id, delay)? {
-                    return Ok(QueueItemOutcome::Stopped);
-                }
-            }
-            QueueItemOutcome::Failed {
-                message,
-                retryable: true,
-            } => {
-                state::update_web_queue_item(
-                    run_id,
-                    &item.id,
-                    "failed",
-                    &message,
-                    item.agent_id.as_deref(),
-                    retries,
-                    None,
-                )?;
-                return Ok(QueueItemOutcome::failed(message));
-            }
-            outcome => return Ok(outcome),
+        let outcome = start_web_queue_item(run_id, item, retries)?;
+        if let Some(outcome) = handle_queue_launch_outcome(run_id, item, &mut retries, outcome)? {
+            return Ok(outcome);
         }
     }
 }
@@ -744,7 +716,7 @@ fn wait_for_queue_item_closeout(
                 )?;
                 return Ok(QueueItemOutcome::failed(status));
             }
-            if status == "open" && !agent_running(agent_id) {
+            if status == "open" && !queue_item_remote_native(item) && !agent_running(agent_id) {
                 let message = "agent exited before task closeout".to_string();
                 state::update_web_queue_item(
                     run_id,
@@ -758,13 +730,17 @@ fn wait_for_queue_item_closeout(
                 return Ok(QueueItemOutcome::failed(message));
             }
             if status == "open"
+                && !queue_item_remote_native(item)
                 && !submitted_pending_paste
                 && submit_agent_terminal_pending_paste(agent_id).unwrap_or(false)
             {
                 submitted_pending_paste = true;
                 continue;
             }
-            if status == "open" && agent_terminal_closeout_failed(agent_id) {
+            if status == "open"
+                && !queue_item_remote_native(item)
+                && agent_terminal_closeout_failed(agent_id)
+            {
                 let message = "agent reached idle prompt after failed Q-COLD closeout".to_string();
                 state::update_web_queue_item(
                     run_id,
@@ -777,6 +753,8 @@ fn wait_for_queue_item_closeout(
                 )?;
                 return Ok(QueueItemOutcome::failed(message));
             }
+        } else if queue_item_remote_native(item) {
+            return fail_remote_native_missing_task_record(run_id, item, agent_id, attempts);
         } else if !agent_running(agent_id) {
             let message = "agent exited before opening task record".to_string();
             state::update_web_queue_item(
@@ -818,7 +796,7 @@ fn update_successful_queue_item(
 ) -> Result<()> {
     let message = agent_id.map_or_else(
         || "closed successfully".to_string(),
-        |agent_id| format!("closed successfully; {}", cleanup_queue_agent(agent_id)),
+        |agent_id| format!("closed successfully; {}", cleanup_queue_executor(item, agent_id)),
     );
     state::update_web_queue_item(
         run_id,
@@ -829,6 +807,21 @@ fn update_successful_queue_item(
         attempts,
         None,
     )
+}
+
+fn cleanup_queue_executor(item: &state::QueueItemRow, agent_id: &str) -> String {
+    if !queue_item_remote_native(item) {
+        return cleanup_queue_agent(agent_id);
+    }
+    let repo_root = match queue_item_repo_root(item) {
+        Ok(repo_root) => repo_root,
+        Err(err) => return format!("remote-agent cleanup skipped: {err:#}"),
+    };
+    let session = remote_native_queue_session(agent_id);
+    match run_remote_agent_contract(item, &repo_root, "down", &session, None) {
+        Ok(()) => "remote-agent session stopped".to_string(),
+        Err(err) => format!("remote-agent cleanup failed: {err:#}"),
+    }
 }
 
 fn reconcile_stale_web_queue_run() -> Result<()> {
@@ -902,7 +895,11 @@ fn retry_index(retries: i64) -> usize {
 
 fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
     if item.remote_launcher.is_some() {
-        let _ = sync_remote_queue_task_records(item);
+        let required_remote_native_sync = remote_native_requires_task_record_sync(item);
+        let sync_result = sync_remote_queue_task_records(item, required_remote_native_sync);
+        if required_remote_native_sync {
+            sync_result.context("remote-native task-record sync failed")?;
+        }
     }
     let task_id = format!("task/{}", item.slug);
     let Some(record) = state::get_task_record(&task_id)? else {
@@ -912,6 +909,10 @@ fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
         return Ok(None);
     }
     Ok(Some(record.status))
+}
+
+fn remote_native_requires_task_record_sync(item: &state::QueueItemRow) -> bool {
+    queue_item_remote_native(item) && matches!(item.status.as_str(), "starting" | "running")
 }
 
 fn agent_running(agent_id: &str) -> bool {

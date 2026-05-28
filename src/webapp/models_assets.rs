@@ -712,8 +712,11 @@ pub(crate) struct QueueRunRequest {
     pub(crate) run_id: Option<String>,
     pub(crate) tab_id: Option<String>,
     pub(crate) execution_mode: Option<String>,
+    pub(crate) selected_execution_host: Option<String>,
     pub(crate) selected_agent_command: String,
     pub(crate) selected_remote_launcher: Option<String>,
+    pub(crate) selected_remote_agent_local_proxy: Option<String>,
+    pub(crate) selected_remote_agent_remote_proxy: Option<String>,
     pub(crate) selected_repo_root: Option<String>,
     pub(crate) selected_repo_name: Option<String>,
     pub(crate) items: Vec<QueueRunItemRequest>,
@@ -727,8 +730,11 @@ pub(crate) struct QueueRunItemRequest {
     pub(crate) depends_on: Option<Vec<String>>,
     pub(crate) repo_root: Option<String>,
     pub(crate) repo_name: Option<String>,
+    pub(crate) execution_host: Option<String>,
     pub(crate) agent_command: Option<String>,
     pub(crate) remote_launcher: Option<String>,
+    pub(crate) remote_agent_local_proxy: Option<String>,
+    pub(crate) remote_agent_remote_proxy: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -751,8 +757,11 @@ struct QueueUpdateItemRequest {
     depends_on: Option<Vec<String>>,
     repo_root: Option<String>,
     repo_name: Option<String>,
+    execution_host: Option<String>,
     agent_command: Option<String>,
     remote_launcher: Option<String>,
+    remote_agent_local_proxy: Option<String>,
+    remote_agent_remote_proxy: Option<String>,
 }
 
 #[derive(Deserialize)]

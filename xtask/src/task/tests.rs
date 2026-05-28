@@ -318,6 +318,10 @@ mod tests {
         let metadata =
             fs::read_to_string(task.task_worktree.join(PRE_MERGE_REVIEW_ENV_PATH)).unwrap();
         assert!(report.contains("REVIEW_STATUS=pass"));
+        assert!(prompt.contains("Original task request:"));
+        assert!(prompt.contains(&task.task_description));
+        assert!(prompt.contains("Compare the implementation against the original task request"));
+        assert!(prompt.contains("complete, tested, documented"));
         assert!(prompt.contains("Check architecture and adapter boundaries."));
         assert!(metadata.contains("PRE_MERGE_REVIEW_STATUS=pass"));
         assert!(metadata.contains("PRE_MERGE_REVIEW_SUMMARY='No blocking findings.'"));

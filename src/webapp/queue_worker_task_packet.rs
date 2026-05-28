@@ -15,6 +15,10 @@ fn queue_task_instruction_with_task(
     )
 }
 
+fn queue_remote_native_task_instruction(item: &state::QueueItemRow) -> String {
+    queue_task_instruction_inner(item, item.remote_launcher.as_deref(), None, true)
+}
+
 fn queue_task_instruction_inner(
     item: &state::QueueItemRow,
     remote_launcher: Option<&str>,
@@ -27,14 +31,18 @@ fn queue_task_instruction_inner(
     let _ = writeln!(packet, "Q-COLD_TASK_PACKET");
     let _ = writeln!(packet, "repo_root: {root}");
     let _ = writeln!(packet, "task_slug: {}", item.slug);
+    let _ = writeln!(packet, "execution_host: {}", item.execution_host);
     let _ = writeln!(packet, "selected_command: {}", item.agent_command);
     write_queue_launch_context(&mut packet, remote_launcher, remote_worktree, existing_task);
     let _ = writeln!(packet, "required_flow:");
     write_queue_required_flow(
         &mut packet,
-        remote_launcher.is_some(),
-        remote_worktree.is_some(),
-        existing_task,
+        QueueRequiredFlowContext {
+            has_remote_launcher: remote_launcher.is_some(),
+            has_remote_worktree: remote_worktree.is_some(),
+            existing_task,
+            remote_native: item.execution_host == "remote-native",
+        },
     );
     let _ = writeln!(packet, "state_pointers:");
     write_queue_state_pointers(&mut packet, remote_worktree.is_some(), existing_task);
@@ -76,13 +84,29 @@ fn write_queue_launch_context(
     }
 }
 
-fn write_queue_required_flow(
-    packet: &mut String,
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "packet rendering combines independent launch facts without storing long-lived state"
+)]
+#[derive(Clone, Copy)]
+struct QueueRequiredFlowContext {
     has_remote_launcher: bool,
     has_remote_worktree: bool,
     existing_task: bool,
-) {
-    if has_remote_worktree {
+    remote_native: bool,
+}
+
+fn write_queue_required_flow(packet: &mut String, context: QueueRequiredFlowContext) {
+    if context.remote_native {
+        let _ = writeln!(
+            packet,
+            "  - Q-COLD launched this executor through the repository remote-agent contract"
+        );
+        let _ = writeln!(
+            packet,
+            "  - continue in the current remote managed task worktree and do not reopen task_slug"
+        );
+    } else if context.has_remote_worktree {
         let _ = writeln!(
             packet,
             "  - an existing remote task record was found; re-enter it if it still matches the goal"
@@ -96,7 +120,7 @@ fn write_queue_required_flow(
             packet,
             "  - if a different repo-approved environment is required, make that choice inside the task"
         );
-    } else if existing_task {
+    } else if context.existing_task {
         let _ = writeln!(
             packet,
             "  - an existing managed task worktree was found; continue it if it still matches the goal"
@@ -119,16 +143,25 @@ fn write_queue_required_flow(
         packet,
         "  - choose the required repo-approved environment from AGENTS.md and the operator request"
     );
-    if has_remote_launcher {
+    if context.has_remote_launcher && context.remote_native {
+        let _ = writeln!(
+            packet,
+            "  - available_remote_launcher records the local launcher Q-COLD used to reach this remote session"
+        );
+    } else if context.has_remote_launcher {
         let _ = writeln!(
             packet,
             "  - available_remote_launcher is a convenience launcher, not a selected profile"
         );
     }
-    let _ = writeln!(
-        packet,
-        "  - keep this Codex executor chat local; run substantive work where the repo flow requires"
-    );
+    if context.remote_native {
+        let _ = writeln!(packet, "  - this Codex executor chat is running on the remote host");
+    } else {
+        let _ = writeln!(
+            packet,
+            "  - keep this Codex executor chat local; run substantive work where the repo flow requires"
+        );
+    }
     let _ = writeln!(
         packet,
         "  - reread root AGENTS.md, nearest AGENTS.md, and task logs after entering the actual task worktree"

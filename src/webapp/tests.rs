@@ -141,8 +141,11 @@ mod tests {
             slug: "task-mozgpaqk-03".to_string(),
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
+            execution_host: "local".to_string(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             agent_id: None,
             status: "pending".to_string(),
             message: String::new(),
@@ -166,8 +169,11 @@ mod tests {
             slug: "task-run-01".to_string(),
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
+            execution_host: "local".to_string(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             agent_id: None,
             status: "pending".to_string(),
             message: String::new(),
@@ -350,6 +356,86 @@ mod tests {
         let (empty_run, empty_items) = state::load_web_queue_run("run-contract").unwrap();
         assert!(empty_run.is_none());
         assert!(empty_items.is_empty());
+    }
+
+    #[test]
+    fn remote_native_queue_item_does_not_require_local_agent_command() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+
+        let response = handle_queue_run(
+            &HeaderMap::new(),
+            QueueRunRequest {
+                run_id: Some("remote-native-run".to_string()),
+                tab_id: None,
+                execution_mode: None,
+                selected_execution_host: None,
+                selected_agent_command: "remote-only-agent".to_string(),
+                selected_remote_launcher: Some("remote-dev-env".to_string()),
+                selected_remote_agent_local_proxy: None,
+                selected_remote_agent_remote_proxy: None,
+                selected_repo_root: Some("/workspace/repo".to_string()),
+                selected_repo_name: Some("repo".to_string()),
+                items: vec![QueueRunItemRequest {
+                    id: Some("remote-item".to_string()),
+                    prompt: "run remotely".to_string(),
+                    slug: None,
+                    depends_on: None,
+                    repo_root: None,
+                    repo_name: None,
+                    execution_host: Some("remote-native".to_string()),
+                    agent_command: None,
+                    remote_launcher: None,
+                    remote_agent_local_proxy: None,
+                    remote_agent_remote_proxy: None,
+                }],
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        let (_, items) = state::load_web_queue_run("remote-native-run").unwrap();
+        assert_eq!(items[0].execution_host, "remote-native");
+        assert_eq!(items[0].agent_command, "remote-only-agent");
+    }
+
+    #[test]
+    fn queue_rejects_unknown_execution_host() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+
+        let response = handle_queue_run(
+            &HeaderMap::new(),
+            QueueRunRequest {
+                run_id: Some("bad-host-run".to_string()),
+                tab_id: None,
+                execution_mode: None,
+                selected_execution_host: Some("remote-ish".to_string()),
+                selected_agent_command: "remote-only-agent".to_string(),
+                selected_remote_launcher: Some("remote-dev-env".to_string()),
+                selected_remote_agent_local_proxy: None,
+                selected_remote_agent_remote_proxy: None,
+                selected_repo_root: Some("/workspace/repo".to_string()),
+                selected_repo_name: Some("repo".to_string()),
+                items: vec![QueueRunItemRequest {
+                    id: Some("bad-host-item".to_string()),
+                    prompt: "run somewhere".to_string(),
+                    slug: None,
+                    depends_on: None,
+                    repo_root: None,
+                    repo_name: None,
+                    execution_host: None,
+                    agent_command: None,
+                    remote_launcher: None,
+                    remote_agent_local_proxy: None,
+                    remote_agent_remote_proxy: None,
+                }],
+            },
+        );
+
+        assert!(!response.ok);
+        assert!(response.output.contains("unknown queue execution host"));
     }
 
     #[test]
@@ -757,8 +843,11 @@ mod tests {
             id: id.to_string(),
             status: status.to_string(),
             execution_mode: "sequence".to_string(),
+            execution_host: "local".to_string(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             selected_repo_root: None,
             selected_repo_name: None,
             track: "queue-run".to_string(),
@@ -786,8 +875,11 @@ mod tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
+            execution_host: "local".to_string(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
             status: status.to_string(),
             message: String::new(),

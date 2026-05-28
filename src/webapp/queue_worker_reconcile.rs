@@ -46,6 +46,9 @@ fn queue_agent_failure_message(item: &state::QueueItemRow, agent_id: &str) -> Op
     if !matches!(item.status.as_str(), "running" | "starting") {
         return None;
     }
+    if queue_item_remote_native(item) {
+        return None;
+    }
     if !agent_running(agent_id) {
         return Some("agent exited before task closeout");
     }

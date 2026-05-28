@@ -91,6 +91,23 @@ mod queue_reconcile_tests {
         assert_eq!(queue_ready_item_ids(&restarted_run, &restarted_items), ids(&["third"]));
     }
 
+    #[test]
+    fn remote_native_running_item_skips_local_agent_failure_message() {
+        let mut item = queue_item_fixture(
+            "remote-native-run",
+            "remote-item",
+            0,
+            "running",
+            Some("qa-remote-item"),
+        );
+        item.execution_host = "remote-native".to_string();
+
+        assert_eq!(
+            queue_agent_failure_message(&item, "qa-remote-item"),
+            None
+        );
+    }
+
     fn queue_ready_item_ids(
         run: &state::QueueRunRow,
         items: &[state::QueueItemRow],
@@ -110,8 +127,11 @@ mod queue_reconcile_tests {
             id: id.to_string(),
             status: status.to_string(),
             execution_mode: "sequence".to_string(),
+            execution_host: "local".to_string(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             selected_repo_root: None,
             selected_repo_name: None,
             track: "queue-run".to_string(),
@@ -139,8 +159,11 @@ mod queue_reconcile_tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
+            execution_host: "local".to_string(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
             status: status.to_string(),
             message: String::new(),
