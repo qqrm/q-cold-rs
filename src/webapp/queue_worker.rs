@@ -585,6 +585,19 @@ fn start_web_queue_item(
             return Ok(QueueItemOutcome::failed(message));
         }
     };
+    if let Err(err) = cleanup_stale_queue_agent_launch_artifacts(item, &task.worktree) {
+        let message = format!("{err:#}");
+        state::update_web_queue_item(
+            run_id,
+            &item.id,
+            "failed",
+            &message,
+            Some(&queue_agent_id(item)),
+            attempts,
+            None,
+        )?;
+        return Ok(QueueItemOutcome::failed(message));
+    }
     let prompt_file = match write_queue_task_packet_file(item, &task) {
         Ok(path) => path,
         Err(err) => {

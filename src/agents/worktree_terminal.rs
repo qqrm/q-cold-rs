@@ -39,6 +39,17 @@ fn open_agent_worktree(
     })
 }
 
+pub(crate) fn agent_worktree_path_for_launch_id(
+    id: &str,
+    track: &str,
+    started_at: u64,
+    requested_cwd: &Path,
+) -> Result<PathBuf> {
+    let primary_root = git_root_for(requested_cwd)?;
+    let agent_slug = agent_worktree_slug(id, track, started_at);
+    agent_worktree_path(&primary_root, &agent_slug)
+}
+
 fn ensure_worktree_submodules(worktree: &Path, primary_root: &Path) -> Result<()> {
     if !worktree.join(".gitmodules").is_file() {
         return Ok(());

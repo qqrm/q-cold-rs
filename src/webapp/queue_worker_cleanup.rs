@@ -5,6 +5,107 @@ fn retry_after_queue_agent_launch_failure(agent_id: &str, message: &str) -> Queu
     QueueItemOutcome::retryable_failure(format!("{message}; {cleanup}"))
 }
 
+fn cleanup_stale_queue_agent_launch_artifacts(
+    item: &state::QueueItemRow,
+    launch_cwd: &Path,
+) -> Result<()> {
+    if queue_item_remote_native(item) {
+        return Ok(());
+    }
+    let agent_id = queue_agent_id(item);
+    if agent_running(&agent_id) {
+        return Ok(());
+    }
+    if queue_agent_tmux_session_exists(&agent_id)? {
+        bail!("queue agent terminal session qcold-{agent_id} still exists; refusing stale cleanup");
+    }
+    if !queue_launch_cwd_is_managed_task(launch_cwd)? {
+        let worktree = agents::agent_worktree_path_for_launch_id(
+            &agent_id,
+            &queue_track(&item.run_id),
+            0,
+            launch_cwd,
+        )
+        .with_context(|| format!("failed to resolve queue agent worktree for {agent_id}"))?;
+        if worktree.exists() {
+            remove_clean_queue_agent_worktree(&worktree, launch_cwd)?;
+        }
+    }
+    state::delete_agent_record(&agent_id)?;
+    Ok(())
+}
+
+fn queue_launch_cwd_is_managed_task(launch_cwd: &Path) -> Result<bool> {
+    let output = Command::new("git")
+        .current_dir(launch_cwd)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .with_context(|| format!("failed to inspect git root for {}", launch_cwd.display()))?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    let root = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    Ok(root.join(".task/task.env").is_file())
+}
+
+fn queue_agent_tmux_session_exists(agent_id: &str) -> Result<bool> {
+    let session = format!("qcold-{agent_id}");
+    match Command::new("tmux")
+        .args(["has-session", "-t", &session])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+    {
+        Ok(status) => Ok(status.success()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).with_context(|| format!("failed to inspect tmux session {session}")),
+    }
+}
+
+fn remove_clean_queue_agent_worktree(worktree: &Path, launch_cwd: &Path) -> Result<()> {
+    let output = Command::new("git")
+        .current_dir(worktree)
+        .args([
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ])
+        .output()
+        .with_context(|| format!("failed to inspect queue agent worktree {}", worktree.display()))?;
+    if !output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "failed to inspect queue agent worktree {}: {}",
+            worktree.display(),
+            compact_process_output(&stdout, &stderr)
+        );
+    }
+    if !output.stdout.is_empty() {
+        bail!(
+            "queue agent worktree {} has local changes; refusing stale cleanup",
+            worktree.display()
+        );
+    }
+    let worktree_arg = worktree.display().to_string();
+    let output = Command::new("git")
+        .current_dir(launch_cwd)
+        .args(["worktree", "remove", "--force", &worktree_arg])
+        .output()
+        .with_context(|| format!("failed to remove queue agent worktree {}", worktree.display()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    bail!(
+        "failed to remove queue agent worktree {}: {}",
+        worktree.display(),
+        compact_process_output(&stdout, &stderr)
+    );
+}
+
 fn queue_failure_retries_immediately(message: &str) -> bool {
     message.contains(CODEX_UPDATE_RESTART_RETRY)
 }
