@@ -31,7 +31,7 @@ fn submit_agent_terminal_pending_paste(agent_id: &str) -> Result<bool> {
         return Ok(false);
     };
     let mut submitted = false;
-    for _ in 0..2 {
+    for _ in 0..6 {
         let output = capture_agent_terminal_output(&target)?;
         if !terminal_output_has_pending_paste(&output) {
             return Ok(submitted);
@@ -159,7 +159,7 @@ fn terminal_output_has_unsubmitted_task_packet(output: &str) -> bool {
         .any(|line| line.trim_start().starts_with('•'));
     let has_idle_prompt = recent
         .iter()
-        .any(|line| line.trim_start().starts_with("gpt-"));
+        .any(|line| terminal_line_has_idle_prompt(line.trim()));
     has_idle_prompt && !has_activity
 }
 

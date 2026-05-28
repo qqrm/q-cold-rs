@@ -24,6 +24,9 @@ mod terminal_send_tests {
         assert!(terminal_output_has_pending_paste(output));
         let expanded = "\nEND_Q-COLD_TASK_PACKET\n\n  gpt-5.5 xhigh · ~/repo\n";
         assert!(terminal_output_has_pending_paste(expanded));
+        let expanded_status = "\nEND_Q-COLD_TASK_PACKET\n\n\
+                               019e6e89 · Context 100% left · gpt-5.5 xhigh · Re…\n";
+        assert!(terminal_output_has_pending_paste(expanded_status));
         let accepted = "\nEND_Q-COLD_TASK_PACKET\n\n• Working (3s • esc to interrupt)\n";
         assert!(!terminal_output_has_pending_paste(accepted));
         assert!(!terminal_output_has_pending_paste("* Ran cargo test\n"));

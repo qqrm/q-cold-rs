@@ -678,7 +678,6 @@ fn wait_for_queue_item_closeout(
     agent_id: &str,
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
-    let mut submitted_pending_paste = false;
     loop {
         if state::web_queue_stop_requested(run_id)? {
             pause_web_queue_item(run_id, item, Some(agent_id), attempts)?;
@@ -731,10 +730,8 @@ fn wait_for_queue_item_closeout(
             }
             if status == "open"
                 && !queue_item_remote_native(item)
-                && !submitted_pending_paste
                 && submit_agent_terminal_pending_paste(agent_id).unwrap_or(false)
             {
-                submitted_pending_paste = true;
                 continue;
             }
             if status == "open"
@@ -767,6 +764,8 @@ fn wait_for_queue_item_closeout(
                 None,
             )?;
             return Ok(QueueItemOutcome::retryable_failure(message));
+        } else {
+            let _ = submit_agent_terminal_pending_paste(agent_id);
         }
     }
 }
