@@ -325,12 +325,19 @@ mod queue_taskflow_tests {
         let ready_probe = script
             .find("for ready_attempt in 1 2 3")
             .expect("script should wait for Codex readiness");
+        let update_skip = script
+            .find("Update available!")
+            .expect("script should handle the Codex update prompt");
         let paste = script
             .find("tmux paste-buffer -b session-task-packet")
             .expect("script should paste the prompt");
 
         assert!(ready_probe < paste);
+        assert!(update_skip < paste);
+        assert!(script.contains("grep -q 'Update now.*@openai/codex'"));
+        assert!(script.contains("tmux send-keys -t qcold-qa-task-remote-native:0.0 Down Down C-m"));
         assert!(script.contains("grep -Eq 'OpenAI Codex|^[[:space:]]*"));
+        assert!(script.contains("›[^0-9.]"));
         assert!(script.contains("remote-native target did not become ready for Codex input"));
         assert!(script.contains("exit 70"));
         assert!(script.contains("sleep 2"));
