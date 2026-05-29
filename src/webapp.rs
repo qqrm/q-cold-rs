@@ -627,6 +627,7 @@ where
 include!("webapp/queue_api.rs");
 include!("webapp/queue_api_cleanup.rs");
 include!("webapp/queue_worker.rs");
+include!("webapp/queue_worker_recovery.rs");
 include!("webapp/queue_worker_task_packet.rs");
 include!("webapp/queue_worker_reconcile.rs");
 include!("webapp/queue_worker_taskflow.rs");

@@ -65,6 +65,7 @@ mod task_flow_sync_tests {
             status: "failed".to_string(),
             message: "task open interrupted".to_string(),
             attempts: 1,
+            recovery_attempts: 0,
             next_attempt_at: None,
             started_at: 1,
             updated_at: 1,

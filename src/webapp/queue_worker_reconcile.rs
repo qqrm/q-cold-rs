@@ -35,8 +35,13 @@ fn failed_queue_run_may_be_resolved(
         if !matches!(item.status.as_str(), "failed" | "blocked") {
             continue;
         }
-        if queue_task_status(item)?.as_deref() == Some("closed:success") {
-            return Ok(true);
+        if let Some(status) = queue_task_status(item)? {
+            if status == "closed:success"
+                || (queue_status_auto_recoverable(&status)
+                    && item.recovery_attempts < WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS)
+            {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
@@ -88,6 +93,10 @@ fn resume_stale_active_queue_run(
         if item.status == "success" {
             close_running_success_agent(run, &item)?;
             continue;
+        }
+        if matches!(item.status.as_str(), "failed" | "blocked") {
+            state::update_web_queue_run(&run.id, "failed", item.position, &item.message)?;
+            return Ok(());
         }
         if let Some(agent_id) = item.agent_id.as_deref() {
             if let Some(message) = queue_agent_failure_message(&item, agent_id) {
@@ -150,6 +159,16 @@ fn stale_queue_task_record_handled(
         if item.status != "success" || item.agent_id.as_deref().is_some_and(agent_running) {
             update_successful_queue_item(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
         }
+        return Ok(true);
+    }
+    if queue_status_auto_recoverable(&status)
+        && queue_item_recovery_waiting_on_current_attempt(item)
+    {
+        return Ok(false);
+    }
+    if queue_status_auto_recoverable(&status)
+        && schedule_queue_item_auto_recovery(&run.id, item, &status)?
+    {
         return Ok(true);
     }
     if status == "paused" {

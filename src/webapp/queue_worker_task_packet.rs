@@ -44,6 +44,7 @@ fn queue_task_instruction_inner(
             remote_native: item.execution_host == "remote-native",
         },
     );
+    write_queue_auto_recovery(&mut packet, item);
     let _ = writeln!(packet, "state_pointers:");
     write_queue_state_pointers(&mut packet, remote_worktree.is_some(), existing_task);
     let _ = writeln!(packet, "validation_closeout:");
@@ -170,6 +171,40 @@ fn write_queue_required_flow(packet: &mut String, context: QueueRequiredFlowCont
         packet,
         "  - make task/<task_slug> visible to local Q-COLD; sync remote task records if remote closeout is used"
     );
+}
+
+fn write_queue_auto_recovery(packet: &mut String, item: &state::QueueItemRow) {
+    if item.recovery_attempts == 0 {
+        return;
+    }
+    let _ = writeln!(packet, "auto_recovery:");
+    let _ = writeln!(
+        packet,
+        "  attempt: {}/{}",
+        item.recovery_attempts, WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS
+    );
+    let _ = writeln!(
+        packet,
+        "  - inspect the failed task record, .task logs, and flow problems before changing code"
+    );
+    let _ = writeln!(
+        packet,
+        "  - make one repair attempt; do not start an unbounded retry loop"
+    );
+    let _ = writeln!(
+        packet,
+        "  - if the repair works, close task_slug successfully so the queue can continue"
+    );
+    let _ = writeln!(
+        packet,
+        "  - if it still fails, stop after the terminal non-success closeout"
+    );
+    if !item.message.trim().is_empty() {
+        let _ = writeln!(packet, "  previous_failure: |");
+        for line in item.message.trim().lines() {
+            let _ = writeln!(packet, "    {line}");
+        }
+    }
 }
 
 fn write_queue_validation_closeout(packet: &mut String, remote_worktree: bool) {

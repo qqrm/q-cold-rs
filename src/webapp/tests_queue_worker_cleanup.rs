@@ -100,6 +100,7 @@ mod queue_worker_cleanup_tests {
             status: "pending".to_string(),
             message: String::new(),
             attempts: 0,
+            recovery_attempts: 0,
             next_attempt_at: None,
             started_at: 0,
             updated_at: 0,

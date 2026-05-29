@@ -439,12 +439,16 @@ Executor launcher setup failures before a managed task record exists are
 retryable on the same schedule. Repository task-open, remote transport, and
 environment-bootstrap failures happen inside the executor-owned task flow and
 must be surfaced through the matching `task/<slug>` record.
-Once the matching `task/<slug>` record exists,
-Q-COLD will not start a second executor for that row; non-success closeout or a
-prematurely exited executor stops the row for operator diagnostics. If the
-operator later resumes a blocked task chat and that managed task reaches
-`closed:success`, stale queue reconciliation promotes the stopped row to
-success and resumes any now-unblocked later graph waves.
+Once the matching `task/<slug>` record exists, Q-COLD gives `closed:failed`
+rows and failed executor closeouts one automatic recovery pass. The recovery
+pass starts a separate executor agent with a packet that points at the failed
+task record, task logs, and original prompt; if that agent repairs the task and
+closes `task/<slug>` as `closed:success`, the queue marks the row successful and
+resumes any unblocked graph waves. If the recovery pass also fails, or if the
+task closes as blocked, Q-COLD stops the row for operator diagnostics. If the
+operator later resumes a blocked or failed task chat and that managed task
+reaches `closed:success`, stale queue reconciliation promotes the stopped row
+to success and resumes any now-unblocked later graph waves.
 The Queue Stop action stops the backend worker immediately and marks the
 current row as stopped without deleting it or treating it as complete. The same
 control becomes Continue for a stopped run; continuing clears the stop flag and

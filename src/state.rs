@@ -109,6 +109,7 @@ pub struct QueueItemRow {
     pub status: String,
     pub message: String,
     pub attempts: i64,
+    pub recovery_attempts: i64,
     pub next_attempt_at: Option<u64>,
     pub started_at: u64,
     pub updated_at: u64,
@@ -216,8 +217,9 @@ fn replace_web_queue_with_assignment(
             "insert into web_queue_items
                  (id, run_id, position, depends_on_json, prompt, slug, repo_root, repo_name, agent_command,
                   execution_host, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
-                  agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix, updated_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                  agent_id, status, message, attempts, recovery_attempts, next_attempt_at_unix,
+                  started_at_unix, updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 item.id,
                 item.run_id,
@@ -236,6 +238,7 @@ fn replace_web_queue_with_assignment(
                 item.status,
                 item.message,
                 item.attempts,
+                item.recovery_attempts,
                 item.next_attempt_at,
                 item.started_at,
                 item.updated_at,
@@ -280,8 +283,9 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
             "insert into web_queue_items
                  (id, run_id, position, depends_on_json, prompt, slug, repo_root, repo_name, agent_command,
                   execution_host, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
-                  agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix, updated_at_unix)
-             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+                  agent_id, status, message, attempts, recovery_attempts, next_attempt_at_unix,
+                  started_at_unix, updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 item.id,
                 item.run_id,
@@ -300,6 +304,7 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
                 item.status,
                 item.message,
                 item.attempts,
+                item.recovery_attempts,
                 item.next_attempt_at,
                 item.started_at,
                 item.updated_at,
@@ -411,8 +416,8 @@ pub fn load_web_queue_items() -> Result<Vec<QueueItemRow>> {
         .prepare(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, execution_host,
                     agent_command, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
-                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                    updated_at_unix, depends_on_json
+                    agent_id, status, message, attempts, recovery_attempts, next_attempt_at_unix,
+                    started_at_unix, updated_at_unix, depends_on_json
              from web_queue_items
              where exists (
                  select 1 from web_queue_tabs where web_queue_tabs.run_id = web_queue_items.run_id
@@ -459,8 +464,8 @@ fn load_web_queue_items_for_run(
         .prepare(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, execution_host,
                     agent_command, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
-                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                    updated_at_unix, depends_on_json
+                    agent_id, status, message, attempts, recovery_attempts, next_attempt_at_unix,
+                    started_at_unix, updated_at_unix, depends_on_json
              from web_queue_items
              where run_id = ?1
              order by position, id",
@@ -590,6 +595,25 @@ pub fn update_web_queue_item(
             ],
         )
         .context("failed to update web queue item")?;
+    Ok(())
+}
+
+pub fn schedule_web_queue_item_recovery(
+    run_id: &str,
+    item_id: &str,
+    message: &str,
+    recovery_attempts: i64,
+) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_items
+             set status = 'pending', message = ?3, agent_id = null,
+                 recovery_attempts = ?4, next_attempt_at_unix = null, updated_at_unix = ?5
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id, message, recovery_attempts, unix_now()],
+        )
+        .context("failed to schedule web queue item recovery")?;
     Ok(())
 }
 

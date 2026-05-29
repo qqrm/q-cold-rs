@@ -128,54 +128,22 @@ fn reconcile_queue_task_statuses(
     let mut terminal_run: Option<(String, i64, String)> = None;
     for item in items {
         if let Some(status) = queue_task_status(item)? {
-            if status == "closed:success" {
-                if item.status != "success"
-                    || item
-                        .agent_id
-                        .as_deref()
-                        .is_some_and(agent_running)
-                {
-                    update_successful_queue_item(
-                        &run.id,
-                        item,
-                        item.agent_id.as_deref(),
-                        item.attempts,
-                    )?;
-                    changed = true;
-                }
-                continue;
-            }
-            if status == "paused" && item.status != "paused" {
-                state::update_web_queue_item(
-                    &run.id,
-                    &item.id,
-                    "paused",
-                    &status,
-                    item.agent_id.as_deref(),
-                    item.attempts,
-                    None,
-                )?;
-                changed = true;
-                terminal_run.get_or_insert(("stopped".to_string(), item.position, status));
-                continue;
-            }
-            if status.starts_with("closed") && item.status != "success" {
-                state::update_web_queue_item(
-                    &run.id,
-                    &item.id,
-                    "failed",
-                    &status,
-                    item.agent_id.as_deref(),
-                    item.attempts,
-                    None,
-                )?;
-                changed = true;
-                terminal_run.get_or_insert(("failed".to_string(), item.position, status));
+            if reconcile_queue_task_record_status(
+                run,
+                item,
+                status,
+                &mut changed,
+                &mut terminal_run,
+            )? {
                 continue;
             }
         }
         if let Some(agent_id) = item.agent_id.as_deref() {
             if let Some(message) = queue_agent_failure_message(item, agent_id) {
+                if schedule_queue_item_auto_recovery(&run.id, item, message)? {
+                    changed = true;
+                    continue;
+                }
                 state::update_web_queue_item(
                     &run.id,
                     &item.id,
@@ -213,6 +181,62 @@ fn reconcile_queue_task_statuses(
     } else {
         QueueReconcile::Unchanged
     })
+}
+
+fn reconcile_queue_task_record_status(
+    run: &state::QueueRunRow,
+    item: &state::QueueItemRow,
+    status: String,
+    changed: &mut bool,
+    terminal_run: &mut Option<(String, i64, String)>,
+) -> Result<bool> {
+    if status == "closed:success" {
+        if item.status != "success" || item.agent_id.as_deref().is_some_and(agent_running) {
+            update_successful_queue_item(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
+            *changed = true;
+        }
+        return Ok(true);
+    }
+    if status == "paused" && item.status != "paused" {
+        state::update_web_queue_item(
+            &run.id,
+            &item.id,
+            "paused",
+            &status,
+            item.agent_id.as_deref(),
+            item.attempts,
+            None,
+        )?;
+        *changed = true;
+        terminal_run.get_or_insert(("stopped".to_string(), item.position, status));
+        return Ok(true);
+    }
+    if queue_status_auto_recoverable(&status)
+        && queue_item_recovery_waiting_on_current_attempt(item)
+    {
+        return Ok(true);
+    }
+    if queue_status_auto_recoverable(&status)
+        && schedule_queue_item_auto_recovery(&run.id, item, &status)?
+    {
+        *changed = true;
+        return Ok(true);
+    }
+    if status.starts_with("closed") && item.status != "success" {
+        state::update_web_queue_item(
+            &run.id,
+            &item.id,
+            "failed",
+            &status,
+            item.agent_id.as_deref(),
+            item.attempts,
+            None,
+        )?;
+        *changed = true;
+        terminal_run.get_or_insert(("failed".to_string(), item.position, status));
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn queue_ready_items(
@@ -358,6 +382,7 @@ fn queue_item_terminal(status: &str) -> bool {
 enum QueueItemOutcome {
     Success,
     Stopped,
+    RecoveryScheduled,
     Failed { message: String, retryable: bool },
 }
 
@@ -384,7 +409,18 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             update_successful_queue_item(run_id, item, item.agent_id.as_deref(), item.attempts)?;
             return Ok(QueueItemOutcome::Success);
         }
-        if status.starts_with("closed") {
+        if queue_status_auto_recoverable(&status) && queue_item_recovery_active_or_pending(item) {
+            // Keep launching or waiting for the one-shot recovery agent; the old failed task
+            // record remains visible until that agent turns it into closed:success.
+        } else if queue_status_auto_recoverable(&status) {
+            return fail_or_schedule_queue_item_recovery(
+                run_id,
+                item,
+                &status,
+                item.agent_id.as_deref(),
+                item.attempts,
+            );
+        } else if status.starts_with("closed") {
             state::update_web_queue_item(
                 run_id,
                 &item.id,
@@ -405,30 +441,24 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             if agent_running(agent_id) {
                 if agent_terminal_closeout_failed(agent_id) {
                     let message = "agent reached idle prompt after failed Q-COLD closeout";
-                    state::update_web_queue_item(
+                    return fail_or_schedule_queue_item_recovery(
                         run_id,
-                        &item.id,
-                        "failed",
+                        item,
                         message,
                         Some(agent_id),
                         item.attempts,
-                        None,
-                    )?;
-                    return Ok(QueueItemOutcome::failed(message));
+                    );
                 }
                 return wait_for_queue_item_closeout(run_id, item, agent_id, item.attempts);
             }
             let message = "agent exited before task closeout";
-            state::update_web_queue_item(
+            return fail_or_schedule_queue_item_recovery(
                 run_id,
-                &item.id,
-                "failed",
+                item,
                 message,
                 Some(agent_id),
                 item.attempts,
-                None,
-            )?;
-            return Ok(QueueItemOutcome::failed(message));
+            );
         }
     }
     if matches!(item.status.as_str(), "stopped" | "paused") {
@@ -708,6 +738,22 @@ fn wait_for_queue_item_closeout(
                 state::update_web_queue_run(run_id, "stopped", item.position, &status)?;
                 return Ok(QueueItemOutcome::Stopped);
             }
+            if queue_status_auto_recoverable(&status)
+                && queue_item_recovery_active_or_pending(item)
+                && agent_running(agent_id)
+                && !agent_terminal_closeout_failed(agent_id)
+            {
+                continue;
+            }
+            if queue_status_auto_recoverable(&status) {
+                return fail_or_schedule_queue_item_recovery(
+                    run_id,
+                    item,
+                    &status,
+                    Some(agent_id),
+                    attempts,
+                );
+            }
             if status.starts_with("closed") {
                 state::update_web_queue_item(
                     run_id,
@@ -722,16 +768,13 @@ fn wait_for_queue_item_closeout(
             }
             if status == "open" && !queue_item_remote_native(item) && !agent_running(agent_id) {
                 let message = "agent exited before task closeout".to_string();
-                state::update_web_queue_item(
+                return fail_or_schedule_queue_item_recovery(
                     run_id,
-                    &item.id,
-                    "failed",
+                    item,
                     &message,
                     Some(agent_id),
                     attempts,
-                    None,
-                )?;
-                return Ok(QueueItemOutcome::failed(message));
+                );
             }
             if status == "open"
                 && !queue_item_remote_native(item)
@@ -744,16 +787,13 @@ fn wait_for_queue_item_closeout(
                 && agent_terminal_closeout_failed(agent_id)
             {
                 let message = "agent reached idle prompt after failed Q-COLD closeout".to_string();
-                state::update_web_queue_item(
+                return fail_or_schedule_queue_item_recovery(
                     run_id,
-                    &item.id,
-                    "failed",
+                    item,
                     &message,
                     Some(agent_id),
                     attempts,
-                    None,
-                )?;
-                return Ok(QueueItemOutcome::failed(message));
+                );
             }
         } else if queue_item_remote_native(item) {
             return fail_remote_native_missing_task_record(run_id, item, agent_id, attempts);

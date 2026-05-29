@@ -218,6 +218,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         position: null,
         status: 'pending',
         message: '',
+        recoveryAttempts: 0,
         startedAt: 0,
         updatedAt: 0,
       };
@@ -432,6 +433,26 @@ const tg = window.Telegram && window.Telegram.WebApp;
           message: 'paused; press Continue to resume',
           detail: queueItemDetail(item, task, agentId),
         };
+      }
+      if (
+        task?.status === 'closed:failed'
+        && item.recoveryAttempts > 0
+        && !['success', 'failed', 'blocked'].includes(item.status)
+      ) {
+        if (activeAgentId) {
+          return {
+            status: item.status === 'starting' ? 'starting' : 'running',
+            message: item.message || agentBadgeText(activeAgentId, task) || 'auto-recovery running',
+            detail: queueItemDetail(item, task, activeAgentId),
+          };
+        }
+        if (queueRun.running) {
+          return {
+            status: item.status === 'pending' ? 'starting' : item.status,
+            message: item.message || 'auto-recovery scheduled',
+            detail: queueItemDetail(item, task, agentId),
+          };
+        }
       }
       if (task?.status?.startsWith('closed')) {
         return {
@@ -678,6 +699,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         startedAt: item.started_at || 0,
         updatedAt: item.updated_at || 0,
         attempts: item.attempts || 0,
+        recoveryAttempts: item.recovery_attempts || 0,
         nextAttemptAt: item.next_attempt_at || 0,
       };
     }

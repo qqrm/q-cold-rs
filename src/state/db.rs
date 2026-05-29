@@ -143,6 +143,7 @@ fn open_db() -> Result<Connection> {
                  status text not null,
                  message text not null,
                  attempts integer not null default 0,
+                 recovery_attempts integer not null default 0,
                  next_attempt_at_unix integer,
                  started_at_unix integer not null,
                  updated_at_unix integer not null,
@@ -232,6 +233,12 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
     ensure_column(connection, "web_queue_items", "remote_launcher", "text")?;
     ensure_column(connection, "web_queue_items", "remote_agent_local_proxy", "text")?;
     ensure_column(connection, "web_queue_items", "remote_agent_remote_proxy", "text")?;
+    ensure_column(
+        connection,
+        "web_queue_items",
+        "recovery_attempts",
+        "integer not null default 0",
+    )?;
     ensure_schema_migrations(connection)?;
     connection
         .execute(
@@ -305,6 +312,7 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  status text not null,
                  message text not null,
                  attempts integer not null default 0,
+                 recovery_attempts integer not null default 0,
                  next_attempt_at_unix integer,
                  started_at_unix integer not null,
                  updated_at_unix integer not null,
@@ -827,10 +835,10 @@ fn queue_tab_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueTabRow> 
 }
 
 fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow> {
-    let depends_on_json = row.get::<_, Option<String>>(19)?.unwrap_or_default();
+    let depends_on_json = row.get::<_, Option<String>>(20)?.unwrap_or_default();
     let depends_on = serde_json::from_str(&depends_on_json).map_err(|err| {
         rusqlite::Error::FromSqlConversionFailure(
-            19,
+            20,
             rusqlite::types::Type::Text,
             Box::new(err),
         )
@@ -853,9 +861,10 @@ fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow
         status: row.get(13)?,
         message: row.get(14)?,
         attempts: row.get(15)?,
-        next_attempt_at: row.get(16)?,
-        started_at: row.get(17)?,
-        updated_at: row.get(18)?,
+        recovery_attempts: row.get(16)?,
+        next_attempt_at: row.get(17)?,
+        started_at: row.get(18)?,
+        updated_at: row.get(19)?,
     })
 }
 

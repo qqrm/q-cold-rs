@@ -44,6 +44,11 @@ Graph execution is available with `execution_mode: "graph"` and per-item
 are stored as item ids. Queue items are still executed through managed
 task open plus terminal closeout; the queue owns the agent lifecycle.
 
+If a managed queue task reaches `closed:failed` or its executor reports a failed
+closeout, Q-COLD starts one separate auto-recovery executor for that row. The
+recovery packet points at the failed task record and task logs. A successful
+recovery closeout advances the queue; a second failure leaves the row failed.
+
 Remote-native execution is available with top-level `selected_execution_host:
 "remote-native"` or per-item `execution_host: "remote-native"`. It requires a
 `selected_remote_launcher` or per-item `remote_launcher` and currently applies

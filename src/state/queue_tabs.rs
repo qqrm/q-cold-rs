@@ -210,8 +210,8 @@ pub fn delete_web_queue_item_if_exists(
         .query_row(
             "select id, run_id, position, prompt, slug, repo_root, repo_name, execution_host,
                     agent_command, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
-                    agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
-                    updated_at_unix, depends_on_json
+                    agent_id, status, message, attempts, recovery_attempts, next_attempt_at_unix,
+                    started_at_unix, updated_at_unix, depends_on_json
              from web_queue_items
              where run_id = ?1 and id = ?2",
             params![run_id, item_id],

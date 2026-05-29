@@ -24,11 +24,16 @@ fn queue_track(run_id: &str) -> String {
 
 fn queue_agent_id(item: &state::QueueItemRow) -> String {
     let slug = sanitize_daemon_id(&item.slug);
-    if slug.len() <= 36 {
-        format!("qa-{slug}")
+    let recovery_suffix = if item.recovery_attempts > 0 {
+        format!("-r{}", item.recovery_attempts)
+    } else {
+        String::new()
+    };
+    if slug.len() + recovery_suffix.len() <= 36 {
+        format!("qa-{slug}{recovery_suffix}")
     } else {
         let prefix = slug.chars().take(24).collect::<String>();
-        format!("qa-{prefix}-{}", stable_short_hash(&item.id))
+        format!("qa-{prefix}-{}{}", stable_short_hash(&item.id), recovery_suffix)
     }
 }
 

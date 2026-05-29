@@ -152,6 +152,7 @@ mod tests {
             status: "pending".to_string(),
             message: String::new(),
             attempts: 0,
+            recovery_attempts: 0,
             next_attempt_at: None,
             started_at: 0,
             updated_at: 0,
@@ -180,6 +181,7 @@ mod tests {
             status: "pending".to_string(),
             message: String::new(),
             attempts: 0,
+            recovery_attempts: 0,
             next_attempt_at: None,
             started_at: 0,
             updated_at: 0,
@@ -670,9 +672,17 @@ mod tests {
         assert_eq!(
             stored_items
                 .iter()
-                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .map(|item| (
+                    item.id.as_str(),
+                    item.status.as_str(),
+                    item.recovery_attempts
+                ))
                 .collect::<Vec<_>>(),
-            [("first", "success"), ("second", "failed"), ("third", "failed")]
+            [
+                ("first", "success", 0),
+                ("second", "failed", 0),
+                ("third", "pending", 1)
+            ]
         );
     }
 
@@ -888,6 +898,7 @@ mod tests {
             status: status.to_string(),
             message: String::new(),
             attempts: 0,
+            recovery_attempts: 0,
             next_attempt_at: None,
             started_at: 0,
             updated_at: 0,
