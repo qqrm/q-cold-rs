@@ -62,6 +62,14 @@ mod asset_tests {
     }
 
     #[test]
+    fn event_stream_errors_fall_back_to_state_polling() {
+        assert!(APP_JS.contains("function startFallbackPolling()"));
+        assert!(APP_JS.contains("eventSource.addEventListener('error', () => {"));
+        assert!(APP_JS.contains("startFallbackPolling();"));
+        assert!(APP_JS.contains("stopFallbackPolling();"));
+    }
+
+    #[test]
     fn queue_tabs_assets_are_embedded() {
         assert!(INDEX_HTML.contains("id=\"queue-tabs\""));
         assert!(INDEX_HTML.contains("id=\"create-queue-tab\""));

@@ -429,16 +429,36 @@
       }
     }
 
+    function startFallbackPolling() {
+      if (fallbackTimer) return;
+      loadSnapshot();
+      fallbackTimer = window.setInterval(loadSnapshot, 5000);
+    }
+
+    function stopFallbackPolling() {
+      if (!fallbackTimer) return;
+      window.clearInterval(fallbackTimer);
+      fallbackTimer = null;
+    }
+
     function connectEvents() {
       if (!window.EventSource) {
-        loadSnapshot();
-        fallbackTimer = window.setInterval(loadSnapshot, 5000);
+        startFallbackPolling();
         return;
       }
       eventSource = new EventSource('/api/events');
-      eventSource.addEventListener('snapshot', (event) => applySnapshot(JSON.parse(event.data)));
-      eventSource.addEventListener('error', () => setLiveState('Offline', 'failed'));
-      eventSource.onopen = () => setLiveState('Live');
+      eventSource.addEventListener('snapshot', (event) => {
+        stopFallbackPolling();
+        applySnapshot(JSON.parse(event.data));
+      });
+      eventSource.addEventListener('error', () => {
+        setLiveState('Offline', 'failed');
+        startFallbackPolling();
+      });
+      eventSource.onopen = () => {
+        stopFallbackPolling();
+        setLiveState('Live');
+      };
     }
 
     async function sendTerminal(target, input) {
@@ -947,8 +967,8 @@
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         if (eventSource) eventSource.close();
-        if (fallbackTimer) window.clearInterval(fallbackTimer);
-        fallbackTimer = null;
+        eventSource = null;
+        stopFallbackPolling();
       } else {
         connectEvents();
       }
