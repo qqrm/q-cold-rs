@@ -9,9 +9,12 @@ use std::fs;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 
 use assert_cmd::Command as AssertCommand;
+use rusqlite::Connection;
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -160,6 +163,96 @@ fn sync_remote_imports_task_flow_records_under_local_repo_sequence() {
     assert!(show.contains("\tcwd=/remote/WT/vitastor/024-remote-task\t"));
     assert!(show.contains("token-usage\tinput=10"));
     assert!(show.contains("token-efficiency\tsessions=1"));
+}
+
+#[test]
+fn sync_remote_retries_transient_task_record_write_lock() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let local_repo = temp.path().join("vitastor");
+    git_init(&local_repo);
+    let remote = temp.path().join("remote-dev-env");
+    let ready = temp.path().join("remote-ready");
+    let record = json!({
+        "id": "task/remote-lock-task",
+        "source": "task-flow",
+        "sequence": 24,
+        "title": "Remote Lock Task",
+        "description": "Remote work",
+        "status": "open",
+        "created_at": 100,
+        "updated_at": 200,
+        "repo_root": "/remote/vitastor",
+        "cwd": "/remote/WT/vitastor/024-remote-lock-task",
+        "agent_id": null,
+        "metadata_json": null
+    });
+    write_executable(
+        &remote,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "touch {}\n",
+                "sleep 0.2\n",
+                "printf 'task-record-export\\tcount=1\\n'\n",
+                "printf 'task-record-json\\t%s\\n' '{}'\n",
+            ),
+            shell_quote(&ready),
+            record.to_string().replace('\'', "'\\''")
+        ),
+    );
+
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args(["task-record", "list", "--limit", "1"])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env("QCOLD_REPO_ROOT", &local_repo)
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    let mut command = Command::new(assert_cmd::cargo::cargo_bin("cargo-qcold"));
+    command
+        .args([
+            "task-record",
+            "sync-remote",
+            "--via",
+            remote.to_str().unwrap(),
+            "--local-repo-root",
+            local_repo.to_str().unwrap(),
+            "--remote-repo-root",
+            "/remote/vitastor",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let child = command.spawn().unwrap();
+
+    for _ in 0..50 {
+        if ready.exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(ready.exists(), "fake remote launcher did not start");
+
+    let db = state_dir.join("qcold.sqlite3");
+    let connection = Connection::open(db).unwrap();
+    connection.execute("begin immediate", []).unwrap();
+    thread::sleep(Duration::from_millis(350));
+    connection.execute("commit", []).unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "sync failed: stdout={} stderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let output = String::from_utf8(output.stdout).unwrap();
+    assert!(output.contains("remote_records=1\timported=1\tskipped=0"));
 }
 
 #[test]

@@ -170,13 +170,7 @@ fn send_remote_native_instruction(
 ) -> Result<()> {
     let target = format!("{session}:0.0");
     let buffer = format!("{session}-task-packet");
-    let script = format!(
-        "tmux load-buffer -b {} -w - && tmux paste-buffer -b {} -t {} && tmux send-keys -t {} C-m",
-        queue_shell_quote(&buffer),
-        queue_shell_quote(&buffer),
-        queue_shell_quote(&target),
-        queue_shell_quote(&target),
-    );
+    let script = remote_native_instruction_script(&buffer, &target);
     let mut child = Command::new(launcher)
         .current_dir(repo_root)
         .args(["bash", "-lc", &script])
@@ -204,6 +198,25 @@ fn send_remote_native_instruction(
         );
     }
     Ok(())
+}
+
+fn remote_native_instruction_script(buffer: &str, target: &str) -> String {
+    let buffer = queue_shell_quote(buffer);
+    let target = queue_shell_quote(target);
+    format!(
+        r"set -eu
+tmux load-buffer -b {buffer} -w -
+tmux paste-buffer -b {buffer} -t {target}
+for attempt in 1 2 3 4 5 6; do
+    sleep 1.5
+    tmux send-keys -t {target} C-m
+    sleep 1.5
+    if ! tmux capture-pane -pt {target} -S -12 2>/dev/null | grep -q '\[Pasted Content'; then
+        break
+fi
+done
+"
+    )
 }
 
 fn queue_qcold_executable() -> Result<PathBuf> {

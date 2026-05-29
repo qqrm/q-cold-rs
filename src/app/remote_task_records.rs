@@ -8,6 +8,9 @@ struct RemoteTaskRecordSyncSummary {
     skipped: usize,
 }
 
+const REMOTE_TASK_RECORD_UPSERT_LOCK_RETRIES: usize = 8;
+const REMOTE_TASK_RECORD_UPSERT_LOCK_RETRY_MS: u64 = 100;
+
 impl RemoteTaskRecordSyncSummary {
     fn render(&self) -> String {
         format!(
@@ -98,10 +101,42 @@ fn sync_remote_task_records(args: &TaskRecordRemoteSyncArgs) -> Result<RemoteTas
         let existing = state::get_task_record(&remote.id)?;
         let mut record = canonical_remote_task_record(&remote, existing.as_ref(), &local_repo_root);
         add_remote_adapter_metadata(&mut record, &args.remote, args.legacy_remote_qcold);
-        state::upsert_task_record(&record)?;
+        upsert_remote_task_record_with_lock_retry(&record)?;
         summary.imported += 1;
     }
     Ok(summary)
+}
+
+fn upsert_remote_task_record_with_lock_retry(record: &state::TaskRecordRow) -> Result<()> {
+    let mut attempt = 0;
+    loop {
+        match state::upsert_task_record(record) {
+            Ok(_) => return Ok(()),
+            Err(err) if sqlite_lock_error(&err) && attempt < REMOTE_TASK_RECORD_UPSERT_LOCK_RETRIES => {
+                attempt += 1;
+                thread::sleep(Duration::from_millis(
+                    REMOTE_TASK_RECORD_UPSERT_LOCK_RETRY_MS * attempt as u64,
+                ));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn sqlite_lock_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|source| {
+        source.downcast_ref::<rusqlite::Error>().is_some_and(|sqlite| {
+            matches!(
+                sqlite,
+                rusqlite::Error::SqliteFailure(error, _)
+                    if matches!(
+                        error.code,
+                        rusqlite::ErrorCode::DatabaseBusy
+                            | rusqlite::ErrorCode::DatabaseLocked
+                    )
+            )
+        })
+    })
 }
 
 fn remote_adapter_task_record_export(

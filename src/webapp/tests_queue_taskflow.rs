@@ -316,6 +316,19 @@ mod queue_taskflow_tests {
     }
 
     #[test]
+    fn remote_native_instruction_script_retries_codex_paste_submit() {
+        let script = remote_native_instruction_script(
+            "session-task-packet",
+            "qcold-qa-task-remote-native:0.0",
+        );
+
+        assert!(script.contains("tmux paste-buffer -b session-task-packet"));
+        assert!(script.contains("tmux send-keys -t qcold-qa-task-remote-native:0.0 C-m"));
+        assert!(script.contains("grep -q '\\[Pasted Content'"));
+        assert!(script.contains("for attempt in 1 2 3 4 5 6"));
+    }
+
+    #[test]
     #[cfg(unix)]
     fn remote_native_cleanup_stops_remote_agent_session() {
         let _guard = test_support::env_guard();
