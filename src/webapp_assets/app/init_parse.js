@@ -244,6 +244,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
       };
     }
 
+    function queueItemAgentId(item, task = null) {
+      return item?.agentId || item?.agent_id || task?.agent_id || '';
+    }
+
     function queueSlug(runId, index) {
       return `task-${runId}-${String(index + 1).padStart(2, '0')}`;
     }
@@ -424,7 +428,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function queueItemView(item) {
       const task = taskRecordForQueueItem(item);
-      const agentId = item.agentId || task?.agent_id || '';
+      const agentId = queueItemAgentId(item, task);
       const activeAgentId = activeQueueAgentId(item, task);
       if (task?.status === 'closed:success') {
         return {

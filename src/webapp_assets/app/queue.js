@@ -649,7 +649,7 @@
       const activePosition = Number(queueRun.activeIndex);
       return Boolean(item.runId)
         && ['pending', 'waiting'].includes(view.status)
-        && !item.agentId
+        && !queueItemAgentId(item)
         && queueBackendRunEditable()
         && Number(item.position) > activePosition;
     }
@@ -661,7 +661,7 @@
       const activePosition = Number(queueRun.activeIndex);
       return Boolean(item.runId)
         && ['pending', 'waiting'].includes(view.status)
-        && !item.agentId
+        && !queueItemAgentId(item)
         && Number(item.position) > activePosition;
     }
 
@@ -715,7 +715,7 @@
             run_id: item.runId,
             item_id: item.id,
             task_id: task?.id || (item.slug ? `task/${item.slug}` : ''),
-            agent_id: item.agentId || task?.agent_id || '',
+            agent_id: queueItemAgentId(item, task),
           }),
         });
         const payload = await response.json().catch(() => ({}));
@@ -827,7 +827,7 @@
     }
 
     function terminalForQueueItem(item, task = taskRecordForQueueItem(item)) {
-      const agentId = item.agentId || task?.agent_id || '';
+      const agentId = queueItemAgentId(item, task);
       if (!agentId) return null;
       return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
     }
@@ -949,7 +949,7 @@
     function terminalForTaskId(taskId) {
       const task = queueTaskRecords().find((record) => record.id === taskId);
       const queueItem = queueItems.find((item) => `task/${item.slug}` === taskId);
-      const agentId = task?.agent_id || queueItem?.agentId || '';
+      const agentId = queueItemAgentId(queueItem, task);
       if (!agentId) return null;
       return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
     }

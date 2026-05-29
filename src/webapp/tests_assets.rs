@@ -45,6 +45,16 @@ mod asset_tests {
     }
 
     #[test]
+    fn queue_terminal_lookup_accepts_server_agent_field() {
+        assert!(APP_JS.contains("function queueItemAgentId(item, task = null)"));
+        assert!(APP_JS.contains("return item?.agentId || item?.agent_id || task?.agent_id || '';"));
+        assert!(APP_JS.contains("const agentId = queueItemAgentId(item, task);"));
+        assert!(APP_JS.contains(
+            "return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;"
+        ));
+    }
+
+    #[test]
     fn graph_queue_active_run_prunes_empty_non_final_waves() {
         assert!(APP_JS.contains("function pruneEmptyBackendQueueWaves(waves, items)"));
         assert!(APP_JS.contains("{ pruneBackendEmpty: true }"));

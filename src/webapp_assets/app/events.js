@@ -567,17 +567,14 @@
     function taskRecordForQueueItem(item) {
       const repo = queueItemRepository(item);
       const records = queueTaskRecords().filter((task) => task.id === `task/${item.slug}`);
+      const agentId = queueItemAgentId(item);
       return records.find((task) => !repo?.root || task.repo_root === repo.root)
-        || records.find((task) => item.agentId && task.agent_id === item.agentId)
+        || records.find((task) => agentId && task.agent_id === agentId)
         || null;
     }
 
     function queueItemBackendActive(item) {
-      return Boolean(
-        item?.runId
-          && item.agentId
-          && ['starting', 'running'].includes(item.status),
-      );
+      return Boolean(item?.runId && queueItemAgentId(item) && ['starting', 'running'].includes(item.status));
     }
 
     function runningAgent(agentId, item = null) {
@@ -586,7 +583,7 @@
       if (agents.some((agent) => agent.id === agentId)) return true;
       const terminals = model.terminals?.records || [];
       if (terminals.some((terminal) => terminal.agent_id === agentId)) return true;
-      return queueItemBackendActive(item) && item.agentId === agentId;
+      return queueItemBackendActive(item) && queueItemAgentId(item) === agentId;
     }
 
     function terminalForAgentId(agentId) {
@@ -632,7 +629,8 @@
     }
 
     function activeQueueAgentId(item, task = taskRecordForQueueItem(item)) {
-      return [item.agentId, task?.agent_id].find((agentId) => agentId && runningAgent(agentId, item)) || '';
+      const agentId = queueItemAgentId(item, task);
+      return agentId && runningAgent(agentId, item) ? agentId : '';
     }
 
     function queueRunIdFromSlug(slug) {
@@ -677,7 +675,7 @@
         return {
           ...item,
           slug,
-          agentId: item.agentId || task?.agent_id || '',
+          agentId: queueItemAgentId(item, task),
           repoRoot: repo.root || '',
           repoName: repo.name || '',
           status: queueStartingStatus(success, closedStatus, startsNow, waiting),
