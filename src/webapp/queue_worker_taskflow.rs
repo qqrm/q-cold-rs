@@ -204,7 +204,20 @@ fn remote_native_instruction_script(buffer: &str, target: &str) -> String {
     let buffer = queue_shell_quote(buffer);
     let target = queue_shell_quote(target);
     format!(
-        r"set -eu
+        r#"set -eu
+for ready_attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 \
+21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 \
+41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60; do
+    if tmux capture-pane -pt {target} -S -40 2>/dev/null \
+        | grep -Eq 'OpenAI Codex|^[[:space:]]*›|^[[:space:]]*gpt-'; then
+        break
+    fi
+    if [ "$ready_attempt" = 60 ]; then
+        echo 'remote-native target did not become ready for Codex input' >&2
+        exit 70
+    fi
+    sleep 2
+done
 tmux load-buffer -b {buffer} -w -
 tmux paste-buffer -b {buffer} -t {target}
 for attempt in 1 2 3 4 5 6; do
@@ -215,7 +228,7 @@ for attempt in 1 2 3 4 5 6; do
         break
 fi
 done
-"
+"#
     )
 }
 
