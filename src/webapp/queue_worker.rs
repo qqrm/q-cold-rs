@@ -222,7 +222,7 @@ fn reconcile_queue_task_record_status(
         *changed = true;
         return Ok(true);
     }
-    if status.starts_with("closed") && item.status != "success" {
+    if queue_task_status_terminal(&status) && item.status != "success" {
         state::update_web_queue_item(
             &run.id,
             &item.id,
@@ -420,7 +420,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                 item.agent_id.as_deref(),
                 item.attempts,
             );
-        } else if status.starts_with("closed") {
+        } else if queue_task_status_terminal(&status) {
             state::update_web_queue_item(
                 run_id,
                 &item.id,
@@ -754,7 +754,7 @@ fn wait_for_queue_item_closeout(
                     attempts,
                 );
             }
-            if status.starts_with("closed") {
+            if queue_task_status_terminal(&status) {
                 state::update_web_queue_item(
                     run_id,
                     &item.id,

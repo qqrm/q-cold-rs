@@ -889,7 +889,7 @@ fn queue_item_removable_while_running(
     {
         return Ok(true);
     }
-    Ok(queue_task_status(item)?.is_some_and(|status| status.starts_with("closed")))
+    Ok(queue_task_status(item)?.is_some_and(|status| queue_task_status_terminal(&status)))
 }
 
 fn queue_item_editable_while_running(
@@ -906,7 +906,7 @@ fn queue_item_editable_while_running(
         return Ok(false);
     }
     Ok(!queue_task_status(item)?.is_some_and(|status| {
-        status == "paused" || status.starts_with("closed")
+        status == "paused" || queue_task_status_terminal(&status)
     }))
 }
 

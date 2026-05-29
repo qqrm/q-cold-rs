@@ -178,6 +178,43 @@ mod queue_taskflow_tests {
     }
 
     #[test]
+    fn failed_closeout_queue_task_marks_running_item_failed() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("failed-closeout", &repo);
+        let mut item = queue_taskflow_item("task-failed-closeout", &repo, None);
+        item.run_id = run.id.clone();
+        item.status = "running".to_string();
+        item.execution_host = "remote-native".to_string();
+        item.agent_id = Some("qa-task-failed-closeout".to_string());
+        state::replace_web_queue(&run, &[item]).unwrap();
+        state::upsert_task_record(&task_record_fixture(
+            "task-failed-closeout",
+            "failed-closeout",
+            &repo,
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Terminal
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+        let failed = &stored_items[0];
+
+        assert_eq!(stored_run.status, "failed");
+        assert_eq!(stored_run.message, "failed-closeout");
+        assert_eq!(failed.status, "failed");
+        assert_eq!(failed.message, "failed-closeout");
+        assert_eq!(failed.agent_id.as_deref(), Some("qa-task-failed-closeout"));
+    }
+
+    #[test]
     fn queue_launch_workspace_rejects_live_slug_conflict() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();

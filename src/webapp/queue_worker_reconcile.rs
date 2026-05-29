@@ -184,7 +184,7 @@ fn stale_queue_task_record_handled(
         state::update_web_queue_run(&run.id, "stopped", item.position, &status)?;
         return Ok(true);
     }
-    if status.starts_with("closed") && item.status != "success" {
+    if queue_task_status_terminal(&status) && item.status != "success" {
         state::update_web_queue_item(
             &run.id,
             &item.id,

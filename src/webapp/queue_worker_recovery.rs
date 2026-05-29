@@ -4,6 +4,10 @@ fn queue_status_auto_recoverable(status: &str) -> bool {
     status == "closed:failed"
 }
 
+fn queue_task_status_terminal(status: &str) -> bool {
+    status.starts_with("closed") || status == "failed-closeout"
+}
+
 fn queue_item_recovery_active_or_pending(item: &state::QueueItemRow) -> bool {
     item.recovery_attempts > 0 && !queue_item_terminal(&item.status)
 }

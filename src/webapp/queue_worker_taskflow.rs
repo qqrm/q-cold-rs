@@ -485,7 +485,7 @@ fn legacy_local_item_matches_remote_terminal_record(
 ) -> bool {
     item.remote_launcher.is_none()
         && record.source == "task-flow"
-        && record.status.starts_with("closed")
+        && queue_task_status_terminal(&record.status)
         && task_record_remote_launcher(record).is_some()
 }
 
@@ -535,7 +535,7 @@ fn task_record_remote_launcher(record: &state::TaskRecordRow) -> Option<String> 
 }
 
 fn queue_task_record_is_terminal(record: &state::TaskRecordRow) -> bool {
-    record.status.starts_with("closed")
+    queue_task_status_terminal(&record.status)
 }
 
 fn task_record_scope_summary(record: &state::TaskRecordRow) -> String {
