@@ -290,11 +290,7 @@
       prompt.className = 'queue-graph-prompt-preview';
       prompt.textContent = queuePromptPreview(item.prompt);
       prompt.title = 'Use Full prompt to inspect the complete text';
-      const direction = document.createElement('p');
-      direction.className = 'queue-graph-card-hint';
-      direction.textContent = !queueItemEditable(item)
-        ? 'Task is owned by the backend run.'
-        : 'Drag into a wave to move this task.';
+      const activity = queueGraphActivity(item, view);
       const gate = queueGateToggle(item);
       const controls = queueGraphCardControls(index);
       const fullPrompt = queueActionButton(
@@ -304,8 +300,24 @@
       );
       fullPrompt.classList.add('queue-graph-prompt-action');
       controls.prepend(fullPrompt);
-      card.append(remove, head, prompt, direction, gate, controls);
+      card.append(remove, head, prompt, activity, gate, controls);
       return card;
+    }
+
+    function queueGraphActivity(item, view) {
+      const activity = document.createElement('div');
+      activity.className = 'queue-graph-activity';
+      const lines = queueItemActivityLines(item, view);
+      if (queueItemEditable(item)) {
+        lines.push({ text: 'Drag into a wave to move this task.', kind: 'hint' });
+      }
+      for (const line of lines) {
+        const node = document.createElement('p');
+        node.className = `queue-graph-activity-line ${line.kind || 'main'}`;
+        node.textContent = line.text;
+        activity.appendChild(node);
+      }
+      return activity;
     }
 
     function queueGateToggle(item) {

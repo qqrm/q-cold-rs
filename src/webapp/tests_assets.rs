@@ -70,6 +70,17 @@ mod asset_tests {
     }
 
     #[test]
+    fn graph_queue_cards_show_backend_agent_activity() {
+        assert!(APP_JS.contains("function queueGraphActivity(item, view)"));
+        assert!(APP_JS.contains("function queueItemActivityLines(item, view = queueItemView(item))"));
+        assert!(APP_JS.contains("function queueItemBackendActive(item)"));
+        assert!(APP_JS.contains("runningAgent(agentId, item)"));
+        assert!(APP_JS.contains("executionHost: item.execution_host || ''"));
+        assert!(APP_JS.contains("terminal: ${terminalLine}"));
+        assert!(QUEUE_CSS.contains(".queue-graph-activity-line"));
+    }
+
+    #[test]
     fn queue_tabs_assets_are_embedded() {
         assert!(INDEX_HTML.contains("id=\"queue-tabs\""));
         assert!(INDEX_HTML.contains("id=\"create-queue-tab\""));

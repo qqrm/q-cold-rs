@@ -571,9 +571,21 @@
         || null;
     }
 
-    function runningAgent(agentId) {
+    function queueItemBackendActive(item) {
+      return Boolean(
+        item?.runId
+          && item.agentId
+          && ['starting', 'running'].includes(item.status),
+      );
+    }
+
+    function runningAgent(agentId, item = null) {
       if (!agentId || !model) return true;
-      return (model.agents.records || []).some((agent) => agent.id === agentId);
+      const agents = model.agents?.records || [];
+      if (agents.some((agent) => agent.id === agentId)) return true;
+      const terminals = model.terminals?.records || [];
+      if (terminals.some((terminal) => terminal.agent_id === agentId)) return true;
+      return queueItemBackendActive(item) && item.agentId === agentId;
     }
 
     function terminalForAgentId(agentId) {
@@ -607,8 +619,19 @@
       return lines.some((line) => line === '›' || line.startsWith('› '));
     }
 
+    function terminalActivityLine(terminal) {
+      const lines = terminalPlainText(terminal)
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(-20)
+        .reverse();
+      const line = lines.find((value) => value !== '›' && !value.startsWith('› '));
+      return compactQueueLine(line || '', 140);
+    }
+
     function activeQueueAgentId(item, task = taskRecordForQueueItem(item)) {
-      return [item.agentId, task?.agent_id].find((agentId) => agentId && runningAgent(agentId)) || '';
+      return [item.agentId, task?.agent_id].find((agentId) => agentId && runningAgent(agentId, item)) || '';
     }
 
     function queueRunIdFromSlug(slug) {

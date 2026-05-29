@@ -188,6 +188,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
           slug: '',
           agentId: '',
           agentCommand: item.agentCommand,
+          executionHost: item.executionHost,
+          remoteLauncher: item.remoteLauncher,
           dependsOn: item.dependsOn || [],
           waveId: item.waveId || '',
           gatesNext: item.gatesNext !== false,
@@ -210,6 +212,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         slug: '',
         agentId: '',
         agentCommand: '',
+        executionHost: '',
+        remoteLauncher: '',
         dependsOn: [],
         waveId: '',
         gatesNext: true,
@@ -493,7 +497,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }
         return {
           status: 'running',
-          message: agentBadgeText(activeAgentId, task),
+          message: item.message || agentBadgeText(activeAgentId, task),
           detail: queueItemDetail(item, task, agentId),
         };
       }
@@ -515,7 +519,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         }
         return {
           status: item.status === 'starting' ? 'starting' : 'running',
-          message: agentBadgeText(activeAgentId, task) || 'agent running',
+          message: item.message || agentBadgeText(activeAgentId, task) || 'agent running',
           detail: queueItemDetail(item, task, agentId),
         };
       }
@@ -541,8 +545,72 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (task?.status) parts.push(task.status);
       const agentText = agentBadgeText(agentId, task);
       if (agentText) parts.push(agentText);
+      if (item.executionHost) parts.push(item.executionHost);
       if (item.agentCommand) parts.push(item.agentCommand);
       return parts.join(' / ');
+    }
+
+    function queueItemActivityLines(item, view = queueItemView(item)) {
+      const task = taskRecordForQueueItem(item);
+      const terminal = terminalForQueueItem(item, task);
+      const lines = [];
+      queuePushActivityLine(lines, view.message || item.message);
+      queuePushActivityLine(lines, view.detail, 'detail');
+      queuePushActivityLine(lines, queueDependencyStatusText(item), 'detail');
+      const terminalLine = terminalActivityLine(terminal);
+      if (terminalLine) queuePushActivityLine(lines, `terminal: ${terminalLine}`, 'terminal');
+      queuePushActivityLine(lines, queueItemTimingText(item, task), 'detail');
+      return lines.slice(0, 5);
+    }
+
+    function queuePushActivityLine(lines, text, kind = 'main') {
+      const value = compactQueueLine(text);
+      if (!value) return;
+      if (lines.some((line) => line.text === value)) return;
+      lines.push({ text: value, kind });
+    }
+
+    function queueDependencyStatusText(item) {
+      const pending = (item.dependsOn || [])
+        .map((dependency) => queueItems.find((candidate) => candidate.id === dependency))
+        .filter((dependency) => dependency && queueItemView(dependency).status !== 'success');
+      if (!pending.length) return '';
+      return `waiting for ${pending.map(queueItemShortLabel).join(', ')}`;
+    }
+
+    function queueItemShortLabel(item) {
+      const index = queueItems.findIndex((candidate) => candidate.id === item.id);
+      if (index >= 0) return `#${index + 1}`;
+      return item.slug || item.id || 'dependency';
+    }
+
+    function queueItemTimingText(item, task) {
+      const parts = [];
+      const updatedAt = Math.max(Number(item.updatedAt || 0), Number(task?.updated_at || 0));
+      const startedAt = Math.max(Number(item.startedAt || 0), Number(task?.created_at || 0));
+      if (updatedAt) parts.push(`updated ${relativeTimeText(updatedAt)}`);
+      if (startedAt && ['running', 'starting'].includes(item.status)) {
+        parts.push(`started ${relativeTimeText(startedAt)}`);
+      }
+      if (item.recoveryAttempts > 0) parts.push(`recovery ${item.recoveryAttempts}`);
+      if (item.nextAttemptAt) parts.push(`retry ${relativeTimeText(item.nextAttemptAt)}`);
+      return parts.join(' / ');
+    }
+
+    function relativeTimeText(timestamp) {
+      const value = Number(timestamp || 0);
+      if (!value) return '';
+      const seconds = Math.max(0, Math.floor(Date.now() / 1000) - value);
+      if (seconds < 45) return 'just now';
+      if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+      if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+      return `${Math.floor(seconds / 86400)}d ago`;
+    }
+
+    function compactQueueLine(text, limit = 180) {
+      const value = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!value) return '';
+      return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
     }
 
     function syncQueueFromSnapshot() {
@@ -691,6 +759,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
         gatesNext: true,
         agentId: item.agent_id || '',
         agentCommand: item.agent_command || '',
+        executionHost: item.execution_host || '',
+        remoteLauncher: item.remote_launcher || '',
         repoRoot: item.repo_root || '',
         repoName: item.repo_name || '',
         position: Number(item.position ?? 0),

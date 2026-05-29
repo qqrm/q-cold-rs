@@ -126,6 +126,36 @@ button.queue-icon-button:disabled {
   opacity: .55;
 }
 
+.queue-graph-activity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.queue-graph-activity-line {
+  margin: 0;
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.queue-graph-activity-line.detail,
+.queue-graph-activity-line.hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.queue-graph-activity-line.terminal {
+  padding: 4px 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--panel);
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+
 @media (max-width: 900px) {
   .queue-agent-row {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
