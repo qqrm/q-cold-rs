@@ -464,6 +464,78 @@ mod queue_taskflow_tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn remote_native_terminal_snapshot_uses_remote_launcher() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let log = temp.path().join("remote.log");
+        std::env::set_var("REMOTE_TERMINAL_LOG", &log);
+        let launcher = fake_remote_terminal_launcher(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-terminal", &repo);
+        let mut item = queue_taskflow_item(
+            "task-remote-native-terminal",
+            &repo,
+            Some(launcher.to_str().unwrap()),
+        );
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let panes = discover_remote_native_terminal_sessions(
+            &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+        );
+
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].agent_id, item.agent_id.clone().unwrap());
+        assert_eq!(
+            panes[0].target,
+            remote_native_terminal_target(item.agent_id.as_deref().unwrap())
+        );
+        assert_eq!(panes[0].output, "remote output");
+        let log = fs::read_to_string(log).unwrap();
+        assert!(log.contains("tmux capture-pane"));
+        assert!(log.contains("qcold-qa-task-remote-native-terminal:0.0"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn remote_native_terminal_send_routes_through_remote_launcher() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let log = temp.path().join("remote.log");
+        std::env::set_var("REMOTE_TERMINAL_LOG", &log);
+        let launcher = fake_remote_terminal_launcher(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-terminal-send", &repo);
+        let mut item = queue_taskflow_item(
+            "task-remote-native-terminal-send",
+            &repo,
+            Some(launcher.to_str().unwrap()),
+        );
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+        let target = remote_native_terminal_target(item.agent_id.as_deref().unwrap());
+
+        send_terminal_key(&target, TerminalKey::Enter).unwrap();
+
+        let log = fs::read_to_string(log).unwrap();
+        assert!(log.contains("tmux send-keys"));
+        assert!(log.contains("qcold-qa-task-remote-native-terminal-send:0.0"));
+        assert!(log.contains("C-m"));
+    }
+
+    #[test]
     fn recovery_task_packet_is_one_shot_and_uses_separate_agent_id() {
         let temp = tempfile::tempdir().unwrap();
         let repo = temp.path().join("repo");
@@ -558,6 +630,22 @@ mod queue_taskflow_tests {
 
     #[cfg(not(unix))]
     fn make_executable(_path: &Path) {}
+
+    #[cfg(unix)]
+    fn fake_remote_terminal_launcher(dir: &Path) -> PathBuf {
+        let launcher = dir.join("remote-dev-env");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$*\" >> \"$REMOTE_TERMINAL_LOG\"\n\
+             if [ \"$1\" = tmux ] && [ \"$2\" = capture-pane ]; then\n\
+             printf 'remote output\\n'\n\
+             fi\n",
+        )
+        .unwrap();
+        make_executable(&launcher);
+        launcher
+    }
 
     #[cfg(unix)]
     fn install_fake_cargo_logger(temp: &Path) -> PathBuf {

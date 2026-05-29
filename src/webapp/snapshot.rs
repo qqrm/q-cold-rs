@@ -266,6 +266,16 @@ fn discover_terminal_sessions() -> TerminalSnapshot {
     for pane in &mut records {
         apply_terminal_details(pane, contexts.get(&pane.target), metadata.get(&pane.target));
     }
+    let local_agent_ids = records
+        .iter()
+        .filter_map(|pane| {
+            (!pane.agent_id.is_empty()).then_some(pane.agent_id.as_str().to_string())
+        })
+        .collect::<HashSet<_>>();
+    records.extend(discover_remote_native_terminal_sessions(
+        &metadata,
+        &local_agent_ids,
+    ));
     TerminalSnapshot {
         count: records.len(),
         records,
@@ -519,6 +529,93 @@ fn parse_terminal_pane(line: &str) -> Option<TerminalPane> {
         fields[3].to_string(),
         fields[4].to_string(),
     ))
+}
+
+fn discover_remote_native_terminal_sessions(
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+    local_agent_ids: &HashSet<String>,
+) -> Vec<TerminalPane> {
+    state::load_web_queue_items()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(queue_item_remote_native)
+        .filter(|item| !matches!(item.status.as_str(), "pending" | "waiting" | "success"))
+        .filter_map(|item| {
+            let agent_id = item.agent_id.as_deref()?.trim();
+            if agent_id.is_empty() || local_agent_ids.contains(agent_id) {
+                return None;
+            }
+            remote_native_terminal_pane(&item, agent_id, metadata)
+        })
+        .collect()
+}
+
+fn remote_native_terminal_pane(
+    item: &state::QueueItemRow,
+    agent_id: &str,
+    metadata: &HashMap<String, state::TerminalMetadataRow>,
+) -> Option<TerminalPane> {
+    let target = remote_native_terminal_target(agent_id);
+    let output = capture_remote_native_terminal_pane(item, agent_id, "0.0").ok()?;
+    let mut pane = TerminalPane::new(
+        target.clone(),
+        remote_native_queue_session(agent_id),
+        "0.0".to_string(),
+        0,
+        "remote-native".to_string(),
+        item.repo_root.clone().unwrap_or_default(),
+    );
+    pane.agent_id = agent_id.to_string();
+    pane.generated_label = fallback_terminal_label(&pane);
+    pane.name = metadata
+        .get(&target)
+        .and_then(|metadata| metadata.name.clone())
+        .unwrap_or_default();
+    pane.scope = metadata
+        .get(&target)
+        .and_then(|metadata| metadata.scope.clone())
+        .unwrap_or_default();
+    pane.label = if pane.name.is_empty() {
+        pane.generated_label.clone()
+    } else {
+        pane.name.clone()
+    };
+    pane.output = output;
+    Some(pane)
+}
+
+fn capture_remote_native_terminal_pane(
+    item: &state::QueueItemRow,
+    agent_id: &str,
+    pane: &str,
+) -> Result<String> {
+    let launcher = item
+        .remote_launcher
+        .as_deref()
+        .context("remote-native queue terminal requires remote launcher")?;
+    let capture_start = terminal_capture_start_arg();
+    let target = remote_native_tmux_target(agent_id, pane);
+    let output = Command::new(launcher)
+        .args([
+            "tmux",
+            "capture-pane",
+            "-p",
+            "-e",
+            "-J",
+            "-S",
+            &capture_start,
+            "-t",
+            &target,
+        ])
+        .output()
+        .with_context(|| format!("failed to capture remote-native tmux pane {target}"))?;
+    if !output.status.success() {
+        bail!(
+            "remote-native tmux capture-pane failed with {}",
+            output.status
+        );
+    }
+    Ok(trim_terminal_scrollback(&String::from_utf8_lossy(&output.stdout)))
 }
 
 fn discover_zellij_panes(session: &str) -> Vec<TerminalPane> {

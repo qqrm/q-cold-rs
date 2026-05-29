@@ -637,6 +637,7 @@ include!("webapp/queue_worker_task_packet.rs");
 include!("webapp/queue_worker_reconcile.rs");
 include!("webapp/queue_worker_taskflow.rs");
 include!("webapp/terminal_chat.rs");
+include!("webapp/remote_native_terminal.rs");
 include!("webapp/queue_worker_terminal.rs");
 include!("webapp/queue_worker_cleanup.rs");
 include!("webapp/queue_worker_ids.rs");

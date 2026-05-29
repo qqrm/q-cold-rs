@@ -676,7 +676,9 @@ fn clean_terminal_key(key: &str) -> Result<TerminalKey> {
 }
 
 fn send_terminal_paste(target: &str, text: &str, submit: bool) -> Result<()> {
-    if let Some((session, pane)) = parse_zellij_target(target) {
+    if let Some((agent_id, pane)) = parse_remote_native_terminal_target(target) {
+        send_remote_native_terminal_paste(agent_id, pane, text, submit)
+    } else if let Some((session, pane)) = parse_zellij_target(target) {
         send_zellij_terminal_paste(session, pane, text, submit)
     } else {
         send_tmux_terminal_paste(target, text, submit)
@@ -684,7 +686,9 @@ fn send_terminal_paste(target: &str, text: &str, submit: bool) -> Result<()> {
 }
 
 fn send_terminal_literal(target: &str, text: &str, submit: bool) -> Result<()> {
-    if let Some((session, pane)) = parse_zellij_target(target) {
+    if let Some((agent_id, pane)) = parse_remote_native_terminal_target(target) {
+        send_remote_native_terminal_literal(agent_id, pane, text, submit)
+    } else if let Some((session, pane)) = parse_zellij_target(target) {
         send_zellij_terminal_literal(session, pane, text, submit)
     } else {
         send_tmux_terminal_literal(target, text, submit)
@@ -692,7 +696,9 @@ fn send_terminal_literal(target: &str, text: &str, submit: bool) -> Result<()> {
 }
 
 fn send_terminal_key(target: &str, key: TerminalKey) -> Result<()> {
-    if let Some((session, pane)) = parse_zellij_target(target) {
+    if let Some((agent_id, pane)) = parse_remote_native_terminal_target(target) {
+        send_remote_native_terminal_key(agent_id, pane, key)
+    } else if let Some((session, pane)) = parse_zellij_target(target) {
         send_zellij_terminal_key(session, pane, key)
     } else {
         send_tmux_terminal_key(target, key)

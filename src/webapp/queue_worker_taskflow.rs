@@ -98,6 +98,38 @@ fn remote_native_queue_session(agent_id: &str) -> String {
     format!("qcold-{agent_id}")
 }
 
+fn remote_native_terminal_target(agent_id: &str) -> String {
+    format!("remote-tmux:{agent_id}:0.0")
+}
+
+fn parse_remote_native_terminal_target(target: &str) -> Option<(&str, &str)> {
+    let rest = target.strip_prefix("remote-tmux:")?;
+    let (agent_id, pane) = rest.rsplit_once(':')?;
+    if agent_id.is_empty()
+        || pane.is_empty()
+        || agent_id.chars().any(char::is_control)
+        || pane.chars().any(char::is_control)
+    {
+        return None;
+    }
+    Some((agent_id, pane))
+}
+
+fn remote_native_tmux_target(agent_id: &str, pane: &str) -> String {
+    format!("{}:{pane}", remote_native_queue_session(agent_id))
+}
+
+fn remote_native_terminal_item(agent_id: &str) -> Result<state::QueueItemRow> {
+    state::load_web_queue_items()?
+        .into_iter()
+        .find(|item| {
+            queue_item_remote_native(item)
+                && item.agent_id.as_deref() == Some(agent_id)
+                && item.remote_launcher.as_deref().is_some_and(|value| !value.trim().is_empty())
+        })
+        .with_context(|| format!("remote-native queue terminal {agent_id} is not active"))
+}
+
 fn remote_native_running_wait_item(item: &state::QueueItemRow) -> state::QueueItemRow {
     let mut item = item.clone();
     item.status = "running".to_string();
