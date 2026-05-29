@@ -414,6 +414,7 @@
     }
 
     function applySnapshot(snapshot) {
+      if (reloadForNewAppBuild(snapshotBuildId(snapshot))) return;
       state = snapshot.state;
       render();
       setLiveState('Live');

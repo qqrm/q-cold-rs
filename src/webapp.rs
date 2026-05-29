@@ -374,9 +374,14 @@ async fn queue_css() -> impl IntoResponse {
 }
 
 async fn app_js() -> impl IntoResponse {
+    let body = format!(
+        "window.__QCOLD_APP_BUILD_ID__ = {:?};\n{}",
+        crate::QCOLD_VERSION,
+        APP_JS,
+    );
     no_store((
         [(CONTENT_TYPE, "application/javascript; charset=utf-8")],
-        APP_JS,
+        body,
     ))
 }
 

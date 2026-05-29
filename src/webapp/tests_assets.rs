@@ -81,6 +81,15 @@ mod asset_tests {
     }
 
     #[test]
+    fn app_reload_checks_snapshot_build_id() {
+        assert!(APP_JS.contains("const appBuildId = String(window.__QCOLD_APP_BUILD_ID__ || '')"));
+        assert!(APP_JS.contains("function snapshotBuildId(snapshot)"));
+        assert!(APP_JS.contains("function reloadForNewAppBuild(nextBuildId)"));
+        assert!(APP_JS.contains("qcold_build"));
+        assert!(APP_JS.contains("reloadForNewAppBuild(snapshotBuildId(snapshot))"));
+    }
+
+    #[test]
     fn queue_tabs_assets_are_embedded() {
         assert!(INDEX_HTML.contains("id=\"queue-tabs\""));
         assert!(INDEX_HTML.contains("id=\"create-queue-tab\""));

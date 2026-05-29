@@ -1,6 +1,8 @@
 const tg = window.Telegram && window.Telegram.WebApp;
     if (tg) { tg.ready(); tg.expand(); }
 
+    const appBuildId = String(window.__QCOLD_APP_BUILD_ID__ || '');
+    let appBuildReloading = false;
     let state = null;
     let model = null;
     const status = document.getElementById('status');
@@ -146,6 +148,20 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!label) return '';
       const shortId = shortAgentId(agentId);
       return shortId && shortId !== label ? `agent ${label} / ${shortId}` : `agent ${label}`;
+    }
+
+    function snapshotBuildId(snapshot) {
+      return String(snapshot?.state?.app_build_id || snapshot?.app_build_id || '');
+    }
+
+    function reloadForNewAppBuild(nextBuildId) {
+      if (!nextBuildId || !appBuildId || nextBuildId === appBuildId || appBuildReloading) return false;
+      appBuildReloading = true;
+      setLiveState('Updating', 'warn');
+      const url = new URL(window.location.href);
+      url.searchParams.set('qcold_build', nextBuildId.replace(/[^A-Za-z0-9._-]/g, '-'));
+      window.location.replace(url.toString());
+      return true;
     }
 
     function loadQueueDrafts() {

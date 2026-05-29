@@ -1,6 +1,7 @@
 #[derive(Serialize)]
 pub(crate) struct DashboardState {
     pub(crate) generated_at_unix: u64,
+    pub(crate) app_build_id: String,
     pub(crate) daemon_cwd: String,
     pub(crate) repository: RepositoryContext,
     pub(crate) repositories: Vec<RepositoryContext>,

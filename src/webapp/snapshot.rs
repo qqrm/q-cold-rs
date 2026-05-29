@@ -119,6 +119,7 @@ fn dashboard_state() -> DashboardState {
         .map(|err| format!("{err:#}"));
     DashboardState {
         generated_at_unix: unix_now(),
+        app_build_id: crate::QCOLD_VERSION.to_string(),
         daemon_cwd: env::current_dir()
             .map_or_else(|_| "unknown".to_string(), |path| path.display().to_string()),
         repository,
