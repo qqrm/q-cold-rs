@@ -396,7 +396,48 @@ mod queue_taskflow_tests {
     }
 
     #[test]
-    fn remote_native_task_status_propagates_sync_failure() {
+    fn remote_native_task_status_uses_open_record_on_sync_failure() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/false"));
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+        let mut record = task_record_fixture("task-remote-native-sync", "open", &repo);
+        record.agent_id.clone_from(&item.agent_id);
+        state::upsert_task_record(&record).unwrap();
+
+        let status = queue_task_status(&item).unwrap();
+
+        assert_eq!(status.as_deref(), Some("open"));
+    }
+
+    #[test]
+    fn remote_native_task_status_ignores_stale_failed_record_during_recovery_sync_failure() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/false"));
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.recovery_attempts = 1;
+        item.agent_id = Some(queue_agent_id(&item));
+        let mut record = task_record_fixture("task-remote-native-sync", "closed:failed", &repo);
+        record.agent_id.clone_from(&item.agent_id);
+        state::upsert_task_record(&record).unwrap();
+
+        let status = queue_task_status(&item).unwrap();
+
+        assert_eq!(status, None);
+    }
+
+    #[test]
+    fn remote_native_task_status_propagates_sync_failure_without_local_record() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());

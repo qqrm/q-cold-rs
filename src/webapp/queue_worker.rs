@@ -938,14 +938,19 @@ fn retry_index(retries: i64) -> usize {
 }
 
 fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
+    let task_id = format!("task/{}", item.slug);
     if item.remote_launcher.is_some() {
         let required_remote_native_sync = remote_native_requires_task_record_sync(item);
         let sync_result = sync_remote_queue_task_records(item, required_remote_native_sync);
-        if required_remote_native_sync {
-            sync_result.context("remote-native task-record sync failed")?;
+        if let Err(err) = sync_result {
+            if required_remote_native_sync {
+                if let Some(status) = remote_native_sync_failure_fallback_status(item, &task_id)? {
+                    return Ok(status);
+                }
+                return Err(err).context("remote-native task-record sync failed");
+            }
         }
     }
-    let task_id = format!("task/{}", item.slug);
     let Some(record) = state::get_task_record(&task_id)? else {
         return Ok(None);
     };
@@ -953,6 +958,26 @@ fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
         return Ok(None);
     }
     Ok(Some(record.status))
+}
+
+fn remote_native_sync_failure_fallback_status(
+    item: &state::QueueItemRow,
+    task_id: &str,
+) -> Result<Option<Option<String>>> {
+    let Some(record) = state::get_task_record(task_id)? else {
+        return Ok(None);
+    };
+    if !queue_task_record_matches_item(item, &record) {
+        return Ok(None);
+    }
+    if !queue_task_record_is_terminal(&record) {
+        return Ok(Some(Some(record.status)));
+    }
+    if queue_status_auto_recoverable(&record.status) && queue_item_recovery_active_or_pending(item)
+    {
+        return Ok(Some(None));
+    }
+    Ok(None)
 }
 
 fn remote_native_requires_task_record_sync(item: &state::QueueItemRow) -> bool {
