@@ -656,6 +656,28 @@
       }
     }
 
+    function queueTabDeletedOrDeleting(tabId) {
+      pruneQueueTabDeletionTombstones();
+      return Boolean(tabId && deletingQueueTabs.has(tabId));
+    }
+
+    function rememberQueueTabDeletion(tabId, ttlMs = deletedQueueTabTtlMs) {
+      if (!tabId) return;
+      deletingQueueTabs.set(tabId, Date.now() + ttlMs);
+    }
+
+    function forgetQueueTabDeletion(tabId) {
+      if (!tabId) return;
+      deletingQueueTabs.delete(tabId);
+    }
+
+    function pruneQueueTabDeletionTombstones() {
+      const now = Date.now();
+      for (const [tabId, expiresAt] of deletingQueueTabs.entries()) {
+        if (expiresAt <= now) deletingQueueTabs.delete(tabId);
+      }
+    }
+
     function queueItemKeyVariants(item) {
       const keys = [];
       const runItemKey = queueItemKey(item);

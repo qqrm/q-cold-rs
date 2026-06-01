@@ -461,8 +461,9 @@ rows remain removable while the queue is running, and pending graph rows can
 still update their prompt text, wave placement, and dependency gates. Pending
 ordered rows can also be moved among other pending rows after the active
 cursor.
-Bulk clearing removes persisted queue rows, removes the
-matching task records, and terminates any associated executor agents. When the
+Bulk clearing removes persisted queue rows immediately, then cleans up matching
+task records and associated executor agents in the background so the dashboard
+does not wait on slow terminal or remote cleanup. When the
 related terminal agent is still running, that chat can send
 operator messages back into the pane even before Codex telemetry has captured a
 session transcript; if no transcript is available yet, the modal falls back to

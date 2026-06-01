@@ -61,6 +61,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let agentLimitsLoading = false;
     const removingQueueItems = new Map();
     const removedQueueItemTtlMs = 30000;
+    const deletingQueueTabs = new Map();
+    const deletedQueueTabTtlMs = 30000;
     let liveStateHoldUntil = 0;
 
     function applyTheme(choice) {
@@ -697,19 +699,21 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!Array.isArray(tabs) || !tabs.length) {
         return [{ id: 'default', label: 'Task Queue', isDefault: true, active: true }];
       }
-      return tabs.map((tab) => ({
-        id: tab.id || 'default',
-        label: tab.label || 'Queue',
-        runId: tab.run_id || '',
-        isDefault: Boolean(tab.is_default),
-        active: Boolean(tab.active),
-        running: Boolean(tab.running),
-        status: tab.status || '',
-        count: Number(tab.count || 0),
-        message: tab.message || '',
-        run: tab.run || null,
-        records: Array.isArray(tab.records) ? tab.records : [],
-      }));
+      return tabs
+        .map((tab) => ({
+          id: tab.id || 'default',
+          label: tab.label || 'Queue',
+          runId: tab.run_id || '',
+          isDefault: Boolean(tab.is_default),
+          active: Boolean(tab.active),
+          running: Boolean(tab.running),
+          status: tab.status || '',
+          count: Number(tab.count || 0),
+          message: tab.message || '',
+          run: tab.run || null,
+          records: Array.isArray(tab.records) ? tab.records : [],
+        }))
+        .filter((tab) => tab.isDefault || !queueTabDeletedOrDeleting(tab.id));
     }
 
     function clearQueueDraft(tabId) {
@@ -822,14 +826,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
         if (!tab.isDefault) {
           const close = document.createElement('span');
           close.className = 'queue-tab-close';
-          close.textContent = 'x';
-          close.title = tab.running ? 'Queue has running work' : 'Delete queue';
+          const deleting = queueTabDeletedOrDeleting(tab.id);
+          close.textContent = deleting ? '...' : 'x';
+          close.title = tab.running ? 'Queue has running work' : deleting ? 'Deleting queue' : 'Delete queue';
           close.setAttribute('aria-label', close.title);
           close.addEventListener('click', (event) => {
             event.stopPropagation();
-            if (!tab.running) deleteQueueTab(tab.id);
+            if (!tab.running && !deleting) deleteQueueTab(tab.id);
           });
-          if (tab.running) close.classList.add('disabled');
+          if (tab.running || deleting) close.classList.add('disabled');
           button.appendChild(close);
         }
         return button;

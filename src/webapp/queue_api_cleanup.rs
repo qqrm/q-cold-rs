@@ -26,6 +26,30 @@ fn cleanup_queue_item_artifacts(
     cleanup_existing_task_agent_artifacts(&task_id, task.as_ref(), agent_id)
 }
 
+#[cfg(test)]
+fn cleanup_queue_items_artifacts_deferred(items: Vec<state::QueueItemRow>) {
+    cleanup_queue_items_artifacts_best_effort(items);
+}
+
+#[cfg(not(test))]
+fn cleanup_queue_items_artifacts_deferred(items: Vec<state::QueueItemRow>) {
+    if items.is_empty() {
+        return;
+    }
+    thread::spawn(move || cleanup_queue_items_artifacts_best_effort(items));
+}
+
+fn cleanup_queue_items_artifacts_best_effort(items: Vec<state::QueueItemRow>) {
+    for item in items {
+        if let Err(err) = cleanup_queue_item_artifacts(&item, None, None) {
+            eprintln!(
+                "Q-COLD queue cleanup failed for {}:{}: {err:#}",
+                item.run_id, item.id
+            );
+        }
+    }
+}
+
 fn cleanup_task_agent_artifacts(task_id: Option<&str>, agent_id: Option<&str>) -> Result<()> {
     let task_id = task_id
         .filter(|id| !id.trim().is_empty())

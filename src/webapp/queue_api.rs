@@ -396,11 +396,10 @@ fn handle_queue_tab_delete_result(headers: &HeaderMap, payload: &QueueTabRequest
         if queue_run_has_live_work(&run, &items) {
             bail!("cannot delete a queue tab while it has running work");
         }
-        for item in items {
-            let item = state::delete_web_queue_item(&run.id, &item.id)?;
-            cleanup_queue_item_artifacts(&item, None, None)?;
-        }
-        state::delete_empty_web_queue_run(&run.id)?;
+        let cleanup_items = state::delete_web_queue_run_items(&run.id)?;
+        state::delete_web_queue_tab(&tab_id)?;
+        cleanup_queue_items_artifacts_deferred(cleanup_items);
+        return Ok(());
     }
     state::delete_web_queue_tab(&tab_id)
 }
@@ -932,7 +931,7 @@ fn handle_queue_clear_result(headers: &HeaderMap, payload: &QueueClearRequest) -
         .as_deref()
         .map(clean_queue_run_id)
         .filter(|run_id| !run_id.is_empty());
-    let (run, items) = match requested_run_id {
+    let (run, _items) = match requested_run_id {
         Some(run_id) => state::load_web_queue_run(&run_id)?,
         None => state::load_web_queue()?,
     };
@@ -945,12 +944,8 @@ fn handle_queue_clear_result(headers: &HeaderMap, payload: &QueueClearRequest) -
     ) {
         state::request_web_queue_stop(Some(&run.id))?;
     }
-    let mut removed = 0;
-    for item in items {
-        let item = state::delete_web_queue_item(&run.id, &item.id)?;
-        cleanup_queue_item_artifacts(&item, None, None)?;
-        removed += 1;
-    }
-    state::delete_empty_web_queue_run(&run.id)?;
+    let cleanup_items = state::delete_web_queue_run_items(&run.id)?;
+    let removed = cleanup_items.len();
+    cleanup_queue_items_artifacts_deferred(cleanup_items);
     Ok(removed)
 }

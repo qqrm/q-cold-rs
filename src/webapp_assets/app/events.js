@@ -774,8 +774,18 @@
 
     async function deleteQueueTab(tabId) {
       const tab = queueTabsModel.find((candidate) => candidate.id === tabId);
-      if (!tab || tab.isDefault || tab.running) return;
+      if (!tab || tab.isDefault || tab.running || queueTabDeletedOrDeleting(tabId)) return;
+      rememberQueueTabDeletion(tabId);
       appendLocalMessage('status', 'Deleting queue');
+      clearQueueDraft(tabId);
+      const fallback = queueTabsModel.find((candidate) => candidate.id !== tabId);
+      if (activeQueueTabId === tabId) {
+        activeQueueTabId = fallback?.id || 'default';
+        localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
+      }
+      queueTabsModel = queueTabsModel.filter((candidate) => candidate.id !== tabId);
+      syncQueueFromSnapshot();
+      renderQueue();
       try {
         const response = await fetch('/api/queue/tab/delete', {
           method: 'POST',
@@ -784,18 +794,16 @@
         });
         const payload = await response.json().catch(() => ({}));
         if (!response.ok || payload.ok === false) {
+          forgetQueueTabDeletion(tabId);
           appendLocalMessage('error', payload.output || 'failed to delete queue');
+          await loadSnapshot();
           return;
-        }
-        clearQueueDraft(tabId);
-        if (activeQueueTabId === tabId) {
-          const fallback = queueTabsModel.find((candidate) => candidate.id !== tabId);
-          activeQueueTabId = fallback?.id || 'default';
-          localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
         }
         await loadSnapshot();
       } catch (err) {
+        forgetQueueTabDeletion(tabId);
         appendLocalMessage('error', String(err));
+        await loadSnapshot();
       }
     }
 

@@ -193,6 +193,43 @@ pub fn delete_web_queue_tab(tab_id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn delete_web_queue_run_items(run_id: &str) -> Result<Vec<QueueItemRow>> {
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("failed to start web queue run delete transaction")?;
+    let mut statement = tx
+        .prepare(
+            "select id, run_id, position, prompt, slug, repo_root, repo_name, execution_host,
+                    agent_command, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
+                    agent_id, status, message, attempts, recovery_attempts, next_attempt_at_unix,
+                    started_at_unix, updated_at_unix, depends_on_json
+             from web_queue_items
+             where run_id = ?1
+             order by position, id",
+        )
+        .context("failed to prepare web queue run item delete query")?;
+    let items = statement
+        .query_map([run_id], queue_item_from_row)
+        .context("failed to query web queue run items for delete")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode web queue run items for delete")?;
+    drop(statement);
+    tx.execute("delete from web_queue_items where run_id = ?1", [run_id])
+        .context("failed to delete web queue run items")?;
+    tx.execute("delete from web_queue_runs where id = ?1", [run_id])
+        .context("failed to delete web queue run")?;
+    tx.execute(
+        "update web_queue_tabs set run_id = null, updated_at_unix = ?2 where run_id = ?1",
+        params![run_id, unix_now()],
+    )
+    .context("failed to detach deleted web queue run from tabs")?;
+    tx.commit()
+        .context("failed to commit web queue run delete")?;
+    Ok(items)
+}
+
+#[cfg(test)]
 pub fn delete_web_queue_item(run_id: &str, item_id: &str) -> Result<QueueItemRow> {
     delete_web_queue_item_if_exists(run_id, item_id)?
         .with_context(|| format!("unknown queue item: {item_id}"))
@@ -295,19 +332,4 @@ fn delete_web_queue_run(connection: &Connection, run_id: &str) -> Result<()> {
         .execute("delete from web_queue_runs where id = ?1", [run_id])
         .context("failed to delete web queue run")?;
     Ok(())
-}
-
-pub fn delete_empty_web_queue_run(run_id: &str) -> Result<bool> {
-    let connection = open_db()?;
-    let deleted = connection
-        .execute(
-            "delete from web_queue_runs
-             where id = ?1
-               and not exists (
-                   select 1 from web_queue_items where run_id = ?1
-               )",
-            [run_id],
-        )
-        .context("failed to delete empty web queue run")?;
-    Ok(deleted > 0)
 }

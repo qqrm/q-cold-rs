@@ -217,6 +217,31 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_tab_delete_removes_stopped_run_rows() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        state::create_web_queue_tab("client", "Client").unwrap();
+        state::activate_web_queue_tab("client").unwrap();
+        let run = queue_run_fixture("client-run", "stopped", -1);
+        let first = queue_item_fixture("client-run", "first", 0, "success", None);
+        let second = queue_item_fixture("client-run", "second", 1, "failed", None);
+        state::replace_web_queue(&run, &[first, second]).unwrap();
+
+        let response = handle_queue_tab_delete(
+            &HeaderMap::new(),
+            &QueueTabRequest {
+                tab_id: "client".to_string(),
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        assert!(state::load_web_queue_tab("client").unwrap().is_none());
+        assert!(state::load_web_queue_run("client-run").unwrap().0.is_none());
+        assert!(state::load_web_queue_items().unwrap().is_empty());
+    }
+
+    #[test]
     fn queue_tab_snapshot_marks_live_items_running() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

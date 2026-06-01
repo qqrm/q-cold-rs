@@ -724,6 +724,13 @@ mod tests {
         assert!(response.ok, "{}", response.output);
         assert_eq!(response.output, "cleared 0 queue item(s)");
         assert!(state::load_web_queue_run(&run.id).unwrap().0.is_none());
+        assert_eq!(
+            state::load_web_queue_tab("default")
+                .unwrap()
+                .unwrap()
+                .run_id,
+            None
+        );
     }
 
     #[test]
