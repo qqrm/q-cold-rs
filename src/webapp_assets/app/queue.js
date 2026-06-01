@@ -214,6 +214,14 @@
       }
     }
 
+    function syncQueueGatesFromDependents(items = queueItems) {
+      const dependentIds = new Set();
+      for (const item of items) {
+        for (const dependency of item.dependsOn || []) dependentIds.add(dependency);
+      }
+      for (const item of items) item.gatesNext = dependentIds.has(item.id);
+    }
+
     function queueLayoutLocked() {
       return queueHasBackendRun() ? !queueBackendRunEditable() : false;
     }
@@ -321,6 +329,16 @@
     }
 
     function queueGateToggle(item) {
+      if (queueHasBackendRun()) {
+        const dependents = queueDependentsForItem(item);
+        const node = document.createElement('div');
+        node.className = 'queue-graph-gate-toggle';
+        node.title = 'Read-only backend dependency state.';
+        node.textContent = dependents.length
+          ? `Blocks ${dependents.map(queueItemShortLabel).join(', ')}`
+          : 'No dependents';
+        return node;
+      }
       const label = document.createElement('label');
       label.className = 'queue-graph-gate-toggle';
       label.title = 'When enabled, later waves wait for this task to finish successfully.';
@@ -338,6 +356,11 @@
       });
       label.append(input, document.createTextNode('Blocks next wave'));
       return label;
+    }
+
+    function queueDependentsForItem(item) {
+      if (!item?.id) return [];
+      return queueItems.filter((candidate) => (candidate.dependsOn || []).includes(item.id));
     }
 
     function queuePromptPreview(prompt) {

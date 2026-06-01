@@ -91,6 +91,23 @@ mod asset_tests {
     }
 
     #[test]
+    fn backend_graph_cards_use_backend_status_and_dependencies() {
+        let view_start = APP_JS.find("function queueItemView(item)").unwrap();
+        let view = &APP_JS[view_start..];
+        assert!(
+            view.find("if (queueBackendTerminalStatus(item))").unwrap()
+                < view.find("if (activeAgentId)").unwrap()
+        );
+        assert!(APP_JS.contains("function queueBackendTerminalStatus(item)"));
+        assert!(APP_JS.contains("function syncQueueGatesFromDependents(items = queueItems)"));
+        assert!(APP_JS.contains("syncQueueGatesFromDependents(queueItems);"));
+        assert!(APP_JS.contains("gatesNext: false"));
+        assert!(APP_JS.contains("if (queueHasBackendRun()) {\n        const dependents = queueDependentsForItem(item);"));
+        assert!(APP_JS.contains("function queueDependentsForItem(item)"));
+        assert!(APP_JS.contains("No dependents"));
+    }
+
+    #[test]
     fn app_reload_checks_snapshot_build_id() {
         assert!(APP_JS.contains("const appBuildId = String(window.__QCOLD_APP_BUILD_ID__ || '')"));
         assert!(APP_JS.contains("function snapshotBuildId(snapshot)"));

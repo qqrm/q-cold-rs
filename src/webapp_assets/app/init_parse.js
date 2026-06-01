@@ -430,6 +430,14 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const task = taskRecordForQueueItem(item);
       const agentId = queueItemAgentId(item, task);
       const activeAgentId = activeQueueAgentId(item, task);
+      if (queueBackendTerminalStatus(item)) {
+        const fallback = item.status === 'success' ? 'closed successfully' : item.status;
+        return {
+          status: item.status,
+          message: item.message || task?.status || fallback,
+          detail: queueItemDetail(item, task, agentId),
+        };
+      }
       if (task?.status === 'closed:success') {
         return {
           status: 'success',
@@ -557,6 +565,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
       };
     }
 
+    function queueBackendTerminalStatus(item) {
+      return Boolean(item?.runId && ['success', 'failed', 'blocked'].includes(item.status));
+    }
+
     function queueItemDetail(item, task, agentId) {
       const parts = [];
       const repo = queueItemRepository(item);
@@ -648,15 +660,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
           ? queueWaves
           : [];
         clearQueueDraft(activeQueueTabId);
-        const previousItems = new Map(queueItems.map((item) => [item.id, item]));
         pruneQueueRemovalTombstones();
         queueItems = (activeTab.records || [])
           .map(queueItemFromServer)
-          .map((item) => ({
-            ...item,
-            gatesNext: previousItems.get(item.id)?.gatesNext ?? item.gatesNext,
-          }))
           .filter((item) => !queueItemRemovedOrRemoving(item));
+        syncQueueGatesFromDependents(queueItems);
         queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });
         queueRun = {
           running: Boolean(activeTab.running),
@@ -776,7 +784,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         slug: item.slug || '',
         dependsOn: Array.isArray(item.depends_on) ? item.depends_on : [],
         waveId: '',
-        gatesNext: true,
+        gatesNext: false,
         agentId: item.agent_id || '',
         agentCommand: item.agent_command || '',
         executionHost: item.execution_host || '',
