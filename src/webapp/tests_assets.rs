@@ -55,6 +55,18 @@ mod asset_tests {
     }
 
     #[test]
+    fn queue_terminal_lookup_is_after_terminal_chunk_tail() {
+        let terminal_tail = APP_JS.find("function terminalKind(terminal)").unwrap();
+        let lookup = APP_JS.find("function terminalForTaskId(taskId)").unwrap();
+        let bootstrap = APP_JS
+            .find("document.getElementById('close-transcript').addEventListener")
+            .unwrap();
+
+        assert!(terminal_tail < lookup);
+        assert!(lookup < bootstrap);
+    }
+
+    #[test]
     fn graph_queue_active_run_prunes_empty_non_final_waves() {
         assert!(APP_JS.contains("function pruneEmptyBackendQueueWaves(waves, items)"));
         assert!(APP_JS.contains("{ pruneBackendEmpty: true }"));
