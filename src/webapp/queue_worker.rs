@@ -270,6 +270,15 @@ fn queue_item_is_ready_to_spawn(
     item: &state::QueueItemRow,
     items: &[state::QueueItemRow],
 ) -> bool {
+    if queue_item_remote_native(item)
+        && matches!(item.status.as_str(), "starting" | "running")
+        && item
+            .agent_id
+            .as_deref()
+            .is_some_and(|agent_id| remote_native_session_running(item, agent_id))
+    {
+        return false;
+    }
     !queue_item_terminal(&item.status)
         && !queue_item_worker_active(&run.id, &item.id)
         && (!matches!(item.status.as_str(), "starting" | "running")
@@ -796,24 +805,41 @@ fn wait_for_queue_item_closeout(
                     attempts,
                 );
             }
-        } else if queue_item_remote_native(item) {
-            return fail_remote_native_missing_task_record(run_id, item, agent_id, attempts);
-        } else if !agent_running(agent_id) {
-            let message = "agent exited before opening task record".to_string();
-            state::update_web_queue_item(
-                run_id,
-                &item.id,
-                "failed",
-                &message,
-                Some(agent_id),
-                attempts,
-                None,
-            )?;
-            return Ok(QueueItemOutcome::retryable_failure(message));
-        } else {
-            let _ = submit_agent_terminal_pending_paste(agent_id);
+        } else if let Some(outcome) =
+            missing_queue_task_record_outcome(run_id, item, agent_id, attempts)?
+        {
+            return Ok(outcome);
         }
     }
+}
+
+fn missing_queue_task_record_outcome(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    agent_id: &str,
+    attempts: i64,
+) -> Result<Option<QueueItemOutcome>> {
+    if queue_item_remote_native(item) {
+        if remote_native_session_running(item, agent_id) {
+            return Ok(None);
+        }
+        return fail_remote_native_missing_task_record(run_id, item, agent_id, attempts).map(Some);
+    }
+    if agent_running(agent_id) {
+        let _ = submit_agent_terminal_pending_paste(agent_id);
+        return Ok(None);
+    }
+    let message = "agent exited before opening task record".to_string();
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "failed",
+        &message,
+        Some(agent_id),
+        attempts,
+        None,
+    )?;
+    Ok(Some(QueueItemOutcome::retryable_failure(message)))
 }
 
 fn pause_web_queue_item(

@@ -113,6 +113,24 @@ fn remote_native_queue_session(agent_id: &str) -> String {
     format!("qcold-{agent_id}")
 }
 
+fn remote_native_session_running(item: &state::QueueItemRow, agent_id: &str) -> bool {
+    let Some(launcher) = item
+        .remote_launcher
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        return false;
+    };
+    let session = remote_native_queue_session(agent_id);
+    let script = format!("tmux has-session -t {}", queue_shell_quote(&session));
+    Command::new(launcher)
+        .arg("sh")
+        .arg("-lc")
+        .arg(script)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
 fn remote_native_terminal_target(agent_id: &str) -> String {
     format!("remote-tmux:{agent_id}:0.0")
 }
