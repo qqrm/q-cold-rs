@@ -320,12 +320,12 @@ pub fn context_text() -> String {
 }
 
 async fn serve_async(args: &ServeArgs) -> Result<()> {
-    refresh_dashboard_state_cache();
-    start_dashboard_state_cache_refresher();
     let listener = tokio::net::TcpListener::bind(&args.listen)
         .await
         .with_context(|| format!("failed to bind Mini App server on {}", args.listen))?;
     eprintln!("Q-COLD Mini App listening on http://{}", args.listen);
+    refresh_dashboard_state_cache_soon();
+    start_dashboard_state_cache_refresher();
     axum::serve(listener, router())
         .await
         .context("Mini App server failed")
@@ -636,6 +636,7 @@ include!("webapp/queue_worker_recovery.rs");
 include!("webapp/queue_worker_task_packet.rs");
 include!("webapp/queue_worker_reconcile.rs");
 include!("webapp/queue_worker_taskflow.rs");
+include!("webapp/queue_worker_status.rs");
 include!("webapp/terminal_chat.rs");
 include!("webapp/remote_native_terminal.rs");
 include!("webapp/queue_worker_terminal.rs");

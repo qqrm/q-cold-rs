@@ -396,6 +396,78 @@ mod queue_taskflow_tests {
     }
 
     #[test]
+    fn retryable_remote_native_port_forward_failure_rotates_proxy() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-port-rotate", &repo);
+        let mut item = queue_taskflow_item("task-remote-native-port-rotate", &repo, Some("remote-dev-env"));
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.remote_agent_remote_proxy = Some("127.0.0.1:18330".to_string());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let rotated = maybe_rotate_remote_native_proxy_after_failure(
+            &mut item,
+            concat!(
+                "repository remote-agent open contract failed with exit status: 255: ",
+                "Error: remote port forwarding failed for listen port 18330",
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(rotated.as_deref(), Some("127.0.0.1:18331"));
+        assert_eq!(
+            item.remote_agent_remote_proxy.as_deref(),
+            Some("127.0.0.1:18331")
+        );
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(
+            items[0].remote_agent_remote_proxy.as_deref(),
+            Some("127.0.0.1:18331")
+        );
+    }
+
+    #[test]
+    fn remote_native_launch_reserves_new_proxy_when_failed_row_already_owns_port() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-port-reserve", &repo);
+        let mut failed = queue_taskflow_item("task-remote-native-failed", &repo, Some("remote-dev-env"));
+        failed.run_id = run.id.clone();
+        failed.id = "failed".to_string();
+        failed.execution_host = "remote-native".to_string();
+        failed.status = "failed".to_string();
+        failed.remote_agent_remote_proxy = Some("127.0.0.1:18330".to_string());
+        let mut pending = queue_taskflow_item("task-remote-native-pending", &repo, Some("remote-dev-env"));
+        pending.run_id = run.id.clone();
+        pending.id = "pending".to_string();
+        pending.execution_host = "remote-native".to_string();
+        pending.position = 1;
+        pending.remote_agent_remote_proxy = Some("127.0.0.1:18330".to_string());
+        state::replace_web_queue(&run, &[failed, pending.clone()]).unwrap();
+
+        let rotated = reserve_remote_native_proxy(&mut pending).unwrap();
+
+        assert_eq!(rotated.as_deref(), Some("127.0.0.1:18331"));
+        assert_eq!(
+            pending.remote_agent_remote_proxy.as_deref(),
+            Some("127.0.0.1:18331")
+        );
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored = items.iter().find(|item| item.id == "pending").unwrap();
+        assert_eq!(
+            stored.remote_agent_remote_proxy.as_deref(),
+            Some("127.0.0.1:18331")
+        );
+    }
+
+    #[test]
     fn remote_native_task_status_uses_open_record_on_sync_failure() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
@@ -413,6 +485,40 @@ mod queue_taskflow_tests {
         let status = queue_task_status(&item).unwrap();
 
         assert_eq!(status.as_deref(), Some("open"));
+    }
+
+    #[test]
+    fn required_remote_queue_sync_is_throttled_per_launcher_and_repo() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let item = queue_taskflow_item("task-remote-sync-throttle", &repo, Some("remote-dev-env"));
+
+        assert!(remote_queue_sync_due(&item, "remote-dev-env", true));
+        assert!(!remote_queue_sync_due(&item, "remote-dev-env", true));
+    }
+
+    #[test]
+    fn queue_task_status_prefers_newer_recovery_record() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item("task-recovery-link", &repo, None);
+        item.started_at = 100;
+        let mut blocked = task_record_fixture("task-recovery-link", "closed:blocked", &repo);
+        blocked.updated_at = 110;
+        let mut recovery =
+            task_record_fixture("task-recovery-link-recovery", "closed:success", &repo);
+        recovery.updated_at = 120;
+        state::upsert_task_record(&blocked).unwrap();
+        state::upsert_task_record(&recovery).unwrap();
+
+        let status = queue_task_status(&item).unwrap();
+
+        assert_eq!(status.as_deref(), Some("closed:success"));
     }
 
     #[test]

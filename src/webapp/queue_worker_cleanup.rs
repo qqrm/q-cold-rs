@@ -1,4 +1,5 @@
 const CODEX_UPDATE_RESTART_RETRY: &str = "Codex updated and requested restart";
+const REMOTE_PORT_FORWARD_FAILURE_MARKER: &str = "remote port forwarding failed for listen port ";
 
 fn retry_after_queue_agent_launch_failure(agent_id: &str, message: &str) -> QueueItemOutcome {
     let cleanup = cleanup_queue_agent(agent_id);
@@ -110,9 +111,105 @@ fn queue_failure_retries_immediately(message: &str) -> bool {
     message.contains(CODEX_UPDATE_RESTART_RETRY)
 }
 
+fn maybe_rotate_remote_native_proxy_after_failure(
+    item: &mut state::QueueItemRow,
+    message: &str,
+) -> Result<Option<String>> {
+    if !queue_item_remote_native(item) {
+        return Ok(None);
+    }
+    let Some(failed_port) = queue_launch_failure_listen_port(message) else {
+        return Ok(None);
+    };
+    let Some(proxy) = item.remote_agent_remote_proxy.as_deref() else {
+        return Ok(None);
+    };
+    let Some((host, current_port)) = split_queue_proxy_host_port(proxy) else {
+        return Ok(None);
+    };
+    let host = host.to_string();
+    if failed_port != current_port {
+        return Ok(None);
+    }
+    rotate_remote_native_proxy(item, &host, current_port)
+}
+
+fn reserve_remote_native_proxy(item: &mut state::QueueItemRow) -> Result<Option<String>> {
+    if !queue_item_remote_native(item) {
+        return Ok(None);
+    }
+    let Some(proxy) = item.remote_agent_remote_proxy.as_deref() else {
+        return Ok(None);
+    };
+    let Some((host, current_port)) = split_queue_proxy_host_port(proxy) else {
+        return Ok(None);
+    };
+    let host = host.to_string();
+    let conflict = state::load_web_queue_items()?.into_iter().any(|other| {
+        other.remote_agent_remote_proxy.as_deref() == Some(proxy)
+            && (other.run_id != item.run_id || other.id != item.id)
+            && other.status != "success"
+    });
+    if !conflict {
+        return Ok(None);
+    }
+    rotate_remote_native_proxy(item, &host, current_port)
+}
+
+fn rotate_remote_native_proxy(
+    item: &mut state::QueueItemRow,
+    host: &str,
+    current_port: u16,
+) -> Result<Option<String>> {
+    let used = state::load_web_queue_items()?
+        .into_iter()
+        .filter(|other| (other.run_id != item.run_id || other.id != item.id) && other.status != "success")
+        .filter_map(|other| {
+            other
+                .remote_agent_remote_proxy
+                .as_deref()
+                .and_then(split_queue_proxy_host_port)
+                .filter(|(other_host, _)| *other_host == host)
+                .map(|(_, port)| port)
+        })
+        .collect::<HashSet<_>>();
+    let Some(next_port) = next_unused_queue_proxy_port(current_port, &used) else {
+        return Ok(None);
+    };
+    let next_proxy = format!("{host}:{next_port}");
+    state::set_web_queue_item_remote_proxy(&item.run_id, &item.id, &next_proxy)?;
+    item.remote_agent_remote_proxy = Some(next_proxy.clone());
+    Ok(Some(next_proxy))
+}
+
+fn next_unused_queue_proxy_port(current_port: u16, used: &HashSet<u16>) -> Option<u16> {
+    ((u32::from(current_port) + 1)..=u32::from(u16::MAX))
+        .chain(1024..u32::from(current_port))
+        .filter_map(|port| u16::try_from(port).ok())
+        .find(|port| !used.contains(port))
+}
+
+fn split_queue_proxy_host_port(proxy: &str) -> Option<(&str, u16)> {
+    let (host, port) = proxy.rsplit_once(':')?;
+    let port = port.parse().ok()?;
+    if host.trim().is_empty() {
+        return None;
+    }
+    Some((host, port))
+}
+
+fn queue_launch_failure_listen_port(message: &str) -> Option<u16> {
+    let suffix = message.split(REMOTE_PORT_FORWARD_FAILURE_MARKER).nth(1)?;
+    let digits = suffix
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>();
+    digits.parse().ok()
+}
+
 fn handle_queue_launch_outcome(
     run_id: &str,
-    item: &state::QueueItemRow,
+    item: &mut state::QueueItemRow,
     retries: &mut i64,
     outcome: QueueItemOutcome,
 ) -> Result<Option<QueueItemOutcome>> {
@@ -141,9 +238,12 @@ fn handle_queue_launch_outcome(
             Ok(None)
         }
         QueueItemOutcome::Failed {
-            message,
+            mut message,
             retryable: true,
         } if retry_index(*retries) < WEB_QUEUE_RETRY_DELAYS.len() => {
+            if let Some(proxy) = maybe_rotate_remote_native_proxy_after_failure(item, &message)? {
+                let _ = write!(&mut message, "; switched remote proxy to {proxy}");
+            }
             let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(*retries)];
             *retries += 1;
             let next_attempt_at = unix_now().saturating_add(delay);

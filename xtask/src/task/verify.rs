@@ -115,7 +115,9 @@ fn run_web_asset_syntax_check() -> Result<()> {
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
         "src/webapp_assets/app/terminal.js",
+        "src/webapp_assets/app/queue_transcript_lookup.js",
         "src/webapp_assets/app/events.js",
+        "src/webapp_assets/app/events_bootstrap.js",
     ] {
         script.push_str(
             &fs::read_to_string(repo.join(asset))

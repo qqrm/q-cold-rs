@@ -630,6 +630,19 @@ pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> 
     Ok(())
 }
 
+pub fn set_web_queue_item_remote_proxy(run_id: &str, item_id: &str, remote_proxy: &str) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_items
+             set remote_agent_remote_proxy = ?3, updated_at_unix = ?4
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id, remote_proxy, unix_now()],
+        )
+        .context("failed to update web queue item remote proxy")?;
+    Ok(())
+}
+
 pub fn save_terminal_metadata(target: &str, name: Option<&str>, scope: Option<&str>) -> Result<()> {
     let connection = open_db()?;
     if name.is_none() && scope.is_none() {

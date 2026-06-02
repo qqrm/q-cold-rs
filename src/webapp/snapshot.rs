@@ -232,6 +232,7 @@ fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
         .into_iter()
         .map(|(run, items)| (run.id.clone(), (run, items)))
         .collect::<HashMap<_, _>>();
+    let running_agents = running_agent_ids();
     state::load_web_queue_tabs()
         .unwrap_or_default()
         .into_iter()
@@ -239,7 +240,8 @@ fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
             let run_entry = tab.run_id.as_ref().and_then(|run_id| runs.get(run_id));
             let status =
                 run_entry.map_or_else(|| "draft".to_string(), |(run, _)| run.status.clone());
-            let running = run_entry.is_some_and(|(run, items)| queue_run_has_live_work(run, items));
+            let running = run_entry
+                .is_some_and(|(run, items)| queue_run_has_live_work_with_agents(run, items, &running_agents));
             QueueTabSnapshot {
                 id: tab.id,
                 label: tab.label,

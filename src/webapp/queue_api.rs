@@ -393,7 +393,8 @@ fn handle_queue_tab_delete_result(headers: &HeaderMap, payload: &QueueTabRequest
             state::delete_web_queue_tab(&tab_id)?;
             return Ok(());
         };
-        if queue_run_has_live_work(&run, &items) {
+        let running_agents = running_agent_ids();
+        if queue_run_has_live_work_with_agents(&run, &items, &running_agents) {
             bail!("cannot delete a queue tab while it has running work");
         }
         let cleanup_items = state::delete_web_queue_run_items(&run.id)?;
@@ -404,7 +405,11 @@ fn handle_queue_tab_delete_result(headers: &HeaderMap, payload: &QueueTabRequest
     state::delete_web_queue_tab(&tab_id)
 }
 
-fn queue_run_has_live_work(run: &state::QueueRunRow, items: &[state::QueueItemRow]) -> bool {
+fn queue_run_has_live_work_with_agents(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+    running_agents: &HashSet<String>,
+) -> bool {
     if matches!(
         run.status.as_str(),
         "running" | "waiting" | "starting" | "stopping"
@@ -413,7 +418,10 @@ fn queue_run_has_live_work(run: &state::QueueRunRow, items: &[state::QueueItemRo
     }
     items.iter().any(|item| {
         matches!(item.status.as_str(), "running" | "starting" | "waiting")
-            || item.agent_id.as_deref().is_some_and(agent_running)
+            || item
+                .agent_id
+                .as_ref()
+                .is_some_and(|agent_id| running_agents.contains(agent_id))
     })
 }
 

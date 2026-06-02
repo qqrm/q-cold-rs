@@ -851,7 +851,9 @@ const APP_JS: &str = concat!(
     include_str!("../webapp_assets/app/init_parse.js"),
     include_str!("../webapp_assets/app/queue.js"),
     include_str!("../webapp_assets/app/terminal.js"),
+    include_str!("../webapp_assets/app/queue_transcript_lookup.js"),
     include_str!("../webapp_assets/app/events.js"),
+    include_str!("../webapp_assets/app/events_bootstrap.js"),
 );
 const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#101820"/>

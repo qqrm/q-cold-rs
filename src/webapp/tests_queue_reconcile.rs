@@ -151,6 +151,79 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    fn failed_graph_queue_restarts_after_newer_recovery_task_succeeds() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("graph-recovery-record", "failed", 1);
+        run.execution_mode = "graph".to_string();
+        run.message = "closed:blocked".to_string();
+        let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
+        let mut second = queue_item_fixture(&run.id, "second", 1, "failed", Some("agent-2"));
+        second.repo_root = Some(repo.clone());
+        second.message = "closed:blocked".to_string();
+        let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
+        third.repo_root = Some(repo.clone());
+        third.depends_on = vec!["first".to_string(), "second".to_string()];
+        state::replace_web_queue(&run, &[first, second, third]).unwrap();
+
+        let mut blocked = state::new_task_record(
+            "task/task-second".to_string(),
+            "task-flow".to_string(),
+            "second".to_string(),
+            "prompt second".to_string(),
+            "closed:blocked".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/task-second".to_string()),
+            Some("agent-2".to_string()),
+            None,
+        );
+        blocked.updated_at = 100;
+        state::upsert_task_record(&blocked).unwrap();
+        let mut recovery = state::new_task_record(
+            "task/task-second-recovery".to_string(),
+            "task-flow".to_string(),
+            "second recovery".to_string(),
+            "prompt second recovery".to_string(),
+            "closed:success".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/task-second-recovery".to_string()),
+            Some("agent-recovery".to_string()),
+            None,
+        );
+        recovery.updated_at = 200;
+        state::upsert_task_record(&recovery).unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(queue_run_needs_stale_reconcile(&run, &stored_items).unwrap());
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let Some((restarted_run, restarted_items)) =
+            restart_resolved_failed_queue_run(&stored_run.unwrap(), &stored_items).unwrap()
+        else {
+            panic!("expected resolved failed queue to restart");
+        };
+
+        assert_eq!(
+            restarted_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [("first", "success"), ("second", "success"), ("third", "pending")]
+        );
+        assert_eq!(restarted_run.status, "running");
+        assert_eq!(queue_ready_item_ids(&restarted_run, &restarted_items), ids(&["third"]));
+    }
+
+    #[test]
     fn remote_native_running_item_skips_local_agent_failure_message() {
         let mut item = queue_item_fixture(
             "remote-native-run",

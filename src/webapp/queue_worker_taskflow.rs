@@ -39,7 +39,7 @@ fn queue_launch_workspace(item: &state::QueueItemRow) -> Result<QueueLaunchWorks
 
 fn start_remote_native_queue_item(
     run_id: &str,
-    item: &state::QueueItemRow,
+    item: &mut state::QueueItemRow,
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
     let repo_root = queue_item_repo_root(item)?;
@@ -49,14 +49,20 @@ fn start_remote_native_queue_item(
         .remote_launcher
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .context("remote-native queue item requires remote_launcher or selected_remote_launcher")?;
+        .context("remote-native queue item requires remote_launcher or selected_remote_launcher")?
+        .to_string();
+    let rotated_proxy = reserve_remote_native_proxy(item)?;
     let agent_id = queue_agent_id(item);
     let session = remote_native_queue_session(&agent_id);
+    let prerequisite_message = rotated_proxy.as_ref().map_or_else(
+        || "checking remote-agent prerequisites".to_string(),
+        |proxy| format!("checking remote-agent prerequisites via {proxy}"),
+    );
     state::update_web_queue_item(
         run_id,
         &item.id,
         "starting",
-        "checking remote-agent prerequisites",
+        &prerequisite_message,
         Some(&agent_id),
         attempts,
         None,
@@ -78,7 +84,9 @@ fn start_remote_native_queue_item(
     }
     thread::sleep(Duration::from_secs(4));
     let instruction = queue_remote_native_task_instruction(item);
-    if let Err(err) = send_remote_native_instruction(launcher, &repo_root, &session, &instruction) {
+    if let Err(err) =
+        send_remote_native_instruction(&launcher, &repo_root, &session, &instruction)
+    {
         return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
     }
     state::update_web_queue_item(
@@ -590,11 +598,11 @@ fn same_filesystem_path(left: &str, right: &str) -> bool {
     }
 }
 
-fn sync_remote_queue_task_records(item: &state::QueueItemRow, force: bool) -> Result<()> {
+fn sync_remote_queue_task_records(item: &state::QueueItemRow, required: bool) -> Result<()> {
     let Some(launcher) = item.remote_launcher.as_deref() else {
         return Ok(());
     };
-    if !force && !remote_queue_sync_due(item, launcher) {
+    if !remote_queue_sync_due(item, launcher, required) {
         return Ok(());
     }
     let repo_root = queue_item_repo_root(item)?;
@@ -624,8 +632,14 @@ fn sync_remote_queue_task_records(item: &state::QueueItemRow, force: bool) -> Re
     Ok(())
 }
 
-fn remote_queue_sync_due(item: &state::QueueItemRow, launcher: &str) -> bool {
+fn remote_queue_sync_due(item: &state::QueueItemRow, launcher: &str, required: bool) -> bool {
     const REMOTE_QUEUE_SYNC_INTERVAL_SECS: u64 = 15;
+    const REQUIRED_REMOTE_QUEUE_SYNC_INTERVAL_SECS: u64 = 5;
+    let interval = if required {
+        REQUIRED_REMOTE_QUEUE_SYNC_INTERVAL_SECS
+    } else {
+        REMOTE_QUEUE_SYNC_INTERVAL_SECS
+    };
     let repo = item.repo_root.as_deref().unwrap_or("");
     let key = format!("{launcher}\t{repo}");
     let now = unix_now();
@@ -635,7 +649,7 @@ fn remote_queue_sync_due(item: &state::QueueItemRow, launcher: &str) -> bool {
     };
     if sync_times
         .get(&key)
-        .is_some_and(|last| now.saturating_sub(*last) < REMOTE_QUEUE_SYNC_INTERVAL_SECS)
+        .is_some_and(|last| now.saturating_sub(*last) < interval)
     {
         return false;
     }

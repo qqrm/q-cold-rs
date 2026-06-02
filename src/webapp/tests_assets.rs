@@ -102,7 +102,9 @@ mod asset_tests {
         assert!(APP_JS.contains("function syncQueueGatesFromDependents(items = queueItems)"));
         assert!(APP_JS.contains("syncQueueGatesFromDependents(queueItems);"));
         assert!(APP_JS.contains("gatesNext: false"));
-        assert!(APP_JS.contains("if (queueHasBackendRun()) {\n        const dependents = queueDependentsForItem(item);"));
+        assert!(APP_JS.contains(
+            "if (queueHasBackendRun()) {\n        const dependents = queueDependentsForItem(item);"
+        ));
         assert!(APP_JS.contains("function queueDependentsForItem(item)"));
         assert!(APP_JS.contains("No dependents"));
     }

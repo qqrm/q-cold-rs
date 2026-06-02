@@ -217,6 +217,27 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_live_work_uses_precomputed_running_agent_ids() {
+        let run = queue_run_fixture("client-run", "failed", -1);
+        let item = queue_item_fixture("client-run", "client-item", 0, "success", Some("agent-1"));
+        let mut running_agents = HashSet::new();
+
+        assert!(!queue_run_has_live_work_with_agents(
+            &run,
+            std::slice::from_ref(&item),
+            &running_agents
+        ));
+
+        running_agents.insert("agent-1".to_string());
+
+        assert!(queue_run_has_live_work_with_agents(
+            &run,
+            &[item],
+            &running_agents
+        ));
+    }
+
+    #[test]
     fn queue_tab_delete_removes_stopped_run_rows() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
