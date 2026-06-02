@@ -47,6 +47,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     let selectedQueueAgent = localStorage.getItem(queueAgentStorageKey) || '';
     let selectedQueueRepoRoot = localStorage.getItem(queueRepoStorageKey) || '';
     let activeQueueTabId = localStorage.getItem(queueActiveTabStorageKey) || 'default';
+    let queueTabSelectionUserTouched = false;
     let queueTabsModel = [];
     let queueGraphMode = localStorage.getItem(queueGraphModeStorageKey) === '1';
     let queueTabCreating = false;
@@ -688,10 +689,23 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function selectedQueueTabId(tabs) {
       if (!Array.isArray(tabs) || !tabs.length) return 'default';
-      if (tabs.some((tab) => tab.id === activeQueueTabId)) return activeQueueTabId;
+      const backendActiveTab = tabs.find((tab) => tab.active && queueTabHasBackendRun(tab));
+      const currentTab = tabs.find((tab) => tab.id === activeQueueTabId);
+      if (!queueTabSelectionUserTouched && backendActiveTab && !queueTabHasBackendRun(currentTab)) {
+        return backendActiveTab.id;
+      }
+      if (currentTab) return currentTab.id;
       const savedTabId = localStorage.getItem(queueActiveTabStorageKey) || '';
-      if (tabs.some((tab) => tab.id === savedTabId)) return savedTabId;
-      return tabs.find((tab) => tab.active)?.id || tabs[0].id || 'default';
+      const savedTab = tabs.find((tab) => tab.id === savedTabId);
+      if (!queueTabSelectionUserTouched && backendActiveTab && !queueTabHasBackendRun(savedTab)) {
+        return backendActiveTab.id;
+      }
+      if (savedTab) return savedTab.id;
+      return backendActiveTab?.id || tabs.find((tab) => tab.active)?.id || tabs[0].id || 'default';
+    }
+
+    function queueTabHasBackendRun(tab) {
+      return Boolean(tab?.run || tab?.runId);
     }
 
     function queueTabsFromSnapshot() {

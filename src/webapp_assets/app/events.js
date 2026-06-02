@@ -752,6 +752,7 @@
         const tabId = String(payload.output || '').split('\t')[1] || '';
         if (tabId) {
           activeQueueTabId = tabId;
+          queueTabSelectionUserTouched = true;
           localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
         }
         await loadSnapshot();
@@ -767,6 +768,7 @@
       if (!tabId || tabId === activeQueueTabId) return;
       if (!queueHasBackendRun()) saveQueueStorage();
       activeQueueTabId = tabId;
+      queueTabSelectionUserTouched = true;
       localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
       syncQueueFromSnapshot();
       renderQueue();
@@ -781,6 +783,7 @@
       const fallback = queueTabsModel.find((candidate) => candidate.id !== tabId);
       if (activeQueueTabId === tabId) {
         activeQueueTabId = fallback?.id || 'default';
+        queueTabSelectionUserTouched = true;
         localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
       }
       queueTabsModel = queueTabsModel.filter((candidate) => candidate.id !== tabId);
