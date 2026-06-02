@@ -122,12 +122,14 @@ mod asset_tests {
     }
 
     #[test]
-    fn app_reload_checks_snapshot_build_id() {
+    fn app_build_mismatch_warns_without_reloading() {
         assert!(APP_JS.contains("const appBuildId = String(window.__QCOLD_APP_BUILD_ID__ || '')"));
         assert!(APP_JS.contains("function snapshotBuildId(snapshot)"));
-        assert!(APP_JS.contains("function reloadForNewAppBuild(nextBuildId)"));
-        assert!(APP_JS.contains("qcold_build"));
-        assert!(APP_JS.contains("reloadForNewAppBuild(snapshotBuildId(snapshot))"));
+        assert!(APP_JS.contains("function noticeNewAppBuild(nextBuildId)"));
+        assert!(APP_JS.contains("noticeNewAppBuild(snapshotBuildId(snapshot));"));
+        assert!(APP_JS.contains("Dashboard assets changed; state updates remain live"));
+        assert!(!APP_JS.contains("window.location.replace"));
+        assert!(!APP_JS.contains("qcold_build"));
     }
 
     #[test]
