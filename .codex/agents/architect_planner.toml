@@ -3,7 +3,7 @@ description = "Architecture specialist for orchestration, adapter boundaries, re
 model = "gpt-5.5"
 approval_policy = "never"
 sandbox_mode = "read-only"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 model_verbosity = "low"
 
 developer_instructions = """

@@ -1,4 +1,5 @@
 model = "gpt-5.5"
+model_reasoning_effort = "xhigh"
 personality = "pragmatic"
 project_doc_max_bytes = 32768
 approval_policy = "never"
@@ -26,7 +27,7 @@ Read the smallest relevant slice first.
 For non-trivial work, decompose first, route roles via `.codex/AGENT_REGISTRY.md`, and include matching
 persona prompts when delegating.
 Keep root ownership of sequencing/integration/validation/closeout, and prefer the cheapest sufficient worker.
-Reserve `gpt-5.5` high-reasoning work for root orchestration, architecture, and quality review.
+Use `gpt-5.5` extra-high reasoning as the default agent model tier.
 Keep delegated asks in English unless the task output requires another language.
 Keep all visible agent-authored interim output in English, including status updates, plans, reasoning
 summaries, review notes, handoff notes, task-flow control messages, delegated asks, commit messages, and

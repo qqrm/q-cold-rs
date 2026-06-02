@@ -3,7 +3,7 @@ description = "Review and validation specialist for regression risk, coverage, r
 model = "gpt-5.5"
 approval_policy = "never"
 sandbox_mode = "read-only"
-model_reasoning_effort = "high"
+model_reasoning_effort = "xhigh"
 model_verbosity = "low"
 
 developer_instructions = """
