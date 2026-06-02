@@ -2,7 +2,6 @@
 mod tests {
     use super::*;
 
-    static REVIEWER_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     #[test]
     fn sequence_anchor_is_zero_padded_operator_order() {
         assert_eq!(sequence_anchor(1).as_deref(), Some("001"));
@@ -217,7 +216,6 @@ mod tests {
             historical_flow_problem: historical_flow_problem(&task_status),
             closeout_failure_phase: None,
             closeout_failure_error: None,
-            pre_merge_review: None,
             primary_clean: false,
             worktree_removed: true,
             branch_removed: false,
@@ -242,18 +240,6 @@ mod tests {
     fn failed_closeout_receipt_separates_current_and_historical_problems() {
         let task_status =
             parse_worktree_status_summary("UU src/lib.rs\n M README.md\n".to_string());
-        let review = PreMergeReviewMetadata {
-            status: "block".into(),
-            summary: "review found a blocking issue".into(),
-            reviewer: "test".into(),
-            report: BUNDLE_PRE_MERGE_REVIEW_REPORT.into(),
-            metadata: BUNDLE_PRE_MERGE_REVIEW_ENV.into(),
-            started_at: 1,
-            finished_at: 2,
-            task_head: "abc".into(),
-            fingerprint: "123".into(),
-            finding_count: 1,
-        };
         let receipt = TerminalReceipt {
             outcome: "failed-closeout",
             message: None,
@@ -263,7 +249,6 @@ mod tests {
             historical_flow_problem: historical_flow_problem(&task_status),
             closeout_failure_phase: Some("deliver-to-primary"),
             closeout_failure_error: Some("task rebase failed"),
-            pre_merge_review: Some(&review),
             primary_clean: false,
             worktree_removed: false,
             branch_removed: false,
@@ -279,194 +264,8 @@ mod tests {
         assert!(rendered.contains("HISTORICAL_FLOW_PROBLEM=task_worktree_conflicts"));
         assert!(rendered.contains("CLOSEOUT_FAILURE_PHASE=deliver-to-primary"));
         assert!(rendered.contains("CLOSEOUT_FAILURE_ERROR='task rebase failed'"));
-        assert!(rendered.contains("PRE_MERGE_REVIEW_REPORT=evidence/pre-merge-review.md"));
-        assert!(rendered.contains("PRE_MERGE_REVIEW_STATUS=block"));
         assert!(rendered.contains("TASK_WORKTREE_REMOVED=no"));
         assert!(rendered.contains("LOCAL_TASK_BRANCH_REMOVED=no"));
-    }
-
-    #[test]
-    fn injected_pre_merge_reviewer_persists_report_and_prompt() {
-        let _lock = REVIEWER_ENV_LOCK.lock().unwrap();
-        let _guard = EnvVarGuard::capture(REVIEWER_COMMAND_ENV);
-        let root = unique_test_dir("qcold-pre-merge-review");
-        let mut task = test_task_env();
-        task.task_worktree = root.join("task");
-        task.primary_repo_path = root.join("primary");
-        fs::create_dir_all(&task.task_worktree).unwrap();
-        fs::create_dir_all(&task.primary_repo_path).unwrap();
-        run_git_in(&task.task_worktree, ["init"]);
-        run_git_in(&task.task_worktree, ["config", "user.name", "tester"]);
-        run_git_in(&task.task_worktree, ["config", "user.email", "tester@example.com"]);
-        fs::write(task.task_worktree.join("README.md"), "seed\n").unwrap();
-        run_git_in(&task.task_worktree, ["add", "README.md"]);
-        run_git_in(&task.task_worktree, ["commit", "-m", "seed"]);
-        std::env::set_var(
-            REVIEWER_COMMAND_ENV,
-            "cat > \"$QCOLD_REVIEW_OUTPUT\" <<'QCOLD_REVIEW'\n\
-             REVIEW_STATUS=pass\n\
-             REVIEW_SUMMARY=No blocking findings.\n\
-             - Reviewed adapter boundary and found no blocking drift.\n\
-             QCOLD_REVIEW",
-        );
-
-        run_pre_merge_review(&task).unwrap();
-
-        let report = fs::read_to_string(task.task_worktree.join(PRE_MERGE_REVIEW_PATH)).unwrap();
-        let prompt =
-            fs::read_to_string(task.task_worktree.join(PRE_MERGE_REVIEW_PROMPT_PATH)).unwrap();
-        let metadata =
-            fs::read_to_string(task.task_worktree.join(PRE_MERGE_REVIEW_ENV_PATH)).unwrap();
-        assert!(report.contains("REVIEW_STATUS=pass"));
-        assert!(prompt.contains("Original task request:"));
-        assert!(prompt.contains(&task.task_description));
-        assert!(prompt.contains("Compare the implementation against the original task request"));
-        assert!(prompt.contains("complete, tested, documented"));
-        assert!(prompt.contains("Check architecture and adapter boundaries."));
-        assert!(metadata.contains("PRE_MERGE_REVIEW_STATUS=pass"));
-        assert!(metadata.contains("PRE_MERGE_REVIEW_SUMMARY='No blocking findings.'"));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn pre_merge_review_blocks_without_pass_status() {
-        let report = "REVIEW_STATUS=block\n\
-                      REVIEW_SUMMARY=Finding\n\
-                      - Finding is argued with enough detail.\n";
-        let verdict = parse_pre_merge_review_report(report).unwrap();
-
-        assert_eq!(verdict.status, "block");
-        assert_eq!(verdict.summary, "Finding");
-    }
-
-    #[test]
-    fn pre_merge_review_rejects_vacuous_pass() {
-        let report = "REVIEW_STATUS=pass\nREVIEW_SUMMARY=No blocking findings.\n";
-        let error = parse_pre_merge_review_report(report)
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("no argued finding bullet"));
-    }
-
-    #[test]
-    fn pre_merge_review_rejects_missing_status() {
-        let error = parse_pre_merge_review_report("No verdict\n")
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("must start with REVIEW_STATUS"));
-    }
-
-    #[test]
-    fn pre_merge_review_requires_status_as_first_line() {
-        let report = "Intro\n\
-                      REVIEW_STATUS=pass\n\
-                      REVIEW_SUMMARY=No blocking findings.\n\
-                      - Finding is argued with enough detail.\n";
-        let error = parse_pre_merge_review_report(report)
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("must start with REVIEW_STATUS"));
-    }
-
-    #[test]
-    fn pre_merge_review_rejects_review_target_mutation() {
-        let _lock = REVIEWER_ENV_LOCK.lock().unwrap();
-        let _guard = EnvVarGuard::capture(REVIEWER_COMMAND_ENV);
-        let root = unique_test_dir("qcold-pre-merge-review-mutation");
-        let mut task = test_task_env();
-        task.task_worktree = root.join("task");
-        task.primary_repo_path = root.join("primary");
-        fs::create_dir_all(&task.task_worktree).unwrap();
-        fs::create_dir_all(&task.primary_repo_path).unwrap();
-        run_git_in(&task.task_worktree, ["init"]);
-        run_git_in(&task.task_worktree, ["config", "user.name", "tester"]);
-        run_git_in(&task.task_worktree, ["config", "user.email", "tester@example.com"]);
-        fs::write(task.task_worktree.join("README.md"), "seed\n").unwrap();
-        run_git_in(&task.task_worktree, ["add", "README.md"]);
-        run_git_in(&task.task_worktree, ["commit", "-m", "seed"]);
-        std::env::set_var(
-            REVIEWER_COMMAND_ENV,
-            "cat > \"$QCOLD_REVIEW_OUTPUT\" <<'QCOLD_REVIEW'\n\
-             REVIEW_STATUS=pass\n\
-             REVIEW_SUMMARY=No blocking findings.\n\
-             - Reviewed adapter boundary and found no blocking drift.\n\
-             QCOLD_REVIEW\n\
-             printf 'mutated\\n' >> README.md",
-        );
-
-        let error = run_pre_merge_review(&task).unwrap_err().to_string();
-
-        assert!(error.contains("pre-merge reviewer changed the review target"));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn pre_merge_review_rejects_untracked_content_mutation() {
-        let _lock = REVIEWER_ENV_LOCK.lock().unwrap();
-        let _guard = EnvVarGuard::capture(REVIEWER_COMMAND_ENV);
-        let root = unique_test_dir("qcold-pre-merge-review-untracked-mutation");
-        let mut task = test_task_env();
-        task.task_worktree = root.join("task");
-        task.primary_repo_path = root.join("primary");
-        fs::create_dir_all(&task.task_worktree).unwrap();
-        fs::create_dir_all(&task.primary_repo_path).unwrap();
-        run_git_in(&task.task_worktree, ["init"]);
-        run_git_in(&task.task_worktree, ["config", "user.name", "tester"]);
-        run_git_in(&task.task_worktree, ["config", "user.email", "tester@example.com"]);
-        fs::write(task.task_worktree.join("README.md"), "seed\n").unwrap();
-        fs::write(task.task_worktree.join("deliverable.txt"), "before\n").unwrap();
-        run_git_in(&task.task_worktree, ["add", "README.md"]);
-        run_git_in(&task.task_worktree, ["commit", "-m", "seed"]);
-        std::env::set_var(
-            REVIEWER_COMMAND_ENV,
-            "cat > \"$QCOLD_REVIEW_OUTPUT\" <<'QCOLD_REVIEW'\n\
-             REVIEW_STATUS=pass\n\
-             REVIEW_SUMMARY=No blocking findings.\n\
-             - Reviewed adapter boundary and found no blocking drift.\n\
-             QCOLD_REVIEW\n\
-             printf 'after\\n' >> deliverable.txt",
-        );
-
-        let error = run_pre_merge_review(&task).unwrap_err().to_string();
-
-        assert!(error.contains("pre-merge reviewer changed the review target"));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn pre_merge_review_rejects_task_prefix_deliverable_mutation() {
-        let _lock = REVIEWER_ENV_LOCK.lock().unwrap();
-        let _guard = EnvVarGuard::capture(REVIEWER_COMMAND_ENV);
-        let root = unique_test_dir("qcold-pre-merge-review-task-prefix-mutation");
-        let mut task = test_task_env();
-        task.task_worktree = root.join("task");
-        task.primary_repo_path = root.join("primary");
-        fs::create_dir_all(&task.task_worktree).unwrap();
-        fs::create_dir_all(&task.primary_repo_path).unwrap();
-        run_git_in(&task.task_worktree, ["init"]);
-        run_git_in(&task.task_worktree, ["config", "user.name", "tester"]);
-        run_git_in(&task.task_worktree, ["config", "user.email", "tester@example.com"]);
-        fs::write(task.task_worktree.join("README.md"), "seed\n").unwrap();
-        fs::write(task.task_worktree.join(".task-report"), "before\n").unwrap();
-        run_git_in(&task.task_worktree, ["add", "README.md"]);
-        run_git_in(&task.task_worktree, ["commit", "-m", "seed"]);
-        std::env::set_var(
-            REVIEWER_COMMAND_ENV,
-            "cat > \"$QCOLD_REVIEW_OUTPUT\" <<'QCOLD_REVIEW'\n\
-             REVIEW_STATUS=pass\n\
-             REVIEW_SUMMARY=No blocking findings.\n\
-             - Reviewed adapter boundary and found no blocking drift.\n\
-             QCOLD_REVIEW\n\
-             printf 'after\\n' >> .task-report",
-        );
-
-        let error = run_pre_merge_review(&task).unwrap_err().to_string();
-
-        assert!(error.contains("pre-merge reviewer changed the review target"));
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

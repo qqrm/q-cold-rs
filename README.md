@@ -731,32 +731,16 @@ which defaults to 24 hours.
 This repository follows the task-flow and delegation discipline captured in
 [`AGENTS.md`](AGENTS.md). Q-COLD owns a minimal self-hosted task-flow adapter
 for dogfooding: managed worktrees are created under `../WT/qcold/`, success
-closeout runs `cargo fmt --check` plus the serial `cargo-qcold` unit suite,
-then runs a mandatory pre-merge quality review before delivery. The reviewer
-prompt includes the original task request and requires the reviewer to check
-request fit, completeness, tests/docs for changed behavior, adapter
-boundaries, and implementation quality. The reviewer must return
-`REVIEW_STATUS=pass` or `REVIEW_STATUS=block` plus argued criticism, a
-`REVIEW_SUMMARY=...` line, and at least one argued finding bullet. Missing,
-failed, vacuous, or blocking review output stops success closeout before
-merge/push. Set `QCOLD_CLOSEOUT_REVIEWER_COMMAND` to an injectable reviewer
-command for one process. Q-COLD passes
-`QCOLD_REVIEW_PROMPT` and `QCOLD_REVIEW_OUTPUT`; the command should read the
-prompt and write the final report to the output path. Without that override,
-the self-hosted adapter uses `c1 exec` in read-only mode for the review.
-Success closeout prints `task-closeout-phase` `start`/`ok` rows and
-`task-closeout-review` `started`/`finished` rows so long review waits are
-visible before the final terminal receipt. After a passing review, closeout
-fast-forwards the primary checkout to the current
-remote base, rebases the task branch onto that base, pushes the base branch to
-`origin`, and refreshes the remote-tracking ref before terminal cleanup.
-Terminal task bundles are self-contained ZIP archives. They include root
-`summary.md` for human handoff, `metadata/bundle.env`,
-`metadata/terminal-receipt.env`, promoted task logs under `logs/`, focused git
-evidence under `evidence/`, the pre-merge review report at
-`evidence/pre-merge-review.md`, structured review metadata at
-`metadata/pre-merge-review.env`, reviewer prompt and command diagnostics under
-`evidence/`, and a git-visible repo snapshot under `repo/`.
+closeout runs `cargo fmt --check` plus the serial `cargo-qcold` unit suite
+before delivery. Success closeout prints `task-closeout-phase` `start`/`ok`
+rows for each closeout phase before the final terminal receipt. Closeout
+fast-forwards the primary checkout to the current remote base, rebases the task
+branch onto that base, pushes the base branch to `origin`, and refreshes the
+remote-tracking ref before terminal cleanup. Terminal task bundles are
+self-contained ZIP archives. They include root `summary.md` for human handoff,
+`metadata/bundle.env`, `metadata/terminal-receipt.env`, promoted task logs
+under `logs/`, focused git evidence under `evidence/`, and a git-visible repo
+snapshot under `repo/`.
 Generated local output families such as `target/`, `build/`, `dist/`,
 `node_modules/`, and `bundles/` are excluded from that snapshot. If success
 closeout fails after task state is available, the adapter records

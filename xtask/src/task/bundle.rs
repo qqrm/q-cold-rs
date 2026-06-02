@@ -34,7 +34,6 @@ fn create_task_archive_bundle(task: &TaskEnv) -> Result<PathBuf> {
         write_preliminary_task_summary(&staging, task, &bundle, &task_head, dirty)?;
         write_task_bundle_evidence(&evidence, task)?;
         copy_task_metadata(task, &metadata)?;
-        copy_pre_merge_review_artifacts(task, &metadata, &evidence)?;
         copy_task_logs(task, &logs)?;
         copy_repo_snapshot(&task.task_worktree, &repo)?;
 
@@ -143,9 +142,6 @@ fn write_task_bundle_env(metadata: &Path, task: &TaskEnv, task_head: &str, dirty
         output.push_str(&shell_quote(value));
         output.push('\n');
     }
-    if let Some(review) = read_pre_merge_review_metadata(task) {
-        push_pre_merge_review_env(&mut output, &review);
-    }
     output.push_str("BUNDLE_CREATED_UNIX=");
     output.push_str(&unix_now().to_string());
     output.push('\n');
@@ -163,10 +159,6 @@ fn write_task_bundle_manifest(metadata: &Path) -> Result<()> {
          TASK_METADATA_ROOT=metadata/\n\
          TASK_LOG_ROOT=logs/\n\
          TASK_EVIDENCE_ROOT=evidence/\n\
-         PRE_MERGE_REVIEW_METADATA=metadata/pre-merge-review.env\n\
-         PRE_MERGE_REVIEW_REPORT=evidence/pre-merge-review.md\n\
-         PRE_MERGE_REVIEW_PROMPT=evidence/pre-merge-review-prompt.md\n\
-         PRE_MERGE_REVIEW_COMMAND_LOG=evidence/pre-merge-review-command.log\n\
          REPO_SNAPSHOT_ROOT=repo/\n\
          REPO_SNAPSHOT_SELECTION=tracked plus untracked non-ignored git-visible paths\n\
          SKIPPED_PATH=.git\n\
@@ -178,35 +170,6 @@ fn write_task_bundle_manifest(metadata: &Path) -> Result<()> {
          SKIPPED_PATH=node_modules\n",
     )?;
     Ok(())
-}
-
-fn push_pre_merge_review_env(output: &mut String, review: &PreMergeReviewMetadata) {
-    for (key, value) in [
-        ("PRE_MERGE_REVIEW_STATUS", review.status.clone()),
-        ("PRE_MERGE_REVIEW_SUMMARY", review.summary.clone()),
-        ("PRE_MERGE_REVIEW_REVIEWER", review.reviewer.clone()),
-        ("PRE_MERGE_REVIEW_REPORT", review.report.clone()),
-        ("PRE_MERGE_REVIEW_METADATA", review.metadata.clone()),
-        (
-            "PRE_MERGE_REVIEW_STARTED_AT",
-            review.started_at.to_string(),
-        ),
-        (
-            "PRE_MERGE_REVIEW_FINISHED_AT",
-            review.finished_at.to_string(),
-        ),
-        ("PRE_MERGE_REVIEW_TASK_HEAD", review.task_head.clone()),
-        ("PRE_MERGE_REVIEW_FINGERPRINT", review.fingerprint.clone()),
-        (
-            "PRE_MERGE_REVIEW_FINDING_COUNT",
-            review.finding_count.to_string(),
-        ),
-    ] {
-        output.push_str(key);
-        output.push('=');
-        output.push_str(&shell_quote(&value));
-        output.push('\n');
-    }
 }
 
 fn write_preliminary_task_summary(
@@ -265,26 +228,6 @@ fn copy_task_logs(task: &TaskEnv, logs: &Path) -> Result<()> {
     let source = task.task_worktree.join(".task/logs");
     if source.is_dir() {
         copy_dir_all(&source, logs)?;
-    }
-    Ok(())
-}
-
-fn copy_pre_merge_review_artifacts(task: &TaskEnv, metadata: &Path, evidence: &Path) -> Result<()> {
-    let report = task.task_worktree.join(PRE_MERGE_REVIEW_PATH);
-    if report.is_file() {
-        fs::copy(report, evidence.join("pre-merge-review.md"))?;
-    }
-    let env = task.task_worktree.join(PRE_MERGE_REVIEW_ENV_PATH);
-    if env.is_file() {
-        fs::copy(env, metadata.join("pre-merge-review.env"))?;
-    }
-    let prompt = task.task_worktree.join(PRE_MERGE_REVIEW_PROMPT_PATH);
-    if prompt.is_file() {
-        fs::copy(prompt, evidence.join("pre-merge-review-prompt.md"))?;
-    }
-    let command_log = task.task_worktree.join(PRE_MERGE_REVIEW_COMMAND_LOG_PATH);
-    if command_log.is_file() {
-        fs::copy(command_log, evidence.join("pre-merge-review-command.log"))?;
     }
     Ok(())
 }
@@ -389,11 +332,6 @@ fn render_terminal_summary(receipt: &TerminalReceipt<'_>, bundle: &Path) -> Stri
         .filter(|phase| !phase.trim().is_empty())
     {
         push_summary_line(&mut summary, "Failure phase", &format!("`{}`", phase.trim()));
-    }
-    if let Some(review) = receipt.pre_merge_review {
-        push_summary_line(&mut summary, "Pre-merge review", &format!("`{}`", review.status));
-        push_summary_line(&mut summary, "Review summary", review.summary.trim());
-        push_summary_line(&mut summary, "Reviewer report", &format!("`{}`", review.report));
     }
     push_summary_line(
         &mut summary,
@@ -501,9 +439,6 @@ fn render_terminal_receipt(receipt: &TerminalReceipt<'_>) -> String {
         output.push('=');
         output.push_str(&shell_quote(&value));
         output.push('\n');
-    }
-    if let Some(review) = receipt.pre_merge_review {
-        push_pre_merge_review_env(&mut output, review);
     }
     output
 }

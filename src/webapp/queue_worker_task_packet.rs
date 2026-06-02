@@ -211,7 +211,7 @@ fn write_queue_validation_closeout(packet: &mut String, remote_worktree: bool) {
     if remote_worktree {
         let _ = writeln!(
             packet,
-            "  expect: run relevant validation, pass pre-merge review, then terminal closeout"
+            "  expect: run relevant validation, then terminal closeout"
         );
         let _ = writeln!(
             packet,
@@ -220,7 +220,7 @@ fn write_queue_validation_closeout(packet: &mut String, remote_worktree: bool) {
     } else {
         let _ = writeln!(
             packet,
-            "  expect: run relevant validation, pass pre-merge review, then terminal closeout"
+            "  expect: run relevant validation, then terminal closeout"
         );
         let _ = writeln!(
             packet,

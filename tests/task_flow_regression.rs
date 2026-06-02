@@ -191,29 +191,14 @@ fn success_closeout_delivers_task_branch_to_primary_and_pushes_base() {
         .success()
         .stdout(contains("task-closeout\tsuccess\tship"));
     let stdout = stdout_text(&closeout);
-    assert!(stdout.contains("task-closeout-phase\tstart\tpre-merge-review"));
-    assert!(stdout.contains("task-closeout-review\tstarted\t"));
-    assert!(stdout.contains("task-closeout-review\tfinished\texit_status=0"));
-    assert!(stdout.contains("task-closeout-phase\tok\tpre-merge-review"));
-    assert!(stdout.contains("PRE_MERGE_REVIEW_SUMMARY=Fixture review passed."));
+    assert!(stdout.contains("task-closeout-phase\tstart\tdeliver-to-primary"));
     let bundle = path_from_stdout(&stdout, "BUNDLE_PATH");
     let listing = bundle_listing(&bundle);
-    assert!(listing.contains("metadata/pre-merge-review.env"));
-    assert!(listing.contains("evidence/pre-merge-review.md"));
-    let review_env = bundle_extract_env(&bundle, "metadata/pre-merge-review.env");
-    assert_eq!(
-        review_env.get("PRE_MERGE_REVIEW_STATUS"),
-        Some(&"pass".to_string())
-    );
-    assert_eq!(
-        review_env.get("PRE_MERGE_REVIEW_SUMMARY"),
-        Some(&"Fixture review passed.".to_string())
-    );
-    let review_report = bundle_extract(&bundle, "evidence/pre-merge-review.md");
-    assert!(review_report.contains("REVIEW_STATUS=pass"));
+    assert!(listing.contains("metadata/bundle.env"));
+    assert!(listing.contains("metadata/terminal-receipt.env"));
+    assert!(listing.contains("evidence/git-status.txt"));
     let summary = bundle_extract(&bundle, "summary.md");
-    assert!(summary.contains("- Pre-merge review: `pass`"));
-    assert!(summary.contains("- Review summary: Fixture review passed."));
+    assert!(summary.contains("- Outcome: `success`"));
 
     assert!(!worktree.exists());
     assert_eq!(git_output(&fixture.primary, &["status", "--porcelain"]), "");
@@ -226,100 +211,6 @@ fn success_closeout_delivers_task_branch_to_primary_and_pushes_base() {
     assert!(fixture.primary.join("ship.txt").is_file());
     assert!(!fixture.primary.join(".task").exists());
     assert_eq!(git_output(&fixture.primary, &["ls-files", ".task"]), "");
-}
-
-#[test]
-fn success_closeout_reviewer_block_preserves_task_before_delivery() {
-    let fixture = Fixture::new();
-    let open = fixture
-        .run_xtask(&fixture.primary, &["task", "open", "review-block"])
-        .assert()
-        .success();
-    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
-    write_file(&worktree.join("blocked.txt"), "blocked\n");
-
-    let mut closeout = fixture.run_xtask(
-        &worktree,
-        &[
-            "task",
-            "closeout",
-            "--outcome",
-            "success",
-            "--message",
-            "docs: blocked by reviewer",
-        ],
-    );
-    closeout.env(
-        "QCOLD_CLOSEOUT_REVIEWER_COMMAND",
-        "cat > \"$QCOLD_REVIEW_OUTPUT\" <<'QCOLD_REVIEW'\n\
-         REVIEW_STATUS=block\n\
-         REVIEW_SUMMARY=Architecture issue.\n\
-         - Architecture issue is blocking because it bypasses the adapter boundary.\n\
-         QCOLD_REVIEW",
-    );
-    let closeout = closeout
-        .assert()
-        .code(12)
-        .stdout(contains("task-closeout\tfailed-closeout\treview-block"))
-        .stdout(contains("CLOSEOUT_FAILURE_PHASE=pre-merge-review"))
-        .stdout(contains("BUNDLE_PATH="));
-
-    assert!(worktree.exists());
-    assert!(!fixture.primary.join("blocked.txt").exists());
-    assert_eq!(load_task_env(&worktree).status.as_str(), "failed-closeout");
-    let bundle = path_from_stdout(&stdout_text(&closeout), "BUNDLE_PATH");
-    let review_env = bundle_extract_env(&bundle, "metadata/pre-merge-review.env");
-    assert_eq!(
-        review_env.get("PRE_MERGE_REVIEW_STATUS"),
-        Some(&"block".to_string())
-    );
-    let receipt = bundle_extract_env(&bundle, terminal_receipt_relative_path());
-    assert_eq!(
-        receipt.get("CLOSEOUT_FAILURE_PHASE"),
-        Some(&"pre-merge-review".to_string())
-    );
-}
-
-#[test]
-fn success_closeout_reviewer_command_failure_bundles_diagnostics() {
-    let fixture = Fixture::new();
-    let open = fixture
-        .run_xtask(&fixture.primary, &["task", "open", "review-error"])
-        .assert()
-        .success();
-    let worktree = path_from_stdout(&stdout_text(&open), "TASK_WORKTREE");
-    write_file(&worktree.join("error.txt"), "error\n");
-
-    let mut closeout = fixture.run_xtask(
-        &worktree,
-        &[
-            "task",
-            "closeout",
-            "--outcome",
-            "success",
-            "--message",
-            "docs: reviewer command fails",
-        ],
-    );
-    closeout.env(
-        "QCOLD_CLOSEOUT_REVIEWER_COMMAND",
-        "printf 'reviewer exploded\\n' >&2; exit 42",
-    );
-    let closeout = closeout
-        .assert()
-        .code(12)
-        .stdout(contains("task-closeout\tfailed-closeout\treview-error"))
-        .stdout(contains("CLOSEOUT_FAILURE_PHASE=pre-merge-review"))
-        .stdout(contains("BUNDLE_PATH="));
-
-    let bundle = path_from_stdout(&stdout_text(&closeout), "BUNDLE_PATH");
-    let listing = bundle_listing(&bundle);
-    assert!(listing.contains("evidence/pre-merge-review-prompt.md"));
-    assert!(listing.contains("evidence/pre-merge-review-command.log"));
-    let command_log = bundle_extract(&bundle, "evidence/pre-merge-review-command.log");
-    assert!(command_log.contains("reviewer exploded"));
-    assert!(worktree.exists());
-    assert!(!fixture.primary.join("error.txt").exists());
 }
 
 #[test]

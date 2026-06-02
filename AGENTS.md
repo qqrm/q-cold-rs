@@ -191,8 +191,7 @@ fixture or debugging task explicitly needs them.
 ## Iteration Closeout Discipline
 
 - Unless the user explicitly asks to stop before persistence, non-blocked work
-  that changes tracked state must end in a reviewed local commit on the current
-  branch.
+  that changes tracked state must end in a local commit on the current branch.
 - Do not leave a finished implementation as an uncommitted diff. If validation
   is blocked or the change is intentionally not committed, say that explicitly
   and keep the reason visible in the final summary.
@@ -215,13 +214,11 @@ fixture or debugging task explicitly needs them.
   ZIP bundles are retained separately for `QCOLD_BUNDLE_RETENTION_HOURS` or 24
   hours by default.
 - For Q-COLD self-development, successful managed closeout fetches `origin`,
-  runs the mandatory pre-merge quality review after validation and before
-  delivery, fast-forwards the primary checkout to the current remote base,
-  rebases the task branch onto that base, fast-forward integrates it into the
-  primary base branch, pushes that base branch to `origin`, refreshes the
-  remote-tracking ref, and only then marks the task terminal. A local-only
-  commit is not a successful terminal closeout when the push-capable managed
-  flow is available.
+  fast-forwards the primary checkout to the current remote base, rebases the
+  task branch onto that base, fast-forward integrates it into the primary base
+  branch, pushes that base branch to `origin`, refreshes the remote-tracking
+  ref, and only then marks the task terminal. A local-only commit is not a
+  successful terminal closeout when the push-capable managed flow is available.
 
 ## Validation Authority
 
@@ -244,11 +241,6 @@ fixture or debugging task explicitly needs them.
 - `qcold task closeout --outcome success` is terminal task completion
   only when the managed task-flow prerequisites are present and the command
   reaches terminal success. Green local Cargo tests are not task-flow closeout.
-- Success closeout must include the pre-merge quality reviewer result. The
-  reviewer must provide argued criticism and a `REVIEW_STATUS=pass` or
-  `REVIEW_STATUS=block` verdict, a `REVIEW_SUMMARY=...` line, and at least
-  one argued finding bullet. Missing, failed, vacuous, or blocking review
-  output stops integration before merge/push.
 - If a validation command is skipped or fails for environmental reasons, say so
   explicitly in the final summary.
 

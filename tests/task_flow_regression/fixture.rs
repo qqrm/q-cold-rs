@@ -350,14 +350,6 @@ impl Fixture {
             .env("QCOLD_TASKFLOW_USAGE_OUTPUT_TOKENS", "181")
             .env("QCOLD_TASKFLOW_USAGE_TOTAL_TOKENS", "321")
             .env("QCOLD_TASKFLOW_USAGE_CREDITS", "1.25")
-            .env(
-                "QCOLD_CLOSEOUT_REVIEWER_COMMAND",
-                "cat > \"$QCOLD_REVIEW_OUTPUT\" <<'QCOLD_REVIEW'\n\
-                 REVIEW_STATUS=pass\n\
-                 REVIEW_SUMMARY=Fixture review passed.\n\
-                 - Fixture review checked the closeout contract and found no blocking issue.\n\
-                 QCOLD_REVIEW",
-            )
             .env("TELEGRAM_BOT_TOKEN", "test-token")
             .env("TELEGRAM_CHAT_ID", "test-chat")
             .env("TELEGRAM_API_BASE_URL", &self.telegram.base_url)
