@@ -821,6 +821,11 @@ fn missing_queue_task_record_outcome(
 ) -> Result<Option<QueueItemOutcome>> {
     if queue_item_remote_native(item) {
         if remote_native_session_running(item, agent_id) {
+            update_remote_native_missing_record_wait(run_id, item, agent_id, attempts)?;
+            return Ok(None);
+        }
+        if remote_native_launcher_configured(item) {
+            update_remote_native_missing_record_wait(run_id, item, agent_id, attempts)?;
             return Ok(None);
         }
         return fail_remote_native_missing_task_record(run_id, item, agent_id, attempts).map(Some);
@@ -840,6 +845,29 @@ fn missing_queue_task_record_outcome(
         None,
     )?;
     Ok(Some(QueueItemOutcome::retryable_failure(message)))
+}
+
+fn remote_native_launcher_configured(item: &state::QueueItemRow) -> bool {
+    item.remote_launcher
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+}
+
+fn update_remote_native_missing_record_wait(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    agent_id: &str,
+    attempts: i64,
+) -> Result<()> {
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "running",
+        "waiting for remote-native task record visibility after remote-agent open",
+        Some(agent_id),
+        attempts,
+        None,
+    )
 }
 
 fn pause_web_queue_item(
