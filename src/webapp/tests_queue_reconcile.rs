@@ -103,6 +103,38 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    fn remote_native_stale_update_preserves_terminal_queue_item() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("remote-native-terminal-stale-update", "running", -1);
+        run.execution_mode = "graph".to_string();
+        let mut item = queue_item_fixture(&run.id, "remote-stale", 0, "success", None);
+        item.execution_host = "remote-native".to_string();
+        item.remote_launcher = Some("/bin/false".to_string());
+        item.agent_id = Some(queue_agent_id(&item));
+        item.message = "closed successfully remotely".to_string();
+        let agent_id = item.agent_id.clone().unwrap();
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let outcome = update_queue_item_unless_terminal(
+            &run.id,
+            &item.id,
+            "running",
+            "waiting for remote-native task record visibility after remote-agent open",
+            Some(&agent_id),
+            item.attempts,
+            None,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, Some(QueueItemOutcome::Success)));
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(items[0].status, "success");
+        assert_eq!(items[0].message, "closed successfully remotely");
+    }
+
+    #[test]
     fn failed_graph_queue_restarts_after_success_promotion_interruption() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

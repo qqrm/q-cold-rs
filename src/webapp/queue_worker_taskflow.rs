@@ -57,7 +57,7 @@ fn start_remote_native_queue_item(
         || "checking remote-agent prerequisites".to_string(),
         |proxy| format!("checking remote-agent prerequisites via {proxy}"),
     );
-    state::update_web_queue_item(
+    if let Some(outcome) = update_queue_item_unless_terminal(
         run_id,
         &item.id,
         "starting",
@@ -65,7 +65,9 @@ fn start_remote_native_queue_item(
         Some(&agent_id),
         attempts,
         None,
-    )?;
+    )? {
+        return Ok(outcome);
+    }
     if let Err(err) = run_remote_agent_contract(item, &repo_root, "doctor", &session, None, None) {
         return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
     }
@@ -75,7 +77,7 @@ fn start_remote_native_queue_item(
             return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
         }
     };
-    state::update_web_queue_item(
+    if let Some(outcome) = update_queue_item_unless_terminal(
         run_id,
         &item.id,
         "starting",
@@ -83,7 +85,9 @@ fn start_remote_native_queue_item(
         Some(&agent_id),
         attempts,
         None,
-    )?;
+    )? {
+        return Ok(outcome);
+    }
     let open_result = run_remote_agent_contract(
         item,
         &repo_root,
@@ -96,7 +100,7 @@ fn start_remote_native_queue_item(
     if let Err(err) = open_result {
         return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
     }
-    state::update_web_queue_item(
+    if let Some(outcome) = update_queue_item_unless_terminal(
         run_id,
         &item.id,
         "running",
@@ -104,7 +108,9 @@ fn start_remote_native_queue_item(
         Some(&agent_id),
         attempts,
         None,
-    )?;
+    )? {
+        return Ok(outcome);
+    }
     let wait_item = remote_native_running_wait_item(item);
     wait_for_queue_item_closeout(run_id, &wait_item, &agent_id, attempts)
 }
@@ -183,6 +189,30 @@ fn latest_queue_item_terminal_outcome(
     if queue_item_terminal(&item.status) {
         return Ok(Some(QueueItemOutcome::failed(item.message)));
     }
+    Ok(None)
+}
+
+fn update_queue_item_unless_terminal(
+    run_id: &str,
+    item_id: &str,
+    status: &str,
+    message: &str,
+    agent_id: Option<&str>,
+    attempts: i64,
+    next_attempt_at: Option<u64>,
+) -> Result<Option<QueueItemOutcome>> {
+    if let Some(outcome) = latest_queue_item_terminal_outcome(run_id, item_id)? {
+        return Ok(Some(outcome));
+    }
+    state::update_web_queue_item(
+        run_id,
+        item_id,
+        status,
+        message,
+        agent_id,
+        attempts,
+        next_attempt_at,
+    )?;
     Ok(None)
 }
 
