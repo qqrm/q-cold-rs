@@ -67,6 +67,42 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    fn remote_native_missing_task_record_preserves_terminal_queue_row() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let mut run = queue_run_fixture("remote-native-terminal-record", "running", -1);
+        run.selected_repo_root = Some(repo.display().to_string());
+        let mut stale_item =
+            queue_item_fixture(&run.id, "remote-native-terminal-record", 0, "running", None);
+        stale_item.repo_root = Some(repo.display().to_string());
+        stale_item.repo_name = Some("repo".to_string());
+        stale_item.execution_host = "remote-native".to_string();
+        stale_item.remote_launcher = Some("/bin/false".to_string());
+        let agent_id = queue_agent_id(&stale_item);
+        stale_item.agent_id = Some(agent_id.clone());
+        let mut persisted_item = stale_item.clone();
+        persisted_item.status = "success".to_string();
+        persisted_item.message = "closed successfully remotely".to_string();
+        state::replace_web_queue(&run, &[persisted_item]).unwrap();
+
+        let outcome = missing_queue_task_record_outcome(
+            &run.id,
+            &stale_item,
+            &agent_id,
+            stale_item.attempts,
+        )
+        .unwrap();
+
+        assert!(matches!(outcome, Some(QueueItemOutcome::Success)));
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(items[0].status, "success");
+        assert_eq!(items[0].message, "closed successfully remotely");
+    }
+
+    #[test]
     fn failed_graph_queue_restarts_after_success_promotion_interruption() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

@@ -169,6 +169,23 @@ fn remote_native_running_wait_item(item: &state::QueueItemRow) -> state::QueueIt
     item
 }
 
+fn latest_queue_item_terminal_outcome(
+    run_id: &str,
+    item_id: &str,
+) -> Result<Option<QueueItemOutcome>> {
+    let (_, items) = state::load_web_queue_run(run_id)?;
+    let Some(item) = items.into_iter().find(|item| item.id == item_id) else {
+        return Ok(None);
+    };
+    if item.status == "success" {
+        return Ok(Some(QueueItemOutcome::Success));
+    }
+    if queue_item_terminal(&item.status) {
+        return Ok(Some(QueueItemOutcome::failed(item.message)));
+    }
+    Ok(None)
+}
+
 fn run_remote_agent_contract(
     item: &state::QueueItemRow,
     repo_root: &Path,

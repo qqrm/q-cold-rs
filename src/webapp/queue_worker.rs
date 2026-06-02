@@ -820,6 +820,9 @@ fn missing_queue_task_record_outcome(
     attempts: i64,
 ) -> Result<Option<QueueItemOutcome>> {
     if queue_item_remote_native(item) {
+        if let Some(outcome) = latest_queue_item_terminal_outcome(run_id, &item.id)? {
+            return Ok(Some(outcome));
+        }
         if remote_native_session_running(item, agent_id) {
             update_remote_native_missing_record_wait(run_id, item, agent_id, attempts)?;
             return Ok(None);
