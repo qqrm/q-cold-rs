@@ -31,16 +31,10 @@ fn send_remote_native_terminal_paste(
     }
 
     let target = remote_native_tmux_target(agent_id, pane);
+    let mut paste_args = vec!["tmux".to_string()];
+    paste_args.extend(tmux_paste_buffer_args(&buffer, &target, true));
     let status = Command::new(launcher)
-        .args([
-            "tmux",
-            "paste-buffer",
-            "-d",
-            "-b",
-            &buffer,
-            "-t",
-            &target,
-        ])
+        .args(paste_args)
         .status()
         .context("failed to paste remote-native terminal input through tmux")?;
     if !status.success() {

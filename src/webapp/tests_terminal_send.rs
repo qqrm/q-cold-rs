@@ -19,6 +19,35 @@ mod terminal_send_tests {
     }
 
     #[test]
+    fn tmux_paste_args_preserve_multiline_input_as_one_bracketed_paste() {
+        assert_eq!(
+            tmux_paste_buffer_args("buffer", "session:0.0", true),
+            vec![
+                "paste-buffer",
+                "-d",
+                "-p",
+                "-r",
+                "-b",
+                "buffer",
+                "-t",
+                "session:0.0"
+            ]
+        );
+        assert_eq!(
+            tmux_paste_buffer_args("buffer", "session:0.0", false),
+            vec![
+                "paste-buffer",
+                "-p",
+                "-r",
+                "-b",
+                "buffer",
+                "-t",
+                "session:0.0"
+            ]
+        );
+    }
+
+    #[test]
     fn terminal_output_detects_unsent_pasted_packet_at_prompt() {
         let output = "\n> [Pasted Content 1024 chars][Pasted Content 512 chars]\n";
         assert!(terminal_output_has_pending_paste(output));

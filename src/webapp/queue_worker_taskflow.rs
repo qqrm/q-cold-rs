@@ -266,7 +266,7 @@ for ready_attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 \
     sleep 2
 done
 tmux load-buffer -b {buffer} -w -
-tmux paste-buffer -b {buffer} -t {target}
+tmux paste-buffer -p -r -b {buffer} -t {target}
 for attempt in 1 2 3 4 5 6; do
     sleep 1.5
     tmux send-keys -t {target} C-m

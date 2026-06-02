@@ -592,7 +592,7 @@ mod queue_taskflow_tests {
             .find("Update available!")
             .expect("script should handle the Codex update prompt");
         let paste = script
-            .find("tmux paste-buffer -b session-task-packet")
+            .find("tmux paste-buffer -p -r -b session-task-packet")
             .expect("script should paste the prompt");
 
         assert!(ready_probe < paste);
@@ -604,7 +604,9 @@ mod queue_taskflow_tests {
         assert!(script.contains("remote-native target did not become ready for Codex input"));
         assert!(script.contains("exit 70"));
         assert!(script.contains("sleep 2"));
-        assert!(script.contains("tmux paste-buffer -b session-task-packet"));
+        assert!(script.contains(
+            "tmux paste-buffer -p -r -b session-task-packet -t qcold-qa-task-remote-native:0.0"
+        ));
         assert!(script.contains("tmux send-keys -t qcold-qa-task-remote-native:0.0 C-m"));
         assert!(script.contains("grep -q '\\[Pasted Content'"));
         assert!(script.contains("for attempt in 1 2 3 4 5 6"));
@@ -679,6 +681,40 @@ mod queue_taskflow_tests {
         let log = fs::read_to_string(log).unwrap();
         assert!(log.contains("tmux send-keys"));
         assert!(log.contains("qcold-qa-task-remote-native-terminal-send:0.0"));
+        assert!(log.contains("C-m"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn remote_native_terminal_paste_uses_bracketed_raw_tmux_paste() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let log = temp.path().join("remote.log");
+        std::env::set_var("REMOTE_TERMINAL_LOG", &log);
+        let launcher = fake_remote_terminal_launcher(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-terminal-paste", &repo);
+        let mut item = queue_taskflow_item(
+            "task-remote-native-terminal-paste",
+            &repo,
+            Some(launcher.to_str().unwrap()),
+        );
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+        let target = remote_native_terminal_target(item.agent_id.as_deref().unwrap());
+
+        send_terminal_paste(&target, "line one\nline two", true).unwrap();
+
+        let log = fs::read_to_string(log).unwrap();
+        assert!(log.contains("tmux load-buffer -b qcold-web-send-"));
+        assert!(log.contains("tmux paste-buffer -d -p -r -b qcold-web-send-"));
+        assert!(log.contains("qcold-qa-task-remote-native-terminal-paste:0.0"));
+        assert!(log.contains("tmux send-keys"));
         assert!(log.contains("C-m"));
     }
 
@@ -787,6 +823,8 @@ mod queue_taskflow_tests {
              printf '%s\\n' \"$*\" >> \"$REMOTE_TERMINAL_LOG\"\n\
              if [ \"$1\" = tmux ] && [ \"$2\" = capture-pane ]; then\n\
              printf 'remote output\\n'\n\
+             elif [ \"$1\" = tmux ] && [ \"$2\" = load-buffer ]; then\n\
+             cat >/dev/null\n\
              fi\n",
         )
         .unwrap();

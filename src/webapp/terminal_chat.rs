@@ -822,13 +822,29 @@ fn paste_terminal_text(target: &str, text: &str) -> Result<()> {
     }
 
     let status = Command::new("tmux")
-        .args(["paste-buffer", "-d", "-b", &buffer, "-t", target])
+        .args(tmux_paste_buffer_args(&buffer, target, true))
         .status()
         .context("failed to paste terminal input through tmux")?;
     if !status.success() {
         bail!("tmux paste-buffer failed with {status}");
     }
     Ok(())
+}
+
+fn tmux_paste_buffer_args(buffer: &str, target: &str, delete_after: bool) -> Vec<String> {
+    let mut args = vec!["paste-buffer".to_string()];
+    if delete_after {
+        args.push("-d".to_string());
+    }
+    args.extend([
+        "-p".to_string(),
+        "-r".to_string(),
+        "-b".to_string(),
+        buffer.to_string(),
+        "-t".to_string(),
+        target.to_string(),
+    ]);
+    args
 }
 
 fn terminal_paste_buffer_name() -> Result<String> {
