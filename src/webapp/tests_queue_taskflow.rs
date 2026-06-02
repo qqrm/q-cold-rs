@@ -579,37 +579,39 @@ mod queue_taskflow_tests {
     }
 
     #[test]
-    fn remote_native_instruction_script_retries_codex_paste_submit() {
-        let script = remote_native_instruction_script(
-            "session-task-packet",
-            "qcold-qa-task-remote-native:0.0",
+    #[cfg(unix)]
+    fn remote_native_open_passes_prompt_file_to_remote_agent_contract() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let log = install_fake_cargo_logger(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item(
+            "task-remote-native-prompt-file",
+            &repo,
+            Some("remote-dev-env"),
         );
+        item.execution_host = "remote-native".to_string();
+        let prompt_file = write_remote_native_task_packet_file(&item).unwrap();
 
-        let ready_probe = script
-            .find("for ready_attempt in 1 2 3")
-            .expect("script should wait for Codex readiness");
-        let update_skip = script
-            .find("Update available!")
-            .expect("script should handle the Codex update prompt");
-        let paste = script
-            .find("tmux paste-buffer -p -r -b session-task-packet")
-            .expect("script should paste the prompt");
+        run_remote_agent_contract(
+            &item,
+            &repo,
+            "open",
+            "qcold-qa-task-remote-native-prompt-file",
+            Some(&item.slug),
+            Some(&prompt_file),
+        )
+        .unwrap();
 
-        assert!(ready_probe < paste);
-        assert!(update_skip < paste);
-        assert!(script.contains("grep -q 'Update now.*@openai/codex'"));
-        assert!(script.contains("tmux send-keys -t qcold-qa-task-remote-native:0.0 Down Down C-m"));
-        assert!(script.contains("grep -Eq 'OpenAI Codex|^[[:space:]]*"));
-        assert!(script.contains("›[^0-9.]"));
-        assert!(script.contains("remote-native target did not become ready for Codex input"));
-        assert!(script.contains("exit 70"));
-        assert!(script.contains("sleep 2"));
-        assert!(script.contains(
-            "tmux paste-buffer -p -r -b session-task-packet -t qcold-qa-task-remote-native:0.0"
-        ));
-        assert!(script.contains("tmux send-keys -t qcold-qa-task-remote-native:0.0 C-m"));
-        assert!(script.contains("grep -q '\\[Pasted Content'"));
-        assert!(script.contains("for attempt in 1 2 3 4 5 6"));
+        let log = fs::read_to_string(log).unwrap();
+        assert!(log.contains("xtask remote-agent open"));
+        assert!(log.contains("--prompt-file"));
+        assert!(log.contains(prompt_file.to_str().unwrap()));
+        assert!(log.contains("task-remote-native-prompt-file"));
+        assert!(log.contains("QCOLD_REMOTE_DEV_ENV_WRAPPER=remote-dev-env"));
+        assert!(!log.contains("tmux paste-buffer"));
     }
 
     #[test]

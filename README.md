@@ -372,11 +372,13 @@ protocol. Remote-native queue items require a
 `remote_launcher`/`selected_remote_launcher`, run the repository
 `remote-agent doctor` and `remote-agent open <slug>` commands from the local
 repository control plane with that launcher exported to the repository
-contract as `QCOLD_REMOTE_DEV_ENV_WRAPPER`, and paste the generated task packet
-into the remote tmux-backed Codex session. If an incubating repository adapter
-expects a different launcher environment variable, set
-`QCOLD_QUEUE_REMOTE_AGENT_LAUNCHER_ENV` to that variable name in Q-COLD's
-operator environment. Optional proxy endpoints belong to Q-COLD queue
+contract as `QCOLD_REMOTE_DEV_ENV_WRAPPER`. Q-COLD writes the generated task
+packet to a local prompt file and passes it to the repository contract as
+`remote-agent open --prompt-file <path>` so the remote executor starts from one
+initial batch instead of receiving an interactive terminal paste. If an
+incubating repository adapter expects a different launcher environment
+variable, set `QCOLD_QUEUE_REMOTE_AGENT_LAUNCHER_ENV` to that variable name in
+Q-COLD's operator environment. Optional proxy endpoints belong to Q-COLD queue
 configuration:
 `QCOLD_QUEUE_REMOTE_AGENT_LOCAL_PROXY`,
 `QCOLD_QUEUE_REMOTE_AGENT_REMOTE_PROXY`, top-level

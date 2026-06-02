@@ -45,12 +45,11 @@ fn start_remote_native_queue_item(
     let repo_root = queue_item_repo_root(item)?;
     ensure_queue_item_slug_available(item)?;
     ensure_queue_task_record_scope_available(item)?;
-    let launcher = item
+    item
         .remote_launcher
         .as_deref()
         .filter(|value| !value.trim().is_empty())
-        .context("remote-native queue item requires remote_launcher or selected_remote_launcher")?
-        .to_string();
+        .context("remote-native queue item requires remote_launcher or selected_remote_launcher")?;
     let rotated_proxy = reserve_remote_native_proxy(item)?;
     let agent_id = queue_agent_id(item);
     let session = remote_native_queue_session(&agent_id);
@@ -67,26 +66,34 @@ fn start_remote_native_queue_item(
         attempts,
         None,
     )?;
-    if let Err(err) = run_remote_agent_contract(item, &repo_root, "doctor", &session, None) {
+    if let Err(err) = run_remote_agent_contract(item, &repo_root, "doctor", &session, None, None) {
         return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
     }
+    let prompt_file = match write_remote_native_task_packet_file(item) {
+        Ok(path) => path,
+        Err(err) => {
+            return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+        }
+    };
     state::update_web_queue_item(
         run_id,
         &item.id,
         "starting",
-        "opening remote-native agent",
+        "opening remote-native agent with prompt file",
         Some(&agent_id),
         attempts,
         None,
     )?;
-    if let Err(err) = run_remote_agent_contract(item, &repo_root, "open", &session, Some(&item.slug)) {
-        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
-    }
-    thread::sleep(Duration::from_secs(4));
-    let instruction = queue_remote_native_task_instruction(item);
-    if let Err(err) =
-        send_remote_native_instruction(&launcher, &repo_root, &session, &instruction)
-    {
+    let open_result = run_remote_agent_contract(
+        item,
+        &repo_root,
+        "open",
+        &session,
+        Some(&item.slug),
+        Some(&prompt_file),
+    );
+    cleanup_queue_task_packet_file(&prompt_file);
+    if let Err(err) = open_result {
         return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
     }
     state::update_web_queue_item(
@@ -150,6 +157,7 @@ fn run_remote_agent_contract(
     subcommand: &str,
     session: &str,
     task_slug: Option<&str>,
+    prompt_file: Option<&Path>,
 ) -> Result<()> {
     let mut command = Command::new("cargo");
     command
@@ -167,6 +175,9 @@ fn run_remote_agent_contract(
     }
     if let Some(proxy) = item.remote_agent_remote_proxy.as_deref() {
         command.arg("--remote-proxy").arg(proxy);
+    }
+    if let Some(path) = prompt_file {
+        command.arg("--prompt-file").arg(path);
     }
     if let Some(slug) = task_slug {
         command.arg(slug);
@@ -200,83 +211,6 @@ fn remote_agent_launcher_env_alias() -> Option<String> {
         return None;
     }
     Some(name.to_string())
-}
-
-fn send_remote_native_instruction(
-    launcher: &str,
-    repo_root: &Path,
-    session: &str,
-    instruction: &str,
-) -> Result<()> {
-    let target = format!("{session}:0.0");
-    let buffer = format!("{session}-task-packet");
-    let script = remote_native_instruction_script(&buffer, &target);
-    let mut child = Command::new(launcher)
-        .current_dir(repo_root)
-        .args(["bash", "-lc", &script])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .with_context(|| format!("failed to send prompt through remote launcher {launcher}"))?;
-    {
-        let stdin = child.stdin.as_mut().context("remote launcher stdin was not piped")?;
-        stdin
-            .write_all(instruction.as_bytes())
-            .context("failed to write remote-native task packet")?;
-    }
-    let output = child
-        .wait_with_output()
-        .context("failed to wait for remote-native task packet send")?;
-    if !output.status.success() {
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "remote-native task packet send through {launcher} failed with {}: {}",
-            output.status,
-            compact_process_output(&stdout, &stderr)
-        );
-    }
-    Ok(())
-}
-
-fn remote_native_instruction_script(buffer: &str, target: &str) -> String {
-    let buffer = queue_shell_quote(buffer);
-    let target = queue_shell_quote(target);
-    format!(
-        r#"set -eu
-for ready_attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 \
-21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 \
-41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60; do
-    pane="$(tmux capture-pane -pt {target} -S -40 2>/dev/null || true)"
-    if printf '%s\n' "$pane" | grep -q 'Update available!' \
-        && printf '%s\n' "$pane" | grep -q 'Update now.*@openai/codex'; then
-        tmux send-keys -t {target} Down Down C-m
-        sleep 2
-        continue
-    fi
-    if printf '%s\n' "$pane" \
-        | grep -Eq 'OpenAI Codex|^[[:space:]]*›[^0-9.]|^[[:space:]]*gpt-'; then
-        break
-    fi
-    if [ "$ready_attempt" = 60 ]; then
-        echo 'remote-native target did not become ready for Codex input' >&2
-        exit 70
-    fi
-    sleep 2
-done
-tmux load-buffer -b {buffer} -w -
-tmux paste-buffer -p -r -b {buffer} -t {target}
-for attempt in 1 2 3 4 5 6; do
-    sleep 1.5
-    tmux send-keys -t {target} C-m
-    sleep 1.5
-    if ! tmux capture-pane -pt {target} -S -12 2>/dev/null | grep -q '\[Pasted Content'; then
-        break
-fi
-done
-"#
-    )
 }
 
 fn queue_qcold_executable() -> Result<PathBuf> {

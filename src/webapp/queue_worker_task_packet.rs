@@ -265,11 +265,22 @@ fn write_queue_task_packet_file(
     item: &state::QueueItemRow,
     task: &QueueLaunchWorkspace,
 ) -> Result<PathBuf> {
+    write_queue_task_packet_text_file(item, &queue_task_instruction_with_task(item, task))
+}
+
+fn write_remote_native_task_packet_file(item: &state::QueueItemRow) -> Result<PathBuf> {
+    write_queue_task_packet_text_file(item, &queue_remote_native_task_instruction(item))
+}
+
+fn write_queue_task_packet_text_file(
+    item: &state::QueueItemRow,
+    packet: &str,
+) -> Result<PathBuf> {
     let directory = state::state_dir()?.join("queue-task-packets");
     fs::create_dir_all(&directory)
         .with_context(|| format!("failed to create {}", directory.display()))?;
     let path = directory.join(queue_task_packet_file_name(item));
-    fs::write(&path, queue_task_instruction_with_task(item, task))
+    fs::write(&path, packet)
         .with_context(|| format!("failed to write queue task packet {}", path.display()))?;
     Ok(path)
 }

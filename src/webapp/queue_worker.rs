@@ -863,7 +863,7 @@ fn cleanup_queue_executor(item: &state::QueueItemRow, agent_id: &str) -> String 
         Err(err) => return format!("remote-agent cleanup skipped: {err:#}"),
     };
     let session = remote_native_queue_session(agent_id);
-    match run_remote_agent_contract(item, &repo_root, "down", &session, None) {
+    match run_remote_agent_contract(item, &repo_root, "down", &session, None, None) {
         Ok(()) => "remote-agent session stopped".to_string(),
         Err(err) => format!("remote-agent cleanup failed: {err:#}"),
     }
