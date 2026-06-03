@@ -115,7 +115,9 @@ Open `http://127.0.0.1:8787`.
 The dashboard serves repository status, task records, queues, managed agents,
 terminals, and transcripts. It keeps a background state snapshot and pushes
 updates through server-sent events, so routine sync does not require frontend
-page reloads.
+page reloads. The browser also keeps a bounded `/api/state` watcher active and
+refreshes immediately when the page regains focus or network connectivity, so a
+stale tab does not need an F5 reload to catch up.
 
 After rebuilding or reinstalling Q-COLD, restart the daemon so the served binary
 and embedded web assets match:

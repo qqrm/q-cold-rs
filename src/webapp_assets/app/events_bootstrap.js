@@ -45,14 +45,17 @@
     });
     applyTheme();
     setActiveView(preferredView(), false);
+    startStateWatcher();
     connectEvents();
     window.addEventListener('hashchange', () => setActiveView(preferredView()));
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) {
-        if (eventSource) eventSource.close();
-        eventSource = null;
-        stopFallbackPolling();
-      } else {
+      if (!document.hidden) {
+        loadSnapshot();
         connectEvents();
       }
+    });
+    window.addEventListener('focus', loadSnapshot);
+    window.addEventListener('online', () => {
+      loadSnapshot();
+      connectEvents();
     });

@@ -424,32 +424,40 @@
     }
 
     async function loadSnapshot() {
+      if (snapshotRequestInFlight) return;
+      snapshotRequestInFlight = true;
       try {
         const response = await fetch('/api/state', { cache: 'no-store' });
+        if (!response.ok) throw new Error(`state refresh failed: ${response.status}`);
         applySnapshot({ state: await response.json() });
       } catch (err) {
         setLiveState('Offline', 'failed');
         if (!state) status.textContent = String(err);
+      } finally {
+        snapshotRequestInFlight = false;
       }
     }
 
-    function startFallbackPolling() {
-      if (fallbackTimer) return;
+    function startStateWatcher() {
+      if (stateWatchTimer) return;
       loadSnapshot();
-      fallbackTimer = window.setInterval(loadSnapshot, 5000);
+      stateWatchTimer = window.setInterval(loadSnapshot, dashboardStateWatchPollMs);
+    }
+
+    function startFallbackPolling() {
+      startStateWatcher();
     }
 
     function stopFallbackPolling() {
-      if (!fallbackTimer) return;
-      window.clearInterval(fallbackTimer);
-      fallbackTimer = null;
+      // State polling is now the baseline freshness watcher, not only an error fallback.
     }
 
     function connectEvents() {
       if (!window.EventSource) {
-        startFallbackPolling();
+        startStateWatcher();
         return;
       }
+      if (eventSource && eventSource.readyState !== EventSource.CLOSED) return;
       eventSource = new EventSource('/api/events');
       eventSource.addEventListener('snapshot', (event) => {
         stopFallbackPolling();

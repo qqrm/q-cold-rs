@@ -157,6 +157,23 @@ mod asset_tests {
     }
 
     #[test]
+    fn dashboard_state_watcher_runs_without_manual_reload() {
+        assert!(APP_JS.contains("const dashboardStateWatchPollMs = 2000;"));
+        assert!(APP_JS.contains("let stateWatchTimer = null;"));
+        assert!(APP_JS.contains("let snapshotRequestInFlight = false;"));
+        assert!(APP_JS.contains("function startStateWatcher()"));
+        assert!(APP_JS.contains("window.setInterval(loadSnapshot, dashboardStateWatchPollMs);"));
+        assert!(APP_JS.contains("if (snapshotRequestInFlight) return;"));
+        assert!(APP_JS.contains("if (eventSource && eventSource.readyState !== EventSource.CLOSED) return;"));
+        assert!(APP_JS.contains("startStateWatcher();\n    connectEvents();"));
+        assert!(APP_JS.contains("document.addEventListener('visibilitychange', () => {"));
+        assert!(APP_JS.contains("if (!document.hidden) {\n        loadSnapshot();"));
+        assert!(APP_JS.contains("window.addEventListener('focus', loadSnapshot);"));
+        assert!(APP_JS.contains("window.addEventListener('online', () => {"));
+        assert!(!APP_JS.contains("if (document.hidden) {\n        if (eventSource) eventSource.close();"));
+    }
+
+    #[test]
     fn graph_queue_cards_show_backend_agent_activity() {
         assert!(APP_JS.contains("function queueGraphActivity(item, view)"));
         assert!(APP_JS.contains("function queueItemActivityLines(item, view = queueItemView(item))"));

@@ -40,6 +40,7 @@ const AGENT_LIMIT_STATUS_ATTEMPTS: usize = 2;
 const AGENT_LIMIT_STATUS_TIMEOUT: u64 = 20;
 const DASHBOARD_STATE_CACHE_TTL: u64 = 2;
 const DASHBOARD_STATE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
+const DASHBOARD_EVENT_INTERVAL: Duration = Duration::from_secs(2);
 const WEB_QUEUE_RETRY_DELAYS: [u64; 3] = [60, 300, 600];
 static AGENT_LIMIT_CACHE: OnceLock<Mutex<Option<AgentLimitCache>>> = OnceLock::new();
 static DASHBOARD_STATE_CACHE: OnceLock<Mutex<Option<DashboardStateCache>>> = OnceLock::new();
@@ -582,7 +583,7 @@ async fn api_task_chat_send(
 async fn api_events() -> impl IntoResponse {
     let events = stream::unfold(true, |first| async move {
         if !first {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(DASHBOARD_EVENT_INTERVAL).await;
         }
         let event = Event::default()
             .event("snapshot")
