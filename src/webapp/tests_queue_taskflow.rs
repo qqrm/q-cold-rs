@@ -623,6 +623,7 @@ mod queue_taskflow_tests {
         let log = temp.path().join("remote.log");
         std::env::set_var("REMOTE_TERMINAL_LOG", &log);
         let launcher = fake_remote_terminal_launcher(temp.path());
+        let timeout_log = install_fake_timeout_logger(temp.path());
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
         let run = queue_run_fixture("remote-native-terminal", &repo);
@@ -652,6 +653,10 @@ mod queue_taskflow_tests {
         let log = fs::read_to_string(log).unwrap();
         assert!(log.contains("tmux capture-pane"));
         assert!(log.contains("qcold-qa-task-remote-native-terminal:0.0"));
+        let timeout_log = fs::read_to_string(timeout_log).unwrap();
+        assert!(timeout_log.contains("20s"));
+        assert!(timeout_log.contains(launcher.to_str().unwrap()));
+        assert!(timeout_log.contains("tmux capture-pane"));
     }
 
     #[test]
@@ -832,6 +837,29 @@ mod queue_taskflow_tests {
         .unwrap();
         make_executable(&launcher);
         launcher
+    }
+
+    #[cfg(unix)]
+    fn install_fake_timeout_logger(temp: &Path) -> PathBuf {
+        let bin = temp.join("timeout-bin");
+        fs::create_dir(&bin).unwrap();
+        let log = temp.join("timeout.log");
+        let timeout = bin.join("timeout");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$*\" >> {}\n\
+             shift\n\
+             exec \"$@\"\n",
+            shell_quote(&log)
+        );
+        fs::write(&timeout, script).unwrap();
+        make_executable(&timeout);
+
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        log
     }
 
     #[cfg(unix)]

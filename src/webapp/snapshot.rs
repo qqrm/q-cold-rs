@@ -1,4 +1,5 @@
 const TERMINAL_CAPTURE_LINES: usize = 2_000;
+const REMOTE_NATIVE_TERMINAL_CAPTURE_TIMEOUT: &str = "20s";
 
 #[derive(Clone)]
 struct DashboardStateCache {
@@ -600,7 +601,9 @@ fn capture_remote_native_terminal_output(item: &state::QueueItemRow, agent_id: &
         .context("remote-native queue terminal requires remote launcher")?;
     let target = remote_native_tmux_target(agent_id, "0.0");
     let capture_start = terminal_capture_start_arg();
-    let output = Command::new(launcher)
+    let output = Command::new("timeout")
+        .arg(REMOTE_NATIVE_TERMINAL_CAPTURE_TIMEOUT)
+        .arg(launcher)
         .args([
             "tmux",
             "capture-pane",
