@@ -416,9 +416,23 @@
       liveState.className = `badge ${tone} live-indicator`;
     }
 
+    function snapshotRenderKey(snapshot) {
+      const nextState = snapshot?.state || null;
+      if (!nextState) return '';
+      const { generated_at_unix: _generatedAt, ...renderState } = nextState;
+      return JSON.stringify(renderState);
+    }
+
     function applySnapshot(snapshot) {
       noticeNewAppBuild(snapshotBuildId(snapshot));
+      const renderKey = snapshotRenderKey(snapshot);
+      if (state && renderKey === lastSnapshotRenderKey) {
+        state = snapshot.state;
+        setLiveState('Live');
+        return;
+      }
       state = snapshot.state;
+      lastSnapshotRenderKey = renderKey;
       render();
       setLiveState('Live');
     }

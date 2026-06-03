@@ -34,6 +34,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const dashboardStateWatchPollMs = 2000;
     let stateWatchTimer = null;
     let snapshotRequestInFlight = false;
+    let lastSnapshotRenderKey = '';
     let eventSource = null;
     const terminalDrafts = new Map();
     const terminalOutputCache = new Map();
