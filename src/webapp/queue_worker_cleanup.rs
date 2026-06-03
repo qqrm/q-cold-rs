@@ -310,7 +310,7 @@ fn fail_remote_native_missing_task_record(
         attempts,
         None,
     )?;
-    Ok(QueueItemOutcome::failed(message))
+    Ok(QueueItemOutcome::retryable_failure(message))
 }
 
 fn cleanup_queue_agent(agent_id: &str) -> String {

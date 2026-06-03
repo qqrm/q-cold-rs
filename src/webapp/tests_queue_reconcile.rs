@@ -393,6 +393,135 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn stale_failed_graph_queue_resumes_live_remote_native_failed_closeout_retry() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("stale-graph-remote-native-retry", "failed", 1);
+        run.execution_mode = "graph".to_string();
+        run.message = "failed-closeout".to_string();
+        let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
+        let mut second = queue_item_fixture(
+            &run.id,
+            "second",
+            1,
+            "failed",
+            Some("qa-task-second"),
+        );
+        second.repo_root = Some(repo.clone());
+        second.execution_host = "remote-native".to_string();
+        second.remote_launcher = Some("/bin/true".to_string());
+        second.message = "failed-closeout".to_string();
+        let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
+        third.repo_root = Some(repo.clone());
+        third.depends_on = vec!["second".to_string()];
+        state::replace_web_queue(&run, &[first, second.clone(), third]).unwrap();
+        let mut failed_closeout = state::new_task_record(
+            "task/task-second".to_string(),
+            "task-flow".to_string(),
+            "second".to_string(),
+            "prompt second".to_string(),
+            "failed-closeout".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/task-second".to_string()),
+            second.agent_id.clone(),
+            None,
+        );
+        failed_closeout.updated_at = 100;
+        state::upsert_task_record(&failed_closeout).unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        resume_stale_active_queue_run(&run, stored_items).unwrap();
+        let (resumed_run, resumed_items) = state::load_web_queue_run(&run.id).unwrap();
+        let resumed_run = resumed_run.unwrap();
+
+        assert_eq!(resumed_run.status, "running");
+        assert_eq!(
+            resumed_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str(), item.message.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("first", "success", ""),
+                (
+                    "second",
+                    "running",
+                    "remote-native retry is still running after failed closeout",
+                ),
+                ("third", "pending", ""),
+            ]
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn stale_running_remote_native_item_without_record_or_session_is_relaunched() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("stale-remote-native-missing-record", "running", 1);
+        run.execution_mode = "graph".to_string();
+        let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
+        let mut second = queue_item_fixture(
+            &run.id,
+            "second",
+            1,
+            "running",
+            Some("qa-task-second"),
+        );
+        second.repo_root = Some(repo.clone());
+        second.execution_host = "remote-native".to_string();
+        second.remote_launcher = Some("/bin/false".to_string());
+        second.message = "waiting for remote-native task record visibility after remote-agent open"
+            .to_string();
+        let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
+        third.repo_root = Some(repo);
+        third.depends_on = vec!["second".to_string()];
+        state::replace_web_queue(&run, &[first, second, third]).unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        resume_stale_active_queue_run(&run, stored_items).unwrap();
+        let (resumed_run, resumed_items) = state::load_web_queue_run(&run.id).unwrap();
+        let resumed_run = resumed_run.unwrap();
+
+        assert_eq!(resumed_run.status, "running");
+        assert_eq!(
+            resumed_items
+                .iter()
+                .map(|item| {
+                    (
+                        item.id.as_str(),
+                        item.status.as_str(),
+                        item.agent_id.as_deref(),
+                        item.message.as_str(),
+                    )
+                })
+                .collect::<Vec<_>>(),
+            [
+                ("first", "success", Some("agent-1"), ""),
+                (
+                    "second",
+                    "pending",
+                    None,
+                    "remote-native task record and session are missing; relaunching item",
+                ),
+                ("third", "pending", None, ""),
+            ]
+        );
+    }
+
+    #[test]
     fn remote_native_running_item_skips_local_agent_failure_message() {
         let mut item = queue_item_fixture(
             "remote-native-run",

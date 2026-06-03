@@ -804,36 +804,6 @@ mod queue_taskflow_tests {
         assert!(!items[0].message.contains("requires remote_launcher"));
     }
 
-    #[test]
-    fn remote_native_missing_task_record_with_launcher_keeps_waiting() {
-        let _guard = test_support::env_guard();
-        let temp = tempfile::tempdir().unwrap();
-        std::env::set_var("QCOLD_STATE_DIR", temp.path());
-        let repo = temp.path().join("repo");
-        fs::create_dir(&repo).unwrap();
-        let run = queue_run_fixture("remote-native-missing-record", &repo);
-        let mut item = queue_taskflow_item(
-            "task-remote-native-missing-record",
-            &repo,
-            Some("/bin/false"),
-        );
-        item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
-        let agent_id = queue_agent_id(&item);
-        item.agent_id = Some(agent_id.clone());
-        state::replace_web_queue(&run, &[item.clone()]).unwrap();
-
-        let outcome =
-            missing_queue_task_record_outcome(&run.id, &item, &agent_id, item.attempts).unwrap();
-
-        assert!(outcome.is_none());
-        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
-        assert_eq!(items[0].status, "running");
-        assert_eq!(items[0].agent_id.as_deref(), Some(agent_id.as_str()));
-        assert!(items[0].message.contains("task record visibility"));
-    }
-
     #[cfg(unix)]
     fn make_executable(path: &Path) {
         use std::os::unix::fs::PermissionsExt;

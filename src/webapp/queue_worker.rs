@@ -702,7 +702,7 @@ fn missing_queue_task_record_outcome(
         if let Some(outcome) = latest_queue_item_terminal_outcome(run_id, &item.id)? {
             return Ok(Some(outcome));
         }
-        if remote_native_session_running(item, agent_id) || remote_native_launcher_configured(item) {
+        if remote_native_session_running(item, agent_id) {
             return update_remote_native_missing_record_wait(run_id, item, agent_id, attempts);
         }
         return fail_remote_native_missing_task_record(run_id, item, agent_id, attempts).map(Some);
@@ -722,12 +722,6 @@ fn missing_queue_task_record_outcome(
         None,
     )?;
     Ok(Some(QueueItemOutcome::retryable_failure(message)))
-}
-
-fn remote_native_launcher_configured(item: &state::QueueItemRow) -> bool {
-    item.remote_launcher
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn update_remote_native_missing_record_wait(

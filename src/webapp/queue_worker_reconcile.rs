@@ -88,6 +88,11 @@ fn queue_agent_failure_message(item: &state::QueueItemRow, agent_id: &str) -> Op
     None
 }
 
+const REMOTE_NATIVE_RETRY_RUNNING_MESSAGE: &str =
+    "remote-native retry is still running after failed closeout";
+const REMOTE_NATIVE_MISSING_RECORD_RELAUNCH_MESSAGE: &str =
+    "remote-native task record and session are missing; relaunching item";
+
 fn reconcile_remote_native_retry(
     run: &state::QueueRunRow,
     item: &state::QueueItemRow,
@@ -105,10 +110,41 @@ fn reconcile_remote_native_retry(
         &run.id,
         &item.id,
         "running",
-        "remote-native retry is still running after failed closeout",
+        REMOTE_NATIVE_RETRY_RUNNING_MESSAGE,
         Some(agent_id),
         item.attempts,
         None,
+    )?;
+    Ok(true)
+}
+
+fn reconcile_remote_native_missing_record_launch(
+    run: &state::QueueRunRow,
+    item: &state::QueueItemRow,
+) -> Result<bool> {
+    if !matches!(item.status.as_str(), "starting" | "running") || !queue_item_remote_native(item) {
+        return Ok(false);
+    }
+    let Some(agent_id) = item.agent_id.as_deref() else {
+        return Ok(false);
+    };
+    if remote_native_session_running(item, agent_id) {
+        return Ok(false);
+    }
+    if state::get_task_record(&format!("task/{}", item.slug))?.is_some() {
+        return Ok(false);
+    }
+    state::reset_web_queue_item_for_relaunch(
+        &run.id,
+        &item.id,
+        REMOTE_NATIVE_MISSING_RECORD_RELAUNCH_MESSAGE,
+        item.attempts,
+    )?;
+    state::update_web_queue_run(
+        &run.id,
+        "running",
+        item.position,
+        REMOTE_NATIVE_MISSING_RECORD_RELAUNCH_MESSAGE,
     )?;
     Ok(true)
 }
@@ -137,12 +173,26 @@ fn resume_stale_active_queue_run(
     items: Vec<state::QueueItemRow>,
 ) -> Result<()> {
     for item in items {
+        if reconcile_remote_native_missing_record_launch(run, &item)? {
+            spawn_web_queue_worker(run.id.clone());
+            return Ok(());
+        }
         if stale_queue_task_record_handled(run, &item)? {
             continue;
         }
         if item.status == "success" {
             close_running_success_agent(run, &item)?;
             continue;
+        }
+        if reconcile_remote_native_retry(run, &item)? {
+            state::update_web_queue_run(
+                &run.id,
+                "running",
+                item.position,
+                REMOTE_NATIVE_RETRY_RUNNING_MESSAGE,
+            )?;
+            spawn_web_queue_worker(run.id.clone());
+            return Ok(());
         }
         if matches!(item.status.as_str(), "failed" | "blocked") {
             state::update_web_queue_run(&run.id, "failed", item.position, &item.message)?;

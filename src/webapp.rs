@@ -655,6 +655,7 @@ include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_reconcile.rs");
 include!("webapp/tests_queue_remote_sync.rs");
 include!("webapp/tests_queue_tabs.rs");
+include!("webapp/tests_queue_taskflow_missing_record.rs");
 include!("webapp/tests_queue_taskflow.rs");
 include!("webapp/tests_terminal_send.rs");
 include!("webapp/tests_task_transcript.rs");
