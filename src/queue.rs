@@ -363,6 +363,9 @@ fn list_queue() -> Result<u8> {
         .collect::<BTreeMap<_, _>>();
     for tab in tabs {
         let run = tab.run_id.as_ref().and_then(|run_id| runs.get(run_id));
+        if !queue_tab_visible_in_list(&tab, run) {
+            continue;
+        }
         let status = run.map_or("draft", |(run, _)| run.status.as_str());
         println!(
             "queue-tab\t{}\tactive={}\tdefault={}\trun={}\tstatus={}\titems={}\tlabel={}",
@@ -406,6 +409,13 @@ fn list_queue() -> Result<u8> {
         }
     }
     Ok(0)
+}
+
+fn queue_tab_visible_in_list(
+    tab: &state::QueueTabRow,
+    run: Option<&(state::QueueRunRow, Vec<state::QueueItemRow>)>,
+) -> bool {
+    run.is_some() || tab.active
 }
 
 fn stop_queue(args: &QueueClientArgs) -> Result<u8> {

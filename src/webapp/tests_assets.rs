@@ -96,6 +96,26 @@ mod asset_tests {
     }
 
     #[test]
+    fn queue_scroll_helpers_are_not_injected_inside_render_queue() {
+        let render_start = APP_JS.find("function renderQueue()").unwrap();
+        let sequence_render = APP_JS
+            .find("queueStatus.replaceChildren(...queueItems.map")
+            .unwrap();
+        let graph_start = APP_JS.find("function renderQueueGraph()").unwrap();
+        let final_fragment = APP_JS.find("async function loadAgentLimits(refresh)").unwrap();
+        let capture_start = APP_JS
+            .find("function captureQueueWaveScrollPositions()")
+            .unwrap();
+        let transcript_lookup = APP_JS.find("function terminalForTaskId(taskId)").unwrap();
+
+        assert!(render_start < sequence_render);
+        assert!(sequence_render < graph_start);
+        assert!(graph_start < final_fragment);
+        assert!(final_fragment < capture_start);
+        assert!(capture_start < transcript_lookup);
+    }
+
+    #[test]
     fn queue_feedback_assets_are_embedded() {
         assert!(INDEX_HTML.contains("/assets/queue.css"));
         assert!(QUEUE_CSS.contains(".queue-toast-host"));
@@ -105,14 +125,20 @@ mod asset_tests {
     }
 
     #[test]
+    fn terminal_metadata_edit_uses_full_header_layout() {
+        assert!(APP_CSS.contains(".terminal-head.editing-terminal-meta"));
+        assert!(APP_JS.contains("classList.add('editing-terminal-meta')"));
+        assert!(APP_JS.contains("classList.remove('editing-terminal-meta')"));
+    }
+
+    #[test]
     fn empty_local_queue_tab_does_not_hide_backend_active_run() {
         let selection_start = APP_JS.find("function selectedQueueTabId").unwrap();
         let selection = &APP_JS[selection_start..];
         assert!(APP_JS.contains("function queueTabHasLocalDraft(tabId)"));
-        assert!(selection.contains(
-            "const preserveDraft = queueTabSelectionUserTouched && queueTabHasLocalDraft(currentTab.id);"
-        ));
-        assert!(selection.contains("if (!preserveDraft) return backendActiveTab.id;"));
+        assert!(selection.contains("if (queueTabCreating && backendActiveTab) return backendActiveTab.id;"));
+        assert!(selection.contains("&& currentTab.active"));
+        assert!(selection.contains("if (!preserveDraft) return backendActiveRunTab.id;"));
         assert!(selection.contains("!queueTabHasLocalDraft(savedTab.id)"));
     }
 
@@ -176,6 +202,7 @@ mod asset_tests {
         assert!(APP_JS.contains("const queueActiveTabStorageKey"));
         assert!(APP_JS.contains("function switchQueueTab(tabId)"));
         assert!(APP_JS.contains("localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId)"));
+        assert!(APP_JS.contains("queueTabSelectionUserTouched = false;"));
         assert!(APP_JS.contains("/api/queue/tab/create"));
         assert!(!APP_JS.contains("/api/queue/tab/switch"));
         assert!(APP_JS.contains("tab_id: activeQueueTabId"));

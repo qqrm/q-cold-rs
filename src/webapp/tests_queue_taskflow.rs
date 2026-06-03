@@ -616,12 +616,10 @@ mod queue_taskflow_tests {
 
     #[test]
     #[cfg(unix)]
-    fn remote_native_terminal_snapshot_uses_remote_launcher() {
+    fn remote_native_terminal_snapshot_does_not_capture_remote_output() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
-        let log = temp.path().join("remote.log");
-        std::env::set_var("REMOTE_TERMINAL_LOG", &log);
         let launcher = fake_remote_terminal_launcher(temp.path());
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
@@ -648,10 +646,7 @@ mod queue_taskflow_tests {
             panes[0].target,
             remote_native_terminal_target(item.agent_id.as_deref().unwrap())
         );
-        assert_eq!(panes[0].output, "remote output");
-        let log = fs::read_to_string(log).unwrap();
-        assert!(log.contains("tmux capture-pane"));
-        assert!(log.contains("qcold-qa-task-remote-native-terminal:0.0"));
+        assert_eq!(panes[0].output, "");
     }
 
     #[test]

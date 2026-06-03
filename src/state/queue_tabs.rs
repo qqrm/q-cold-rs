@@ -72,6 +72,7 @@ fn deduplicate_web_queue_tab_runs(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 pub fn create_web_queue_tab(tab_id: &str, label: &str) -> Result<QueueTabRow> {
     let connection = open_db()?;
     ensure_default_web_queue_tab(&connection)?;
@@ -85,6 +86,41 @@ pub fn create_web_queue_tab(tab_id: &str, label: &str) -> Result<QueueTabRow> {
         )
         .context("failed to create web queue tab")?;
     load_web_queue_tab(tab_id)?.with_context(|| format!("missing created queue tab: {tab_id}"))
+}
+
+pub fn create_and_activate_web_queue_tab(tab_id: &str, label: &str) -> Result<QueueTabRow> {
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("failed to start web queue tab create transaction")?;
+    ensure_default_web_queue_tab(&tx)?;
+    let now = unix_now();
+    tx.execute(
+        "insert into web_queue_tabs
+             (id, label, run_id, is_default, active, created_at_unix, updated_at_unix)
+         values (?1, ?2, null, 0, 0, ?3, ?3)",
+        params![tab_id, label, now],
+    )
+    .context("failed to create web queue tab")?;
+    tx.execute("update web_queue_tabs set active = 0", [])
+        .context("failed to clear active queue tab")?;
+    tx.execute(
+        "update web_queue_tabs set active = 1, updated_at_unix = ?2 where id = ?1",
+        params![tab_id, unix_now()],
+    )
+    .context("failed to activate web queue tab")?;
+    let tab = tx
+        .query_row(
+            "select id, label, run_id, is_default, active, created_at_unix, updated_at_unix
+             from web_queue_tabs
+             where id = ?1",
+            [tab_id],
+            queue_tab_from_row,
+        )
+        .context("failed to load created web queue tab")?;
+    tx.commit()
+        .context("failed to commit web queue tab create")?;
+    Ok(tab)
 }
 
 pub fn activate_web_queue_tab(tab_id: &str) -> Result<()> {

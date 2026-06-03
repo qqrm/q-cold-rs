@@ -58,7 +58,7 @@ fn dashboard_state_cache_stale() -> bool {
 
 fn refresh_dashboard_state_after_mutation(ok: bool) {
     if ok {
-        refresh_dashboard_state_cache_soon();
+        refresh_dashboard_state_cache();
     }
 }
 
@@ -194,9 +194,6 @@ fn all_task_record_snapshot(sync_error: Option<String>) -> TaskRecordSnapshot {
 }
 
 fn queue_snapshot() -> QueueSnapshot {
-    let reconcile_error = reconcile_stale_web_queue_run()
-        .err()
-        .map(|err| format!("{err:#}"));
     let tabs = queue_tab_snapshot();
     let active_tab_id = tabs
         .iter()
@@ -212,7 +209,7 @@ fn queue_snapshot() -> QueueSnapshot {
             records,
             tabs,
             active_tab_id,
-            error: reconcile_error,
+            error: None,
         },
         Err(err) => QueueSnapshot {
             count: 0,
@@ -236,13 +233,16 @@ fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
     state::load_web_queue_tabs()
         .unwrap_or_default()
         .into_iter()
-        .map(|tab| {
+        .filter_map(|tab| {
             let run_entry = tab.run_id.as_ref().and_then(|run_id| runs.get(run_id));
+            if run_entry.is_none() && !tab.active {
+                return None;
+            }
             let status =
                 run_entry.map_or_else(|| "draft".to_string(), |(run, _)| run.status.clone());
             let running = run_entry
                 .is_some_and(|(run, items)| queue_run_has_live_work_with_agents(run, items, &running_agents));
-            QueueTabSnapshot {
+            Some(QueueTabSnapshot {
                 id: tab.id,
                 label: tab.label,
                 run_id: tab.run_id,
@@ -255,7 +255,7 @@ fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
                 count: run_entry.map_or(0, |(_, items)| items.len()),
                 message: run_entry.map_or_else(String::new, |(run, _)| run.message.clone()),
                 updated_at: tab.updated_at,
-            }
+            })
         })
         .collect()
 }
@@ -541,13 +541,13 @@ fn discover_remote_native_terminal_sessions(
         .unwrap_or_default()
         .into_iter()
         .filter(queue_item_remote_native)
-        .filter(|item| !matches!(item.status.as_str(), "pending" | "waiting" | "success"))
+        .filter(|item| matches!(item.status.as_str(), "starting" | "running" | "stopping"))
         .filter_map(|item| {
             let agent_id = item.agent_id.as_deref()?.trim();
             if agent_id.is_empty() || local_agent_ids.contains(agent_id) {
                 return None;
             }
-            remote_native_terminal_pane(&item, agent_id, metadata)
+            Some(remote_native_terminal_pane(&item, agent_id, metadata))
         })
         .collect()
 }
@@ -556,9 +556,8 @@ fn remote_native_terminal_pane(
     item: &state::QueueItemRow,
     agent_id: &str,
     metadata: &HashMap<String, state::TerminalMetadataRow>,
-) -> Option<TerminalPane> {
+) -> TerminalPane {
     let target = remote_native_terminal_target(agent_id);
-    let output = capture_remote_native_terminal_pane(item, agent_id, "0.0").ok()?;
     let mut pane = TerminalPane::new(
         target.clone(),
         remote_native_queue_session(agent_id),
@@ -582,42 +581,7 @@ fn remote_native_terminal_pane(
     } else {
         pane.name.clone()
     };
-    pane.output = output;
-    Some(pane)
-}
-
-fn capture_remote_native_terminal_pane(
-    item: &state::QueueItemRow,
-    agent_id: &str,
-    pane: &str,
-) -> Result<String> {
-    let launcher = item
-        .remote_launcher
-        .as_deref()
-        .context("remote-native queue terminal requires remote launcher")?;
-    let capture_start = terminal_capture_start_arg();
-    let target = remote_native_tmux_target(agent_id, pane);
-    let output = Command::new(launcher)
-        .args([
-            "tmux",
-            "capture-pane",
-            "-p",
-            "-e",
-            "-J",
-            "-S",
-            &capture_start,
-            "-t",
-            &target,
-        ])
-        .output()
-        .with_context(|| format!("failed to capture remote-native tmux pane {target}"))?;
-    if !output.status.success() {
-        bail!(
-            "remote-native tmux capture-pane failed with {}",
-            output.status
-        );
-    }
-    Ok(trim_terminal_scrollback(&String::from_utf8_lossy(&output.stdout)))
+    pane
 }
 
 fn discover_zellij_panes(session: &str) -> Vec<TerminalPane> {

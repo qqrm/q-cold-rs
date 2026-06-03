@@ -737,6 +737,9 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .terminal-head.editing-terminal-meta { grid-template-columns: minmax(0, 1fr); }
+    .terminal-head.editing-terminal-meta
+      :is([data-role="activity"], [data-role="kind"], [data-role="cwd"]) { display: none; }
     .terminal-activity { justify-self: start; }
     .terminal-title {
       display: flex;

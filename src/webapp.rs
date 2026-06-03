@@ -47,6 +47,7 @@ static DASHBOARD_STATE_REFRESHING: OnceLock<Mutex<bool>> = OnceLock::new();
 static DASHBOARD_STATE_REFRESHER: OnceLock<()> = OnceLock::new();
 static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WEB_QUEUE_ITEM_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static WEB_QUEUE_RECONCILE_WORKER: OnceLock<Mutex<bool>> = OnceLock::new();
 static WEB_QUEUE_REMOTE_SYNC_AT: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
 
 #[derive(Args, Clone)]
@@ -326,6 +327,7 @@ async fn serve_async(args: &ServeArgs) -> Result<()> {
     eprintln!("Q-COLD Mini App listening on http://{}", args.listen);
     refresh_dashboard_state_cache_soon();
     start_dashboard_state_cache_refresher();
+    reconcile_stale_web_queue_run_soon();
     axum::serve(listener, router())
         .await
         .context("Mini App server failed")

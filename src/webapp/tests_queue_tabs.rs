@@ -53,6 +53,62 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_snapshot_hides_inactive_empty_tabs() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let default_run = queue_run_fixture("default-run", "running", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "pending", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        state::create_web_queue_tab("empty", "Empty").unwrap();
+
+        let snapshot = queue_snapshot();
+
+        assert!(snapshot.tabs.iter().any(|tab| tab.id == "default"));
+        assert!(!snapshot.tabs.iter().any(|tab| tab.id == "empty"));
+    }
+
+    #[test]
+    fn queue_snapshot_keeps_active_empty_tab() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let default_run = queue_run_fixture("default-run", "running", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "pending", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        state::create_web_queue_tab("empty", "Empty").unwrap();
+        state::activate_web_queue_tab("empty").unwrap();
+
+        let snapshot = queue_snapshot();
+
+        let tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == "empty")
+            .expect("active empty tab should be visible");
+        assert!(tab.active);
+        assert_eq!(tab.count, 0);
+    }
+
+    #[test]
+    fn creating_queue_tab_activates_it() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let response = handle_queue_tab_create(
+            &HeaderMap::new(),
+            &QueueTabCreateRequest {
+                label: Some("Client".to_string()),
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        let tab_id = response.output.split('\t').nth(1).unwrap();
+        let tab = state::load_web_queue_tab(tab_id).unwrap().unwrap();
+        assert!(tab.active);
+    }
+
+    #[test]
     fn queue_run_can_target_tab_without_switching_backend_active_tab() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
@@ -157,18 +213,11 @@ mod queue_tabs_tests {
             .iter()
             .find(|tab| tab.id == "default")
             .expect("default tab should be present");
-        let client_tab = snapshot
-            .tabs
-            .iter()
-            .find(|tab| tab.id == "client")
-            .expect("client tab should be present");
         let stored_client_tab = state::load_web_queue_tab("client").unwrap().unwrap();
 
         assert_eq!(default_tab.run_id.as_deref(), Some("default-run"));
         assert_eq!(default_tab.count, 1);
-        assert_eq!(client_tab.run_id, None);
-        assert_eq!(client_tab.count, 0);
-        assert!(!client_tab.running);
+        assert!(!snapshot.tabs.iter().any(|tab| tab.id == "client"));
         assert_eq!(stored_client_tab.run_id, None);
     }
 
@@ -263,6 +312,31 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_tab_delete_falls_back_to_non_empty_tab() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        state::load_web_queue_tabs().unwrap();
+        state::create_web_queue_tab("client", "Client").unwrap();
+        let run = queue_run_fixture("client-run", "stopped", -1);
+        let item = queue_item_fixture("client-run", "client-item", 0, "success", None);
+        state::replace_web_queue_for_tab("client", &run, &[item]).unwrap();
+        state::create_web_queue_tab("draft", "Draft").unwrap();
+        state::activate_web_queue_tab("draft").unwrap();
+
+        let response = handle_queue_tab_delete(
+            &HeaderMap::new(),
+            &QueueTabRequest {
+                tab_id: "draft".to_string(),
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        assert!(state::load_web_queue_tab("draft").unwrap().is_none());
+        assert!(state::load_web_queue_tab("client").unwrap().unwrap().active);
+    }
+
+    #[test]
     fn queue_tab_snapshot_marks_live_items_running() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
@@ -281,6 +355,32 @@ mod queue_tabs_tests {
             .expect("client tab should be present");
 
         assert!(tab.running);
+    }
+
+    #[test]
+    fn queue_snapshot_does_not_block_on_remote_native_sync() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        let mut run = queue_run_fixture("remote-run", "running", -1);
+        run.execution_mode = "graph".to_string();
+        run.execution_host = "remote-native".to_string();
+        run.selected_repo_root = Some(repo.display().to_string());
+        let mut item =
+            queue_item_fixture("remote-run", "remote-item", 0, "running", Some("agent-remote"));
+        item.execution_host = "remote-native".to_string();
+        item.repo_root = Some(repo.display().to_string());
+        item.remote_launcher = Some("/bin/false".to_string());
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let snapshot = queue_snapshot();
+
+        assert_eq!(snapshot.count, 1);
+        assert_eq!(snapshot.records[0].id, "remote-item");
+        assert!(snapshot.error.is_none());
+        assert_eq!(snapshot.tabs[0].count, 1);
     }
 
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {

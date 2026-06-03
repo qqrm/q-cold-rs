@@ -142,3 +142,61 @@ fn help_mentions_console_queue_flow() {
     assert!(help_text().contains("qcold queue switch"));
     assert!(help_text().contains("layers/*.md"));
 }
+
+#[test]
+fn queue_list_hides_inactive_empty_tabs() {
+    let tab = queue_tab_fixture("empty", false, None);
+
+    assert!(!queue_tab_visible_in_list(&tab, None));
+}
+
+#[test]
+fn queue_list_keeps_active_empty_tab() {
+    let tab = queue_tab_fixture("empty", true, None);
+
+    assert!(queue_tab_visible_in_list(&tab, None));
+}
+
+#[test]
+fn queue_list_keeps_run_backed_tabs() {
+    let tab = queue_tab_fixture("run-tab", false, Some("run-1"));
+    let run = queue_run_fixture("run-1");
+
+    assert!(queue_tab_visible_in_list(&tab, Some(&run)));
+}
+
+fn queue_tab_fixture(id: &str, active: bool, run_id: Option<&str>) -> state::QueueTabRow {
+    state::QueueTabRow {
+        id: id.to_string(),
+        label: id.to_string(),
+        run_id: run_id.map(ToString::to_string),
+        is_default: false,
+        active,
+        created_at: 1,
+        updated_at: 1,
+    }
+}
+
+fn queue_run_fixture(id: &str) -> (state::QueueRunRow, Vec<state::QueueItemRow>) {
+    (
+        state::QueueRunRow {
+            id: id.to_string(),
+            status: "failed".to_string(),
+            execution_mode: "graph".to_string(),
+            execution_host: "local".to_string(),
+            selected_agent_command: "c1".to_string(),
+            remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
+            selected_repo_root: None,
+            selected_repo_name: None,
+            track: "queue".to_string(),
+            current_index: -1,
+            stop_requested: false,
+            message: String::new(),
+            created_at: 1,
+            updated_at: 1,
+        },
+        Vec::new(),
+    )
+}

@@ -1,3 +1,25 @@
+fn reconcile_stale_web_queue_run_soon() {
+    let worker = WEB_QUEUE_RECONCILE_WORKER.get_or_init(|| Mutex::new(false));
+    if let Ok(mut active) = worker.lock() {
+        if *active {
+            return;
+        }
+        *active = true;
+    } else {
+        return;
+    }
+    thread::spawn(|| {
+        if let Err(err) = reconcile_stale_web_queue_run() {
+            eprintln!("warning: failed to reconcile stale web queue run: {err:#}");
+        }
+        if let Some(worker) = WEB_QUEUE_RECONCILE_WORKER.get() {
+            if let Ok(mut active) = worker.lock() {
+                *active = false;
+            }
+        }
+    });
+}
+
 fn queue_run_needs_stale_reconcile(
     run: &state::QueueRunRow,
     items: &[state::QueueItemRow],

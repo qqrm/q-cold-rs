@@ -388,7 +388,13 @@ fn latest_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
 fn active_fallback_queue_tab_id(connection: &Connection) -> Result<String> {
     connection
         .query_row(
-            "select id from web_queue_tabs order by is_default desc, created_at_unix, id limit 1",
+            "select id
+             from web_queue_tabs
+             order by case when run_id is not null then 0 else 1 end,
+                      is_default desc,
+                      created_at_unix,
+                      id
+             limit 1",
             [],
             |row| row.get(0),
         )

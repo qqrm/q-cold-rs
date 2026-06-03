@@ -330,7 +330,7 @@ fn handle_queue_tab_create_result(
         .unwrap_or("Queue");
     let tab_id = unique_queue_tab_id(&fallback)?;
     let label = clean_queue_tab_label(raw_label);
-    state::create_web_queue_tab(&tab_id, &label)?;
+    state::create_and_activate_web_queue_tab(&tab_id, &label)?;
     Ok(tab_id)
 }
 

@@ -61,6 +61,7 @@
     }
 
     function renderTerminalMetadataForm(wrap, terminal) {
+      wrap.closest('.terminal-head')?.classList.add('editing-terminal-meta');
       const form = document.createElement('form');
       form.className = 'terminal-meta-form';
       const name = document.createElement('input');
@@ -80,10 +81,12 @@
       cancel.type = 'button';
       cancel.textContent = 'Cancel';
       cancel.addEventListener('click', () => {
+        wrap.closest('.terminal-head')?.classList.remove('editing-terminal-meta');
         wrap.replaceWith(terminalTitleControl(terminal));
       });
       form.addEventListener('submit', async (event) => {
         event.preventDefault();
+        wrap.closest('.terminal-head')?.classList.remove('editing-terminal-meta');
         await saveTerminalMetadata(terminal.target, name.value, scope.value);
       });
       form.append(name, scope, save, cancel);
@@ -752,7 +755,7 @@
         const tabId = String(payload.output || '').split('\t')[1] || '';
         if (tabId) {
           activeQueueTabId = tabId;
-          queueTabSelectionUserTouched = true;
+          queueTabSelectionUserTouched = false;
           localStorage.setItem(queueActiveTabStorageKey, activeQueueTabId);
         }
         await loadSnapshot();
