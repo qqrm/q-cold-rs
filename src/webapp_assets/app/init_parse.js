@@ -64,6 +64,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const removedQueueItemTtlMs = 30000;
     const deletingQueueTabs = new Map();
     const deletedQueueTabTtlMs = 30000;
+    const queueWaveScrollPositions = new Map();
     let liveStateHoldUntil = 0;
 
     function applyTheme(choice) {

@@ -20,6 +20,7 @@
     function renderQueueGraph() {
       queueWaves = normalizeQueueWaves(queueWaves, queueItems, { pruneBackendEmpty: true });
       if (queueGraphLayoutEditable()) syncQueueWaveDependencies();
+      const scrollPositions = captureQueueWaveScrollPositions();
       const board = document.createElement('div');
       board.className = 'queue-graph-board';
       const levels = queueGraphLevels();
@@ -39,6 +40,7 @@
         board.appendChild(queueGraphWave(level, index));
       });
       queueStatus.replaceChildren(board);
+      restoreQueueWaveScrollPositions(scrollPositions);
     }
 
     function queueGraphWave(level, index) {

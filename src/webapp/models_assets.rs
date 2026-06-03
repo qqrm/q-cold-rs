@@ -849,6 +849,7 @@ const APP_CSS: &str = include_str!("../webapp_assets/app.css");
 const QUEUE_CSS: &str = include_str!("../webapp_assets/queue.css");
 const APP_JS: &str = concat!(
     include_str!("../webapp_assets/app/init_parse.js"),
+    include_str!("../webapp_assets/app/queue_scroll.js"),
     include_str!("../webapp_assets/app/queue.js"),
     include_str!("../webapp_assets/app/terminal.js"),
     include_str!("../webapp_assets/app/events.js"),

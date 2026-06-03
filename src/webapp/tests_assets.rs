@@ -75,6 +75,27 @@ mod asset_tests {
     }
 
     #[test]
+    fn graph_queue_refresh_preserves_wave_lane_scroll() {
+        let render_start = APP_JS.find("function renderQueueGraph()").unwrap();
+        let render = &APP_JS[render_start..];
+        let capture = render
+            .find("const scrollPositions = captureQueueWaveScrollPositions();")
+            .unwrap();
+        let replace = render.find("queueStatus.replaceChildren(board);").unwrap();
+        let restore = render
+            .find("restoreQueueWaveScrollPositions(scrollPositions);")
+            .unwrap();
+
+        assert!(capture < replace);
+        assert!(replace < restore);
+        assert!(APP_JS.contains("const queueWaveScrollPositions = new Map();"));
+        assert!(APP_JS.contains("function captureQueueWaveScrollPositions()"));
+        assert!(APP_JS.contains("function restoreQueueWaveScrollPositions(positions)"));
+        assert!(APP_JS.contains("window.requestAnimationFrame(() => {"));
+        assert!(APP_JS.contains("lane.scrollLeft = Math.min("));
+    }
+
+    #[test]
     fn queue_feedback_assets_are_embedded() {
         assert!(INDEX_HTML.contains("/assets/queue.css"));
         assert!(QUEUE_CSS.contains(".queue-toast-host"));
