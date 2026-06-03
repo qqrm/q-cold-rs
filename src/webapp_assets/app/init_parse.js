@@ -183,6 +183,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
       }
     }
 
+    function queueTabHasLocalDraft(tabId) {
+      const draft = loadQueueStorageForTab(tabId || 'default');
+      return Boolean((draft.items || []).length || (draft.waves || []).length > 1);
+    }
+
     function saveQueueStorage() {
       if (queueGraphMode) syncQueueWaveDependencies();
       const draftItems = queueItems.filter((item) => !item.runId);
@@ -688,13 +693,16 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (!Array.isArray(tabs) || !tabs.length) return 'default';
       const backendActiveTab = tabs.find((tab) => tab.active && queueTabHasBackendRun(tab));
       const currentTab = tabs.find((tab) => tab.id === activeQueueTabId);
-      if (!queueTabSelectionUserTouched && backendActiveTab && !queueTabHasBackendRun(currentTab)) {
-        return backendActiveTab.id;
+      if (currentTab) {
+        if (backendActiveTab && !queueTabHasBackendRun(currentTab)) {
+          const preserveDraft = queueTabSelectionUserTouched && queueTabHasLocalDraft(currentTab.id);
+          if (!preserveDraft) return backendActiveTab.id;
+        }
+        return currentTab.id;
       }
-      if (currentTab) return currentTab.id;
       const savedTabId = localStorage.getItem(queueActiveTabStorageKey) || '';
       const savedTab = tabs.find((tab) => tab.id === savedTabId);
-      if (!queueTabSelectionUserTouched && backendActiveTab && !queueTabHasBackendRun(savedTab)) {
+      if (backendActiveTab && savedTab && !queueTabHasBackendRun(savedTab) && !queueTabHasLocalDraft(savedTab.id)) {
         return backendActiveTab.id;
       }
       if (savedTab) return savedTab.id;

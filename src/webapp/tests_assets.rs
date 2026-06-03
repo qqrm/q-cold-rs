@@ -105,6 +105,18 @@ mod asset_tests {
     }
 
     #[test]
+    fn empty_local_queue_tab_does_not_hide_backend_active_run() {
+        let selection_start = APP_JS.find("function selectedQueueTabId").unwrap();
+        let selection = &APP_JS[selection_start..];
+        assert!(APP_JS.contains("function queueTabHasLocalDraft(tabId)"));
+        assert!(selection.contains(
+            "const preserveDraft = queueTabSelectionUserTouched && queueTabHasLocalDraft(currentTab.id);"
+        ));
+        assert!(selection.contains("if (!preserveDraft) return backendActiveTab.id;"));
+        assert!(selection.contains("!queueTabHasLocalDraft(savedTab.id)"));
+    }
+
+    #[test]
     fn event_stream_errors_fall_back_to_state_polling() {
         assert!(APP_JS.contains("function startFallbackPolling()"));
         assert!(APP_JS.contains("eventSource.addEventListener('error', () => {"));
