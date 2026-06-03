@@ -93,9 +93,11 @@ Mutating queue commands post to the local dashboard daemon on
 `127.0.0.1:8787` by default. If it is not reachable, Q-COLD starts it unless the
 command is passed `--no-start-daemon`.
 
-Remote-native rows are reconciled against live remote tmux sessions. A stale
-`failed-closeout` record is shown as running while the same remote-native agent
-session is still alive, then follows the next refreshed terminal task record.
+Remote-native rows are reconciled against task records, terminal bundles, and
+live remote tmux sessions. A stale `failed-closeout` record is shown as running
+while the same remote-native agent session is still alive. An `open`
+remote-native record without a live remote-agent session is shown as stopped
+until the next terminal record, terminal bundle, or operator continue action.
 
 ## Dashboard
 

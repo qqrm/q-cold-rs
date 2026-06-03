@@ -85,7 +85,7 @@
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-.queue-tab span,
+.queue-tab span:not(.queue-tab-close),
 .queue-tab small {
   min-width: 0;
   overflow: hidden;
@@ -99,9 +99,25 @@
 }
 
 .queue-tab-close {
+  display: inline-flex;
+  flex: 0 0 18px;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   margin-left: auto;
+  border-radius: 4px;
   color: var(--bad);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
   opacity: .7;
+  overflow: visible;
+}
+
+.queue-tab-close:not(.disabled):hover {
+  background: rgba(239, 68, 68, .14);
+  opacity: 1;
 }
 
 .queue-tab-close.disabled {
