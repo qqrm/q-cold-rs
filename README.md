@@ -338,6 +338,11 @@ ticks read the ready snapshot instead of recomputing task records, queue state,
 terminal panes, and Codex telemetry synchronously on every request. Successful
 queue, terminal, and task-chat mutations request an immediate refresh so the
 next live tick catches up without blocking the mutation response.
+Remote-native queue rows also reconcile stale failed-closeout records against
+the live remote tmux session. If the same remote-native agent is still running
+after a failed closeout and is retrying validation or closeout, the dashboard
+promotes the row back to running until the refreshed task record reaches the
+next terminal state.
 
 The dashboard opens to the Queue view and keeps repository/task/agent overview
 state in a compact always-visible status strip. Its Queue view accepts

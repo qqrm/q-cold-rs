@@ -292,6 +292,107 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn failed_graph_queue_restarts_while_remote_native_failed_closeout_retries() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("graph-remote-native-retry", "failed", 1);
+        run.execution_mode = "graph".to_string();
+        run.message = "failed-closeout".to_string();
+        let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
+        let mut second = queue_item_fixture(
+            &run.id,
+            "second",
+            1,
+            "failed",
+            Some("qa-task-second"),
+        );
+        second.repo_root = Some(repo.clone());
+        second.execution_host = "remote-native".to_string();
+        second.remote_launcher = Some("/bin/true".to_string());
+        second.message = "failed-closeout".to_string();
+        let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
+        third.repo_root = Some(repo.clone());
+        third.depends_on = vec!["second".to_string()];
+        state::replace_web_queue(&run, &[first, second.clone(), third]).unwrap();
+        let mut failed_closeout = state::new_task_record(
+            "task/task-second".to_string(),
+            "task-flow".to_string(),
+            "second".to_string(),
+            "prompt second".to_string(),
+            "failed-closeout".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/task-second".to_string()),
+            second.agent_id.clone(),
+            None,
+        );
+        failed_closeout.updated_at = 100;
+        state::upsert_task_record(&failed_closeout).unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(queue_run_needs_stale_reconcile(&run, &stored_items).unwrap());
+        assert_eq!(queue_task_status(&second).unwrap(), None);
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let Some((restarted_run, restarted_items)) =
+            restart_resolved_failed_queue_run(&stored_run.unwrap(), &stored_items).unwrap()
+        else {
+            panic!("expected live remote-native retry to restart the queue");
+        };
+
+        assert_eq!(restarted_run.status, "running");
+        assert_eq!(
+            restarted_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str(), item.message.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("first", "success", ""),
+                (
+                    "second",
+                    "running",
+                    "remote-native retry is still running after failed closeout",
+                ),
+                ("third", "pending", ""),
+            ]
+        );
+
+        failed_closeout.status = "closed:success".to_string();
+        failed_closeout.updated_at = 200;
+        state::upsert_task_record(&failed_closeout).unwrap();
+        let (_, retry_items) = state::load_web_queue_run(&restarted_run.id).unwrap();
+        let retry_item = retry_items
+            .iter()
+            .find(|item| item.id == "second")
+            .unwrap();
+        let _ = remote_queue_sync_due(retry_item, "/bin/true", true);
+        assert!(matches!(
+            reconcile_queue_task_statuses(&restarted_run, &retry_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (resolved_run, resolved_items) = state::load_web_queue_run(&run.id).unwrap();
+        let resolved_run = resolved_run.unwrap();
+
+        assert_eq!(
+            resolved_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [("first", "success"), ("second", "success"), ("third", "pending")]
+        );
+        assert_eq!(queue_ready_item_ids(&resolved_run, &resolved_items), ids(&["third"]));
+    }
+
+    #[test]
     fn remote_native_running_item_skips_local_agent_failure_message() {
         let mut item = queue_item_fixture(
             "remote-native-run",

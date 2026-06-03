@@ -138,6 +138,10 @@ fn reconcile_queue_task_statuses(
                 continue;
             }
         }
+        if reconcile_remote_native_retry(run, item)? {
+            changed = true;
+            continue;
+        }
         if let Some(agent_id) = item.agent_id.as_deref() {
             if let Some(message) = queue_agent_failure_message(item, agent_id) {
                 if schedule_queue_item_auto_recovery(&run.id, item, message)? {

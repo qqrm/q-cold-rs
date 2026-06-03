@@ -30,8 +30,16 @@ fn queue_task_status_from_record_or_recovery(
     let recovery = latest_related_recovery_task_record(item, task_id)?;
     if let Some(recovery) = recovery.as_ref() {
         if record.is_none_or(|record| recovery.updated_at >= record.updated_at) {
+            if remote_native_failed_closeout_is_being_retried(item, &recovery.status) {
+                return Ok(None);
+            }
             return Ok(Some(recovery.status.clone()));
         }
+    }
+    if record.is_some_and(|record| {
+        remote_native_failed_closeout_is_being_retried(item, &record.status)
+    }) {
+        return Ok(None);
     }
     Ok(record.map(|record| record.status.clone()))
 }
@@ -73,6 +81,9 @@ fn remote_native_sync_failure_fallback_status(
     if !queue_task_record_is_terminal(&record) {
         return Ok(Some(RemoteNativeSyncFallback::Status(record.status)));
     }
+    if remote_native_failed_closeout_is_being_retried(item, &record.status) {
+        return Ok(Some(RemoteNativeSyncFallback::PendingRecovery));
+    }
     if queue_status_auto_recoverable(&record.status) && queue_item_recovery_active_or_pending(item)
     {
         return Ok(Some(RemoteNativeSyncFallback::PendingRecovery));
@@ -82,6 +93,21 @@ fn remote_native_sync_failure_fallback_status(
 
 fn remote_native_requires_task_record_sync(item: &state::QueueItemRow) -> bool {
     queue_item_remote_native(item) && matches!(item.status.as_str(), "starting" | "running")
+}
+
+fn remote_native_failed_closeout_is_being_retried(
+    item: &state::QueueItemRow,
+    status: &str,
+) -> bool {
+    status == "failed-closeout" && remote_native_retry_session_running(item)
+}
+
+fn remote_native_retry_session_running(item: &state::QueueItemRow) -> bool {
+    queue_item_remote_native(item)
+        && item
+            .agent_id
+            .as_deref()
+            .is_some_and(|agent_id| remote_native_session_running(item, agent_id))
 }
 
 fn agent_running(agent_id: &str) -> bool {

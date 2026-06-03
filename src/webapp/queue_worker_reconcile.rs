@@ -35,6 +35,9 @@ fn failed_queue_run_may_be_resolved(
         if !matches!(item.status.as_str(), "failed" | "blocked") {
             continue;
         }
+        if remote_native_retry_session_running(item) {
+            return Ok(true);
+        }
         if let Some(status) = queue_task_status(item)? {
             if status == "closed:success"
                 || (queue_status_auto_recoverable(&status)
@@ -61,6 +64,31 @@ fn queue_agent_failure_message(item: &state::QueueItemRow, agent_id: &str) -> Op
         return Some("agent reached idle prompt after failed Q-COLD closeout");
     }
     None
+}
+
+fn reconcile_remote_native_retry(
+    run: &state::QueueRunRow,
+    item: &state::QueueItemRow,
+) -> Result<bool> {
+    if !matches!(item.status.as_str(), "failed" | "blocked") {
+        return Ok(false);
+    }
+    let Some(agent_id) = item.agent_id.as_deref() else {
+        return Ok(false);
+    };
+    if !remote_native_retry_session_running(item) {
+        return Ok(false);
+    }
+    state::update_web_queue_item(
+        &run.id,
+        &item.id,
+        "running",
+        "remote-native retry is still running after failed closeout",
+        Some(agent_id),
+        item.attempts,
+        None,
+    )?;
+    Ok(true)
 }
 
 fn fail_queue_run_item(
