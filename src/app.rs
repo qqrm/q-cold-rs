@@ -48,31 +48,20 @@ const QCOLD_VERSION: &str = concat!(
     env!("QCOLD_BUILD_GIT_HASH")
 );
 const QCOLD_AFTER_HELP: &str = concat!(
-    "Examples:\n",
-    "  qcold repo list\n",
-    "  qcold repo add target-repo /path/to/target-repo ",
-    "--xtask-manifest /path/to/target-repo/xtask/Cargo.toml --set-active\n",
+    "Core examples:\n",
+    "  qcold install\n",
     "  qcold status\n",
-    "  qcold task-record create --description \"Add task CRUD and automatic capture\"\n",
-    "  qcold task-record list\n",
-    "  qcold task-record audit\n",
-    "  qcold agent list\n",
-    "  qcold agent named-sessions list --agent cc1\n",
-    "  qcold agent named-sessions drop --agent cc1 --name atomic\n",
-    "  qcold agent start --track audit -- c1 \"inspect repo\"\n",
-    "  qcold telegram poll\n",
-    "  qcold wsl autostart install\n",
-    "  qcold bundle\n",
-    "  qcold guard -- rg -n \"needle\" src\n",
-    "  qcold task inspect runtime-audit\n",
+    "  qcold repo list\n",
+    "  qcold queue list\n",
+    "  qcold queue run --from queue.json --agent c1 --repo-root /path/to/repo\n",
     "  qcold task open my-task\n",
     "  qcold task enter\n",
-    "  qcold task iteration-notify --message \"waiting for direction\"\n",
     "  qcold task pause --reason \"waiting for operator decision\"\n",
     "  qcold task closeout --outcome success --message \"docs: update truth\"\n",
-    "  qcold verify fast\n",
-    "  qcold ci matrix rust-all-on --jobs 4\n\n",
-    "Use qcold <command>; legacy cargo qcold callers remain compatible."
+    "  qcold agent list\n",
+    "  qcold agent attach <agent-id|terminal-target|session|name>\n",
+    "  qcold telegram serve --listen 127.0.0.1:8787 --daemon\n\n",
+    "Advanced compatibility commands remain callable but are hidden from default help."
 );
 const DEFAULT_CODEX_TELEMETRY_RETENTION_HOURS: u64 = 48;
 const LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD: u64 = 5_000;
@@ -146,19 +135,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum TopLevel {
-    #[command(about = "Run the adapter-backed build entrypoint")]
+    #[command(hide = true, about = "Run the adapter-backed build entrypoint")]
     Build(PassthroughArgs),
     #[command(about = "Run the adapter-backed install entrypoint")]
     Install(PassthroughArgs),
     #[command(about = "Orchestrated task-flow commands")]
     Task(TaskArgs),
-    #[command(about = "Manage Q-COLD-owned task records in SQLite")]
+    #[command(hide = true, about = "Manage Q-COLD-owned task records in SQLite")]
     TaskRecord(TaskRecordArgs),
-    #[command(name = "q-help", about = "Print agent-facing queue package guidance")]
+    #[command(hide = true, name = "q-help", about = "Print agent-facing queue package guidance")]
     QHelp,
     #[command(about = "Submit and inspect Q-COLD dashboard queue runs from the CLI")]
     Queue(queue::QueueArgs),
-    #[command(about = "Write one source ZIP archive for the current repository into ./bundles")]
+    #[command(hide = true, about = "Write one source ZIP archive for the current repository into ./bundles")]
     Bundle,
     #[command(about = "Summarize primary-checkout, worktree, and drift state")]
     Status,
@@ -166,15 +155,19 @@ enum TopLevel {
     Repo(RepositoryArgs),
     #[command(about = "Start and inspect Q-COLD managed agent processes")]
     Agent(AgentArgs),
-    #[command(about = "Run Telegram command/reply control-plane adapters")]
+    #[command(about = "Serve the local dashboard and Telegram adapters")]
     Telegram(TelegramArgs),
     #[command(about = "Manage WSL integration helpers")]
     Wsl(WslArgs),
+    #[command(hide = true)]
     Ci(PassthroughArgs),
+    #[command(hide = true)]
     Verify(PassthroughArgs),
+    #[command(hide = true)]
     Compat(PassthroughArgs),
+    #[command(hide = true)]
     Ffi(PassthroughArgs),
-    #[command(about = "Run a command and suppress oversized output")]
+    #[command(hide = true, about = "Run a command and suppress oversized output")]
     Guard(GuardArgs),
 }
 
@@ -218,9 +211,9 @@ enum TaskRecordSubcommand {
     },
     #[command(about = "Show one Q-COLD-owned task record")]
     Show { id: String },
-    #[command(about = "Audit task-record telemetry coverage and tool-output noise")]
+    #[command(hide = true, about = "Audit task-record telemetry coverage and tool-output noise")]
     Audit(TaskRecordAuditArgs),
-    #[command(about = "Export full task records as JSON lines")]
+    #[command(hide = true, about = "Export full task records as JSON lines")]
     Export {
         #[arg(long)]
         status: Option<String>,
@@ -229,17 +222,17 @@ enum TaskRecordSubcommand {
     },
     #[command(about = "Import remote repo-adapter task-flow records into the local task-record DB")]
     SyncRemote(TaskRecordRemoteSyncArgs),
-    #[command(about = "Create or update a Q-COLD-owned task record")]
+    #[command(hide = true, about = "Create or update a Q-COLD-owned task record")]
     Create(TaskRecordCreateArgs),
-    #[command(about = "Update title, description, or status for a task record")]
+    #[command(hide = true, about = "Update title, description, or status for a task record")]
     Update(TaskRecordUpdateArgs),
-    #[command(about = "Mark a task record closed")]
+    #[command(hide = true, about = "Mark a task record closed")]
     Close {
         id: String,
         #[arg(long, default_value = "success")]
         outcome: String,
     },
-    #[command(about = "Delete a task record")]
+    #[command(hide = true, about = "Delete a task record")]
     Delete { id: String },
 }
 
@@ -338,23 +331,30 @@ enum TaskSubcommand {
     Enter,
     List,
     TerminalCheck,
+    #[command(hide = true)]
     IterationNotify(MessageArgs),
     Pause(PauseArgs),
     Closeout(CloseoutArgs),
+    #[command(hide = true)]
     Finalize(MessageArgs),
     #[command(hide = true)]
     Bundle {
         #[arg(value_name = "task-id")]
         task_id: Option<String>,
     },
+    #[command(hide = true)]
     Clean {
         task_slug: String,
     },
+    #[command(hide = true)]
     Clear {
         task_slug: String,
     },
+    #[command(hide = true)]
     ClearAll,
+    #[command(hide = true)]
     OrphanList,
+    #[command(hide = true)]
     OrphanClearStale {
         #[arg(long, default_value_t = 2)]
         max_age_hours: u64,

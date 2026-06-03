@@ -69,62 +69,39 @@ repo-local code owns it.
 
 - `qcold --version`
 - `qcold --help`
-- `qcold build ...`
 - `qcold install ...`
 - `qcold status`
-- `qcold task-record list`
-- `qcold task-record audit [--repo-root <path>] [--top <n>] [--record-limit <n>]`
-- `qcold task-record export [--status <status>] [--limit <n>]`
-- `qcold task-record sync-remote [--via <remote-launcher>]`
-  `[--remote-adapter <program>] [--remote-adapter-arg <arg>]`
-  `[--no-default-remote-adapter-arg] [--legacy-remote-qcold]`
-  `[--local-repo-root <path>] [--remote-repo-root <path>]`
-- `qcold task-record create --description "<task description>"`
-- `qcold task-record show <task-id>`
-- `qcold task-record update <task-id> [--title "<title>"] [--description "<description>"] [--status <status>]`
-- `qcold task-record close <task-id> [--outcome success|blocked|failed]`
-- `qcold task-record delete <task-id>`
-- `qcold q-help`
-- `qcold queue help`
+- `qcold repo list`
+- `qcold repo add <id> <root> [--xtask-manifest <path>] [--set-active]`
+- `qcold repo set-active <id>`
+- `qcold task open <task-slug> [profile]`
+- `qcold task open-remote [--via <remote-launcher>] <task-slug> [profile]`
+- `qcold task enter`
+- `qcold task list`
+- `qcold task terminal-check`
+- `qcold task pause --reason "<reason>"`
+- `qcold task closeout --outcome success|blocked|failed [--message "<message>"]`
 - `qcold queue run [--from <path>] [--prompt "<prompt>"] [--agent <command>] [--repo-root <path>]`
-- `qcold queue create [<label>]`
-- `qcold queue switch <queue-tab-id>`
-- `qcold queue delete <queue-tab-id>`
 - `qcold queue append [<run-id>] [--from <path>] [--prompt "<prompt>"]`
 - `qcold queue list`
 - `qcold queue stop`
 - `qcold queue continue [<run-id>]`
 - `qcold queue clear [--run-id <run-id>]`
+- `qcold queue create [<label>]`
+- `qcold queue switch <queue-tab-id>`
+- `qcold queue delete <queue-tab-id>`
 - `qcold agent list`
-- `qcold agent named-sessions list [--agent <command>] [--track <track>] [--account <account>]`
-  `[--repo-root <path>]`
-- `qcold agent named-sessions drop --name <name> [--agent <command>] [--track <track>]`
-  `[--account <account>] [--repo-root <path>] [--dry-run] [--include-running]`
-- `qcold agent named-sessions drop-all (--agent <command>|--track <track>|--account <account>|--all)`
-  `[--repo-root <path>] [--dry-run] [--include-running]`
-- `qcold agent prune-stale [--max-age-hours <n>] [--include-attached] [--dry-run] [--verbose]`
 - `qcold agent attach <agent-id|terminal-target|session|name>`
 - `qcold agent start [--name <zellij-pane-name>] --track <track> -- <command>...`
-- `qcold telegram poll`
+- `qcold telegram serve [--listen <addr>] [--daemon]`
 - `qcold wsl autostart install [--listen <addr>] [--repo-root <path>] [--qcold-bin <path>]`
 - `qcold wsl autostart status`
 - `qcold wsl autostart remove`
-- `qcold bundle`
-- `qcold guard -- <command>...`
-- `qcold task pause --reason "<reason>"`
-- `qcold task open-remote [--via <remote-launcher>] [--remote-adapter <program>]`
-  `[--remote-adapter-arg <arg>] [--no-default-remote-adapter-arg]`
-  `[--remote-task-sequence-env <name>] [--remote-task-prompt-env <name>]`
-  `[--remote-task-description-env <name>] [--remote-codex-thread-env <name>]`
-  `[--remote-codex-rollout-env <name>] <task-slug> [profile]`
-- `qcold repo list`
-- `qcold repo add <id> <root> [--adapter xtask-process] [--xtask-manifest <path>]`
-  with optional `--default-branch <branch>` and `--set-active`
-- `qcold repo set-active <id>`
-- `qcold verify ...`
-- `qcold ci ...`
-- `qcold compat ...`
-- `qcold ffi ...`
+
+Advanced compatibility commands remain callable but are intentionally hidden
+from default help: adapter pass-throughs (`build`, `verify`, `ci`, `compat`,
+`ffi`), `task-record`, `q-help`, `bundle`, `guard`, `telegram poll`, task
+cleanup/orphan commands, and agent named-session/prune cleanup.
 
 The standalone `qcold` binary is the primary operator-facing surface.
 `cargo qcold <command>` remains supported only as Cargo subcommand

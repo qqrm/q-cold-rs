@@ -62,34 +62,10 @@ Open remote managed work while keeping local Q-COLD state canonical:
 
 ```bash
 qcold task open-remote --via remote-dev-env my-remote-task
-qcold task-record sync-remote --via remote-dev-env \
-  --local-repo-root /path/to/local/repo \
-  --remote-repo-root /path/to/remote/repo
 ```
 
 Use `qcold task pause --reason "<reason>"` for a non-terminal wait. Use terminal
 blocked/failed closeout only when the task is actually stopped.
-
-## Task Records
-
-Q-COLD stores lightweight task records in `~/.local/state/qcold/qcold.sqlite3`.
-Records track source, repo root, cwd, status, sequence, agent/session metadata,
-closeout state, and bounded telemetry.
-
-Common commands:
-
-```bash
-qcold task-record create --description "Add task CRUD"
-qcold task-record list
-qcold task-record show task/my-task
-qcold task-record update task/my-task --status open
-qcold task-record close task/my-task --outcome success
-qcold task-record audit --top 10
-qcold task-record export --status failed-closeout
-```
-
-Managed task opens create or update `source=task-flow` records. Repo-scoped
-sequence numbers are monotonic and are not reused after deletion.
 
 ## Queue
 
@@ -160,28 +136,11 @@ List and manage local agent sessions:
 qcold agent list
 qcold agent start --track audit -- c1 "inspect repo"
 qcold agent attach <agent-id|terminal-target|session|name>
-qcold agent named-sessions list --agent cc1
-qcold agent named-sessions drop --agent cc1 --name atomic --dry-run
-qcold agent named-sessions drop-all --agent cc1 --dry-run
-qcold agent prune-stale --dry-run --verbose
 ```
 
-Named-session drop commands require an explicit scope or `--all`. Running
-sessions are preserved unless `--include-running` is supplied.
-
-## Guard And Bundles
-
-Use the output guard for broad commands that can flood the terminal:
-
-```bash
-qcold guard -- rg -n "needle" src
-```
-
-Create a source bundle for offline review:
-
-```bash
-qcold bundle
-```
+Advanced maintenance commands such as task-record CRUD, bundles, output guard,
+adapter pass-through lanes, named-session cleanup, and stale-agent pruning remain
+available for compatibility but are intentionally hidden from default help.
 
 ## Validation
 

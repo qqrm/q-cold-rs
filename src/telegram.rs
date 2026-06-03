@@ -19,7 +19,7 @@ pub struct TelegramArgs {
 
 #[derive(Subcommand)]
 enum TelegramCommand {
-    #[command(about = "Poll and acknowledge Telegram updates without routing inbound commands")]
+    #[command(hide = true, about = "Poll and acknowledge Telegram updates without routing inbound commands")]
     Poll(PollArgs),
     #[command(about = "Serve the local web dashboard over HTTP")]
     Serve(webapp::ServeArgs),

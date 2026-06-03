@@ -35,6 +35,60 @@ fn cargo_subcommand_reports_package_version() {
 }
 
 #[test]
+fn default_help_hides_advanced_compatibility_surface() {
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("Core examples:"))
+        .stdout(contains("queue"))
+        .stdout(contains("task"))
+        .stdout(contains("task-record").not())
+        .stdout(contains("q-help").not())
+        .stdout(contains("bundle").not())
+        .stdout(contains("guard").not())
+        .stdout(contains("verify").not())
+        .stdout(contains("  compat").not());
+}
+
+#[test]
+fn task_help_hides_cleanup_subcommands() {
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args(["task", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("closeout"))
+        .stdout(contains("clear-all").not())
+        .stdout(contains("orphan-clear-stale").not())
+        .stdout(contains("iteration-notify").not());
+}
+
+#[test]
+fn agent_help_hides_cleanup_subcommands() {
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args(["agent", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("attach"))
+        .stdout(contains("named-sessions").not())
+        .stdout(contains("prune-stale").not());
+}
+
+#[test]
+fn telegram_help_shows_dashboard_entrypoint_only() {
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args(["telegram", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("serve"))
+        .stdout(contains("poll").not());
+}
+
+#[test]
 fn q_help_prints_queue_package_guidance() {
     AssertCommand::cargo_bin("qcold")
         .unwrap()
