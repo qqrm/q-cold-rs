@@ -120,6 +120,7 @@ fn remote_native_queue_session(agent_id: &str) -> String {
 }
 
 fn remote_native_session_running(item: &state::QueueItemRow, agent_id: &str) -> bool {
+    const REMOTE_NATIVE_SESSION_CHECK_TIMEOUT: &str = "45s";
     let Some(launcher) = item
         .remote_launcher
         .as_deref()
@@ -129,7 +130,9 @@ fn remote_native_session_running(item: &state::QueueItemRow, agent_id: &str) -> 
     };
     let session = remote_native_queue_session(agent_id);
     let script = format!("tmux has-session -t {}", queue_shell_quote(&session));
-    Command::new(launcher)
+    Command::new("timeout")
+        .arg(REMOTE_NATIVE_SESSION_CHECK_TIMEOUT)
+        .arg(launcher)
         .arg("sh")
         .arg("-lc")
         .arg(script)
@@ -615,6 +618,9 @@ fn sync_remote_queue_task_records_with_executable(
     }
     let repo_root = queue_item_repo_root(item)?;
     let adapter_result = run_remote_queue_task_record_sync(executable, &repo_root, launcher, false);
+    if adapter_result.is_ok() {
+        return Ok(());
+    }
     let legacy_result = if queue_item_remote_native(item) {
         Some(run_remote_queue_task_record_sync(
             executable,
@@ -625,7 +631,7 @@ fn sync_remote_queue_task_records_with_executable(
     } else {
         None
     };
-    if adapter_result.is_ok() || legacy_result.as_ref().is_some_and(Result::is_ok) {
+    if legacy_result.as_ref().is_some_and(Result::is_ok) {
         return Ok(());
     }
     let mut errors = Vec::new();

@@ -10,7 +10,7 @@ mod queue_remote_sync_tests {
 
     #[cfg(unix)]
     #[test]
-    fn remote_native_sync_adds_remote_qcold_overlay() {
+    fn remote_native_sync_skips_remote_qcold_overlay_after_adapter_success() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
@@ -38,10 +38,48 @@ mod queue_remote_sync_tests {
             .lines()
             .map(str::to_string)
             .collect::<Vec<_>>();
-        assert_eq!(lines.len(), 2);
+        assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("task-record sync-remote --via remote-dev-env"));
         assert!(!lines[0].contains("--legacy-remote-qcold"));
-        assert!(lines[1].contains("task-record sync-remote --via remote-dev-env"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_native_sync_uses_remote_qcold_overlay_after_adapter_failure() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let log = temp.path().join("sync.log");
+        let qcold = temp.path().join("qcold");
+        fs::write(
+            &qcold,
+            format!(
+                "#!/bin/sh\n\
+                 printf '%s\\n' \"$*\" >> {}\n\
+                 case \"$*\" in\n\
+                 *--legacy-remote-qcold*) exit 0 ;;\n\
+                 *) exit 1 ;;\n\
+                 esac\n",
+                shell_quote(&log)
+            ),
+        )
+        .unwrap();
+        make_executable(&qcold);
+        let mut item = queue_item("task-remote-sync-overlay-fallback", &repo);
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+
+        sync_remote_queue_task_records_with_executable(&item, true, &qcold).unwrap();
+
+        let lines = fs::read_to_string(log)
+            .unwrap()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2);
+        assert!(!lines[0].contains("--legacy-remote-qcold"));
         assert!(lines[1].contains("--legacy-remote-qcold"));
     }
 
