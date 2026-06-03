@@ -58,7 +58,14 @@ fn dashboard_state_cache_stale() -> bool {
 
 fn refresh_dashboard_state_after_mutation(ok: bool) {
     if ok {
-        refresh_dashboard_state_cache();
+        invalidate_dashboard_state_cache();
+        refresh_dashboard_state_cache_soon();
+    }
+}
+
+fn invalidate_dashboard_state_cache() {
+    if let Ok(mut cache) = DASHBOARD_STATE_CACHE.get_or_init(|| Mutex::new(None)).lock() {
+        *cache = None;
     }
 }
 

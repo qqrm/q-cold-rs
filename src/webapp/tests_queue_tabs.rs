@@ -109,6 +109,37 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_tab_mutation_invalidates_stale_dashboard_cache() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        invalidate_dashboard_state_cache();
+        let default_run = queue_run_fixture("default-run", "failed", -1);
+        let default_item = queue_item_fixture("default-run", "default-item", 0, "failed", None);
+        state::replace_web_queue(&default_run, &[default_item]).unwrap();
+        refresh_dashboard_state_cache();
+
+        state::create_and_activate_web_queue_tab("client", "Client").unwrap();
+        let refresh_lock = DASHBOARD_STATE_REFRESHING.get_or_init(|| Mutex::new(false));
+        *refresh_lock.lock().unwrap() = true;
+        refresh_dashboard_state_after_mutation(true);
+        *refresh_lock.lock().unwrap() = false;
+
+        let json = cached_dashboard_state_json();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let queue = &parsed["queue"];
+        assert_eq!(queue["active_tab_id"].as_str(), Some("client"));
+        let tabs = queue["tabs"].as_array().unwrap();
+        let client = tabs
+            .iter()
+            .find(|tab| tab["id"].as_str() == Some("client"))
+            .expect("fresh state should include active empty tab");
+        assert_eq!(client["count"].as_u64(), Some(0));
+        assert_eq!(client["active"].as_bool(), Some(true));
+        invalidate_dashboard_state_cache();
+    }
+
+    #[test]
     fn queue_run_can_target_tab_without_switching_backend_active_tab() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
