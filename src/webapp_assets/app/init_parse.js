@@ -250,7 +250,18 @@ const tg = window.Telegram && window.Telegram.WebApp;
     }
 
     function queueItemAgentId(item, task = null) {
-      return item?.agentId || item?.agent_id || task?.agent_id || '';
+      return queueItemAgentIds(item, task)[0] || '';
+    }
+
+    function queueItemAgentIds(item, task = null) {
+      const seen = new Set();
+      return [item?.agentId, item?.agent_id, task?.agent_id]
+        .map((value) => String(value || '').trim())
+        .filter((value) => {
+          if (!value || seen.has(value)) return false;
+          seen.add(value);
+          return true;
+        });
     }
 
     function queueSlug(runId, index) {

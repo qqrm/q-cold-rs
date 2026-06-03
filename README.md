@@ -98,6 +98,9 @@ live remote tmux sessions. A stale `failed-closeout` record is shown as running
 while the same remote-native agent session is still alive. An `open`
 remote-native record without a live remote-agent session is shown as stopped
 until the next terminal record, terminal bundle, or operator continue action.
+Queue rows with a live executor terminal open the task chat modal with the
+latest bounded terminal tail, including remote-native tmux panes captured
+through the configured remote launcher.
 
 ## Dashboard
 

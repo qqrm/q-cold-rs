@@ -588,7 +588,36 @@ fn remote_native_terminal_pane(
     } else {
         pane.name.clone()
     };
+    pane.output = capture_remote_native_terminal_output(item, agent_id).unwrap_or_default();
     pane
+}
+
+fn capture_remote_native_terminal_output(item: &state::QueueItemRow, agent_id: &str) -> Result<String> {
+    let launcher = item
+        .remote_launcher
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .context("remote-native queue terminal requires remote launcher")?;
+    let target = remote_native_tmux_target(agent_id, "0.0");
+    let capture_start = terminal_capture_start_arg();
+    let output = Command::new(launcher)
+        .args([
+            "tmux",
+            "capture-pane",
+            "-p",
+            "-e",
+            "-J",
+            "-S",
+            &capture_start,
+            "-t",
+            &target,
+        ])
+        .output()
+        .with_context(|| format!("failed to capture remote-native tmux pane {target}"))?;
+    if !output.status.success() {
+        bail!("remote-native tmux capture-pane failed with {}", output.status);
+    }
+    Ok(trim_terminal_scrollback(&String::from_utf8_lossy(&output.stdout)))
 }
 
 fn discover_zellij_panes(session: &str) -> Vec<TerminalPane> {

@@ -531,7 +531,7 @@
       up.disabled = !queueItemCanMove(index, -1);
       const down = queueActionButton('↓', () => moveQueueItem(index, 1), 'Move task down');
       down.disabled = !queueItemCanMove(index, 1);
-      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat or transcript');
+      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat, terminal, or transcript');
       open.disabled = !queueItemContextTarget(queueItems[index]);
       const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
       copy.classList.add('icon-copy');
@@ -553,7 +553,7 @@
     function queueGraphCardControls(index) {
       const controls = document.createElement('div');
       controls.className = 'queue-step-actions queue-graph-card-actions';
-      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat or transcript');
+      const open = queueActionButton('↗', () => openQueueItemContext(index), 'Open task chat, terminal, or transcript');
       open.disabled = !queueItemContextTarget(queueItems[index]);
       const copy = queueActionButton('', () => copyQueuePrompt(index), 'Copy prompt');
       copy.classList.add('icon-copy');
@@ -862,7 +862,7 @@
         return { kind: 'transcript', task, terminal };
       }
       if (task?.id) {
-        return null;
+        return { kind: 'task-modal', taskId: task.id, task, terminal };
       }
       if (taskId) {
         return { kind: 'task-modal', taskId, task, terminal };
@@ -871,12 +871,6 @@
         return { kind: 'tasks' };
       }
       return null;
-    }
-
-    function terminalForQueueItem(item, task = taskRecordForQueueItem(item)) {
-      const agentId = queueItemAgentId(item, task);
-      if (!agentId) return null;
-      return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;
     }
 
     function queueTaskTranscriptAvailable(item, task) {

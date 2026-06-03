@@ -30,7 +30,7 @@ mod asset_tests {
     }
 
     #[test]
-    fn queue_open_target_requires_executor_before_transcript() {
+    fn queue_open_target_prefers_executor_before_transcript() {
         let target_start = APP_JS.find("function queueItemContextTarget").unwrap();
         let target = &APP_JS[target_start..];
         let terminal_index = target
@@ -41,17 +41,23 @@ mod asset_tests {
         assert!(terminal_index < transcript_index);
         assert!(APP_JS.contains("function queueTaskTranscriptAvailable(item, task)"));
         assert!(APP_JS.contains("return Boolean(task.status?.startsWith('closed'));"));
-        assert!(APP_JS.contains("if (task?.id) {\n        return null;"));
+        assert!(APP_JS.contains(
+            "return { kind: 'task-modal', taskId: task.id, task, terminal };"
+        ));
     }
 
     #[test]
-    fn queue_terminal_lookup_accepts_server_agent_field() {
+    fn queue_terminal_lookup_accepts_server_agent_field_and_fallbacks() {
         assert!(APP_JS.contains("function queueItemAgentId(item, task = null)"));
-        assert!(APP_JS.contains("return item?.agentId || item?.agent_id || task?.agent_id || '';"));
-        assert!(APP_JS.contains("const agentId = queueItemAgentId(item, task);"));
+        assert!(APP_JS.contains("function queueItemAgentIds(item, task = null)"));
+        assert!(APP_JS.contains("[item?.agentId, item?.agent_id, task?.agent_id]"));
+        assert!(APP_JS.contains("const agentIds = queueItemAgentIds(item, task);"));
+        assert!(APP_JS.contains("if (agentIds.includes(terminal.agent_id)) return true;"));
+        assert!(APP_JS.contains("if (taskId && terminal.scope === taskId) return true;"));
         assert!(APP_JS.contains(
-            "return (model?.terminals?.records || []).find((terminal) => terminal.agent_id === agentId) || null;"
+            "return agentIds.some((agentId) => terminal.target === remoteNativeTerminalTarget(agentId));"
         ));
+        assert!(APP_JS.contains("function remoteNativeTerminalTarget(agentId)"));
     }
 
     #[test]
