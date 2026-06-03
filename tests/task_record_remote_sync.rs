@@ -166,6 +166,92 @@ fn sync_remote_imports_task_flow_records_under_local_repo_sequence() {
 }
 
 #[test]
+fn sync_remote_preserves_newer_terminal_status() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let local_repo = temp.path().join("vitastor");
+    git_init(&local_repo);
+    let remote = temp.path().join("remote-dev-env");
+    let record = json!({
+        "id": "task/remote-terminal-task",
+        "source": "task-flow",
+        "sequence": 24,
+        "title": "Remote Terminal Task",
+        "description": "older remote terminal state",
+        "status": "closed:success",
+        "created_at": 50,
+        "updated_at": 100,
+        "repo_root": "/remote/vitastor",
+        "cwd": "/remote/WT/vitastor/024-remote-terminal-task",
+        "agent_id": null,
+        "metadata_json": null
+    });
+    write_executable(
+        &remote,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf 'task-record-export\\tcount=1\\n'\n",
+                "printf 'task-record-json\\t%s\\n' '{}'\n",
+            ),
+            record.to_string().replace('\'', "'\\''")
+        ),
+    );
+
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "create",
+            "--id",
+            "task/remote-terminal-task",
+            "--source",
+            "task-flow",
+            "--status",
+            "closed:blocked",
+            "--description",
+            "newer terminal state",
+            "--repo-root",
+            local_repo.to_str().unwrap(),
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "sync-remote",
+            "--via",
+            remote.to_str().unwrap(),
+            "--local-repo-root",
+            local_repo.to_str().unwrap(),
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    let show = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args(["task-record", "show", "task/remote-terminal-task"])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let show = String::from_utf8(show).unwrap();
+    assert!(show.contains("\tstatus=closed:blocked\t"), "{show}");
+}
+
+#[test]
 fn sync_remote_retries_transient_task_record_write_lock() {
     let temp = tempdir().unwrap();
     let state_dir = temp.path().join("state");

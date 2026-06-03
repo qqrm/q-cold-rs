@@ -652,6 +652,7 @@ include!("webapp/tests_assets.rs");
 include!("webapp/tests_queue_live_edit.rs");
 include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_reconcile.rs");
+include!("webapp/tests_queue_remote_sync.rs");
 include!("webapp/tests_queue_tabs.rs");
 include!("webapp/tests_queue_taskflow.rs");
 include!("webapp/tests_terminal_send.rs");

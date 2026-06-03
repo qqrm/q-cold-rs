@@ -598,6 +598,15 @@ fn same_filesystem_path(left: &str, right: &str) -> bool {
 }
 
 fn sync_remote_queue_task_records(item: &state::QueueItemRow, required: bool) -> Result<()> {
+    let executable = queue_qcold_executable()?;
+    sync_remote_queue_task_records_with_executable(item, required, &executable)
+}
+
+fn sync_remote_queue_task_records_with_executable(
+    item: &state::QueueItemRow,
+    required: bool,
+    executable: &Path,
+) -> Result<()> {
     let Some(launcher) = item.remote_launcher.as_deref() else {
         return Ok(());
     };
@@ -605,10 +614,41 @@ fn sync_remote_queue_task_records(item: &state::QueueItemRow, required: bool) ->
         return Ok(());
     }
     let repo_root = queue_item_repo_root(item)?;
+    let adapter_result = run_remote_queue_task_record_sync(executable, &repo_root, launcher, false);
+    let legacy_result = if queue_item_remote_native(item) {
+        Some(run_remote_queue_task_record_sync(
+            executable,
+            &repo_root,
+            launcher,
+            true,
+        ))
+    } else {
+        None
+    };
+    if adapter_result.is_ok() || legacy_result.as_ref().is_some_and(Result::is_ok) {
+        return Ok(());
+    }
+    let mut errors = Vec::new();
+    if let Err(err) = adapter_result {
+        errors.push(format!("{err:#}"));
+    }
+    if let Some(Err(err)) = legacy_result {
+        errors.push(format!("{err:#}"));
+    }
+    bail!("{}", errors.join("; "))
+}
+
+fn run_remote_queue_task_record_sync(
+    executable: &Path,
+    repo_root: &Path,
+    launcher: &str,
+    legacy_remote_qcold: bool,
+) -> Result<()> {
     let repo_root_arg = repo_root.display().to_string();
-    let output = Command::new(queue_qcold_executable()?)
-        .current_dir(&repo_root)
-        .env("QCOLD_REPO_ROOT", &repo_root)
+    let mut command = Command::new(executable);
+    command
+        .current_dir(repo_root)
+        .env("QCOLD_REPO_ROOT", repo_root)
         .args([
             "task-record",
             "sync-remote",
@@ -616,7 +656,11 @@ fn sync_remote_queue_task_records(item: &state::QueueItemRow, required: bool) ->
             launcher,
             "--local-repo-root",
             &repo_root_arg,
-        ])
+        ]);
+    if legacy_remote_qcold {
+        command.arg("--legacy-remote-qcold");
+    }
+    let output = command
         .output()
         .with_context(|| format!("failed to sync remote task records through {launcher}"))?;
     if !output.status.success() {

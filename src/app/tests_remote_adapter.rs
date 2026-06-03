@@ -2,10 +2,10 @@
 #[allow(clippy::unwrap_used)]
 mod remote_adapter_tests {
     use super::{
-        add_remote_adapter_metadata, merged_remote_status, parse_task_record_json_lines,
-        remote_adapter_label, remote_adapter_prefix_args, remote_task_open_env_words,
-        remote_task_open_words, remote_task_record_export_words, RemoteAdapterArgs,
-        RemoteTaskOpenEnvArgs,
+        add_remote_adapter_metadata, parse_task_record_json_lines,
+        preserve_existing_remote_status, remote_adapter_label, remote_adapter_prefix_args,
+        remote_task_open_env_words, remote_task_open_words, remote_task_record_export_words,
+        RemoteAdapterArgs, RemoteTaskOpenEnvArgs,
     };
     use crate::state;
     use std::ffi::OsString;
@@ -152,7 +152,7 @@ mod remote_adapter_tests {
 
     #[test]
     fn remote_status_merge_preserves_existing_terminal_record() {
-        let existing = state::new_task_record(
+        let mut existing = state::new_task_record(
             "task/closed".to_string(),
             "task-flow".to_string(),
             "Closed".to_string(),
@@ -163,14 +163,18 @@ mod remote_adapter_tests {
             None,
             None,
         );
+        existing.updated_at = 200;
+        let mut remote = existing.clone();
+        remote.status = "open".to_string();
+        remote.updated_at = 300;
 
-        assert_eq!(
-            merged_remote_status(Some(&existing), "open"),
-            "closed:success"
-        );
-        assert_eq!(
-            merged_remote_status(Some(&existing), "closed:failed"),
-            "closed:failed"
-        );
+        assert!(preserve_existing_remote_status(&existing, &remote));
+
+        remote.status = "closed:failed".to_string();
+        remote.updated_at = 100;
+        assert!(preserve_existing_remote_status(&existing, &remote));
+
+        remote.updated_at = 300;
+        assert!(!preserve_existing_remote_status(&existing, &remote));
     }
 }

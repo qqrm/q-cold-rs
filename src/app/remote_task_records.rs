@@ -377,8 +377,19 @@ fn canonical_remote_task_record(
     if !remote.description.trim().is_empty() {
         record.description.clone_from(&remote.description);
     }
-    record.status = merged_remote_status(existing, &remote.status);
-    record.updated_at = remote.updated_at;
+    let preserve_existing_status = existing.is_some_and(|record| {
+        preserve_existing_remote_status(record, remote)
+    });
+    if preserve_existing_status {
+        record.status = existing.map_or_else(
+            || remote.status.clone(),
+            |record| record.status.clone(),
+        );
+        record.updated_at = existing.map_or(remote.updated_at, |record| record.updated_at);
+    } else {
+        record.status.clone_from(&remote.status);
+        record.updated_at = remote.updated_at;
+    }
     record.repo_root = Some(local_repo_root.to_string());
     record.cwd = remote.cwd.clone().or(record.cwd);
     record.agent_id = remote.agent_id.clone().or(record.agent_id);
@@ -465,13 +476,11 @@ fn add_remote_adapter_metadata(
     record.metadata_json = Some(Value::Object(metadata).to_string());
 }
 
-fn merged_remote_status(existing: Option<&state::TaskRecordRow>, remote_status: &str) -> String {
-    if let Some(existing) = existing {
-        if task_record_terminal_status(&existing.status).is_some()
-            && task_record_terminal_status(remote_status).is_none()
-        {
-            return existing.status.clone();
-        }
-    }
-    remote_status.to_string()
+fn preserve_existing_remote_status(
+    existing: &state::TaskRecordRow,
+    remote: &state::TaskRecordRow,
+) -> bool {
+    task_record_terminal_status(&existing.status).is_some()
+        && (task_record_terminal_status(&remote.status).is_none()
+            || existing.updated_at > remote.updated_at)
 }
