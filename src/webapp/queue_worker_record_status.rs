@@ -15,6 +15,25 @@ fn reconcile_queue_task_record_status(
         }
         return Ok(true);
     }
+    if remote_native_stopped_open_record_with_live_session(item, &status) {
+        let agent_id = item.agent_id.as_deref();
+        let message = agent_id.map_or_else(
+            || "remote-native open task resumed".to_string(),
+            |agent_id| format!("resumed remote-native agent {agent_id}"),
+        );
+        state::update_web_queue_item(
+            &run.id,
+            &item.id,
+            "running",
+            &message,
+            agent_id,
+            item.attempts,
+            None,
+        )?;
+        state::update_web_queue_run(&run.id, "running", item.position, "running")?;
+        *changed = true;
+        return Ok(true);
+    }
     if remote_native_open_record_without_live_session(item, &status) {
         state::update_web_queue_item(
             &run.id,
@@ -88,6 +107,19 @@ fn remote_native_open_record_without_live_session(
             .is_some_and(|agent_id| !remote_native_session_running(item, agent_id))
 }
 
+fn remote_native_stopped_open_record_with_live_session(
+    item: &state::QueueItemRow,
+    status: &str,
+) -> bool {
+    status == "open"
+        && queue_item_remote_native(item)
+        && matches!(item.status.as_str(), "stopped" | "paused")
+        && item
+            .agent_id
+            .as_deref()
+            .is_some_and(|agent_id| remote_native_session_running(item, agent_id))
+}
+
 fn queue_item_status_closeout_outcome(
     run_id: &str,
     item: &state::QueueItemRow,
@@ -121,6 +153,19 @@ fn queue_item_status_closeout_outcome(
     }
     if queue_task_status_terminal(&status) {
         return fail_queue_item_from_task_status(run_id, item, agent_id, attempts, status).map(Some);
+    }
+    if remote_native_stopped_open_record_with_live_session(item, &status) {
+        state::update_web_queue_item(
+            run_id,
+            &item.id,
+            "running",
+            &format!("resumed remote-native agent {agent_id}"),
+            Some(agent_id),
+            attempts,
+            None,
+        )?;
+        state::update_web_queue_run(run_id, "running", item.position, "running")?;
+        return Ok(None);
     }
     if remote_native_open_record_without_live_session(item, &status) {
         return stop_remote_native_disconnected_item(run_id, item, agent_id, attempts).map(Some);
