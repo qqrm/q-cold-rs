@@ -88,8 +88,9 @@ fn task_pause_then_open_resumes_existing_worktree() {
 }
 
 #[test]
-fn current_bundle_command_creates_source_bundle() {
+fn current_bundle_command_fast_forwards_before_source_bundle() {
     let fixture = Fixture::new();
+    let advanced_head = fixture.advance_base_branch();
 
     let bundle = fixture
         .run_xtask(&fixture.primary, &["task", "bundle"])
@@ -98,10 +99,15 @@ fn current_bundle_command_creates_source_bundle() {
         .stdout(contains("BUNDLE_PATH="));
     let bundle_path = path_from_stdout(&stdout_text(&bundle), "BUNDLE_PATH");
     assert!(bundle_path.is_file());
+    assert_eq!(
+        git_output(&fixture.primary, &["rev-parse", "HEAD"]),
+        advanced_head
+    );
     assert!(
         bundle_listing(&bundle_path).contains("repo/file.txt")
             || bundle_listing(&bundle_path).contains("file.txt")
     );
+    assert!(bundle_extract(&bundle_path, "file.txt").contains("advanced-"));
 }
 
 #[test]

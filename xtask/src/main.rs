@@ -834,6 +834,7 @@ fn historical_flow_problem(task_status: &WorktreeStatusSummary) -> &'static str 
 
 fn bundle_command(task_id: Option<&str>) -> Result<u8> {
     let repo = repo_root()?;
+    sync_clean_checkout_to_upstream(&repo, "source bundle checkout")?;
     let bundles = repo.join("bundles");
     fs::create_dir_all(&bundles)?;
     let name = task_id.unwrap_or("source").replace(['/', '\\'], "-");

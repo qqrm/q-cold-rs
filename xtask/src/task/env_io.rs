@@ -338,6 +338,27 @@ fn ensure_clean(repo: &Path, label: &str) -> Result<()> {
     }
 }
 
+fn sync_clean_checkout_to_upstream(repo: &Path, label: &str) -> Result<()> {
+    ensure_clean(repo, label)?;
+    let branch = git_output(repo, ["branch", "--show-current"])?;
+    let remote_key = format!("branch.{branch}.remote");
+    let Some(remote) =
+        git_output_optional(repo, ["config", "--get", remote_key.as_str()])?
+            .filter(|remote| !remote.is_empty())
+    else {
+        eprintln!("warning: {label} has no configured upstream; archiving current HEAD");
+        return Ok(());
+    };
+    if remote != "." {
+        run_git(repo, ["fetch", remote.as_str()])
+            .with_context(|| format!("{label} pre-bundle fetch failed"))?;
+    }
+    run_git(repo, ["merge", "--ff-only", "@{upstream}"])
+        .with_context(|| format!("{label} pre-bundle fast-forward failed"))?;
+    ensure_clean(repo, label)?;
+    Ok(())
+}
+
 fn ensure_slug(slug: &str) -> Result<()> {
     if slug.is_empty()
         || slug.starts_with('-')
@@ -384,6 +405,21 @@ fn git_output<const N: usize>(repo: &Path, args: [&str; N]) -> Result<String> {
         bail!("git command failed: git {display}");
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_output_optional<const N: usize>(repo: &Path, args: [&str; N]) -> Result<Option<String>> {
+    let display = args.join(" ");
+    let output = internal_git::command()
+        .current_dir(repo)
+        .args(args)
+        .output()
+        .with_context(|| format!("failed to run git {display}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    Ok(Some(
+        String::from_utf8_lossy(&output.stdout).trim().to_string(),
+    ))
 }
 
 fn run_status(program: &str, args: Vec<OsString>) -> Result<u8> {
