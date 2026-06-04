@@ -57,4 +57,9 @@ doctor/open/down` contract. Q-COLD exports the selected launcher as
 `QCOLD_REMOTE_DEV_ENV_WRAPPER`; set `QCOLD_QUEUE_REMOTE_AGENT_LAUNCHER_ENV`
 when an incubating adapter requires an additional launcher environment name.
 Proxy endpoints can be supplied through `QCOLD_QUEUE_REMOTE_AGENT_LOCAL_PROXY`,
-`QCOLD_QUEUE_REMOTE_AGENT_REMOTE_PROXY`, or matching JSON fields.
+`QCOLD_QUEUE_REMOTE_AGENT_REMOTE_PROXY`, or matching JSON fields. Remote-agent
+startup uses prompt files, and adapters should stage those files remotely rather
+than passing full prompt bodies inline. When a remote-native launch cannot see
+the opened task record or tmux session, Q-COLD schedules bounded relaunches.
+Remote port-forward failures trigger best-effort remote-agent cleanup before
+Q-COLD rotates to the next candidate remote proxy port.

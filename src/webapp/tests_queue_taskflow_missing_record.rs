@@ -9,7 +9,7 @@ mod queue_taskflow_missing_record_tests {
     use std::path::Path;
 
     #[test]
-    fn remote_native_missing_task_record_without_live_session_fails_even_with_launcher() {
+    fn remote_native_missing_task_record_without_live_session_schedules_relaunch_with_launcher() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
@@ -31,10 +31,47 @@ mod queue_taskflow_missing_record_tests {
         let outcome =
             missing_queue_task_record_outcome(&run.id, &item, &agent_id, item.attempts).unwrap();
 
+        assert!(matches!(outcome, Some(QueueItemOutcome::RecoveryScheduled)));
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(items[0].status, "waiting");
+        assert_eq!(items[0].agent_id.as_deref(), None);
+        assert_eq!(items[0].attempts, 1);
+        assert!(items[0].next_attempt_at.is_some());
+        assert!(
+            items[0]
+                .message
+                .contains("remote-native task record was not visible")
+        );
+    }
+
+    #[test]
+    fn remote_native_missing_task_record_without_live_session_fails_after_retries() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-missing-record-exhausted", &repo);
+        let mut item = queue_taskflow_item(
+            "task-remote-native-missing-record-exhausted",
+            &repo,
+            Some("/bin/false"),
+        );
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.attempts = WEB_QUEUE_RETRY_DELAYS.len() as i64;
+        let agent_id = queue_agent_id(&item);
+        item.agent_id = Some(agent_id.clone());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let outcome =
+            missing_queue_task_record_outcome(&run.id, &item, &agent_id, item.attempts).unwrap();
+
         assert!(matches!(
             outcome,
             Some(QueueItemOutcome::Failed {
-                retryable: true,
+                retryable: false,
                 ..
             })
         ));
@@ -46,6 +83,37 @@ mod queue_taskflow_missing_record_tests {
                 .message
                 .contains("remote-native task record was not visible")
         );
+    }
+
+    #[test]
+    fn remote_native_missing_task_record_without_launcher_fails_without_relaunch() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-missing-record-no-launcher", &repo);
+        let mut item = queue_taskflow_item("task-remote-native-no-launcher", &repo, None);
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        let agent_id = queue_agent_id(&item);
+        item.agent_id = Some(agent_id.clone());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let outcome =
+            missing_queue_task_record_outcome(&run.id, &item, &agent_id, item.attempts).unwrap();
+
+        assert!(matches!(
+            outcome,
+            Some(QueueItemOutcome::Failed {
+                retryable: false,
+                ..
+            })
+        ));
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        assert_eq!(items[0].status, "failed");
+        assert_eq!(items[0].agent_id.as_deref(), Some(agent_id.as_str()));
     }
 
     #[test]

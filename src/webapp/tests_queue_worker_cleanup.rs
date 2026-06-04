@@ -81,6 +81,37 @@ mod queue_worker_cleanup_tests {
         assert!(agents.iter().any(|row| row.id == agent_id));
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn remote_native_port_forward_failure_runs_best_effort_cleanup() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let log = install_fake_cargo_logger(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_item_fixture("task-remote-native-port-cleanup", &repo);
+        item.execution_host = "remote-native".to_string();
+        item.remote_launcher = Some("remote-dev-env".to_string());
+        item.remote_agent_remote_proxy = Some("127.0.0.1:18330".to_string());
+
+        let cleanup = cleanup_remote_native_port_forward_failure(
+            &item,
+            concat!(
+                "repository remote-agent open contract failed with exit status: 255: ",
+                "Error: remote port forwarding failed for listen port 18330",
+            ),
+        );
+
+        assert_eq!(cleanup.as_deref(), Some("remote-agent session stopped"));
+        let log = fs::read_to_string(log).unwrap();
+        assert!(log.contains(
+            "xtask remote-agent down --session qcold-qa-task-remote-native-port-cleanup"
+        ));
+        assert!(log.contains("--remote-proxy 127.0.0.1:18330"));
+        assert!(log.contains("QCOLD_REMOTE_DEV_ENV_WRAPPER=remote-dev-env"));
+    }
+
     fn queue_item_fixture(slug: &str, repo: &Path) -> state::QueueItemRow {
         state::QueueItemRow {
             id: "item".to_string(),
@@ -140,6 +171,42 @@ mod queue_worker_cleanup_tests {
         fs::create_dir_all(worktree.parent().unwrap()).unwrap();
         let worktree_arg = worktree.display().to_string();
         git_ok(repo, &["worktree", "add", "--detach", &worktree_arg, "HEAD"]);
+    }
+
+    #[cfg(unix)]
+    fn install_fake_cargo_logger(temp: &Path) -> PathBuf {
+        let bin = temp.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let log = temp.join("cargo.log");
+        let cargo = bin.join("cargo");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$PWD|$*|QCOLD_REMOTE_DEV_ENV_WRAPPER=$QCOLD_REMOTE_DEV_ENV_WRAPPER\" \
+             >> {}\n",
+            shell_quote(&log)
+        );
+        fs::write(&cargo, script).unwrap();
+        make_executable(&cargo);
+
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        log
+    }
+
+    #[cfg(unix)]
+    fn make_executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut permissions = fs::metadata(path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(path, permissions).unwrap();
+    }
+
+    #[cfg(unix)]
+    fn shell_quote(path: &Path) -> String {
+        format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
     }
 
     fn git_ok(cwd: &Path, args: &[&str]) {

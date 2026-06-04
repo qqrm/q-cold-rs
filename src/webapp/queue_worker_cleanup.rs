@@ -163,7 +163,9 @@ fn rotate_remote_native_proxy(
 ) -> Result<Option<String>> {
     let used = state::load_web_queue_items()?
         .into_iter()
-        .filter(|other| (other.run_id != item.run_id || other.id != item.id) && other.status != "success")
+        .filter(|other| {
+            (other.run_id != item.run_id || other.id != item.id) && other.status != "success"
+        })
         .filter_map(|other| {
             other
                 .remote_agent_remote_proxy
@@ -241,8 +243,12 @@ fn handle_queue_launch_outcome(
             mut message,
             retryable: true,
         } if retry_index(*retries) < WEB_QUEUE_RETRY_DELAYS.len() => {
+            let cleanup = cleanup_remote_native_port_forward_failure(item, &message);
             if let Some(proxy) = maybe_rotate_remote_native_proxy_after_failure(item, &message)? {
                 let _ = write!(&mut message, "; switched remote proxy to {proxy}");
+            }
+            if let Some(cleanup) = cleanup {
+                let _ = write!(&mut message, "; {cleanup}");
             }
             let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(*retries)];
             *retries += 1;
@@ -287,6 +293,16 @@ fn handle_queue_launch_outcome(
     }
 }
 
+fn cleanup_remote_native_port_forward_failure(
+    item: &state::QueueItemRow,
+    message: &str,
+) -> Option<String> {
+    if !queue_item_remote_native(item) || queue_launch_failure_listen_port(message).is_none() {
+        return None;
+    }
+    Some(cleanup_queue_executor(item, &queue_agent_id(item)))
+}
+
 fn queue_launch_failure_agent_id(item: &state::QueueItemRow) -> Option<String> {
     if queue_item_remote_native(item) {
         return Some(queue_agent_id(item));
@@ -301,6 +317,24 @@ fn fail_remote_native_missing_task_record(
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
     let message = "remote-native task record was not visible after remote-agent open";
+    if retry_index(attempts) < WEB_QUEUE_RETRY_DELAYS.len()
+        && item
+            .remote_launcher
+            .as_deref()
+            .is_some_and(|launcher| !launcher.trim().is_empty())
+    {
+        let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(attempts)];
+        let attempts = attempts.saturating_add(1);
+        let next_attempt_at = unix_now().saturating_add(delay);
+        state::schedule_web_queue_item_relaunch(
+            run_id,
+            &item.id,
+            message,
+            attempts,
+            next_attempt_at,
+        )?;
+        return Ok(QueueItemOutcome::RecoveryScheduled);
+    }
     state::update_web_queue_item(
         run_id,
         &item.id,
@@ -310,7 +344,7 @@ fn fail_remote_native_missing_task_record(
         attempts,
         None,
     )?;
-    Ok(QueueItemOutcome::retryable_failure(message))
+    Ok(QueueItemOutcome::failed(message))
 }
 
 fn cleanup_queue_agent(agent_id: &str) -> String {

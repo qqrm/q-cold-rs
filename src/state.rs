@@ -636,6 +636,33 @@ pub fn reset_web_queue_item_for_relaunch(
     Ok(())
 }
 
+pub fn schedule_web_queue_item_relaunch(
+    run_id: &str,
+    item_id: &str,
+    message: &str,
+    attempts: i64,
+    next_attempt_at: u64,
+) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_items
+             set status = 'waiting', message = ?3, agent_id = null, attempts = ?4,
+                 next_attempt_at_unix = ?5, updated_at_unix = ?6
+             where run_id = ?1 and id = ?2",
+            params![
+                run_id,
+                item_id,
+                message,
+                attempts,
+                next_attempt_at,
+                unix_now()
+            ],
+        )
+        .context("failed to schedule web queue item relaunch")?;
+    Ok(())
+}
+
 pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> Result<()> {
     let connection = open_db()?;
     connection

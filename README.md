@@ -98,6 +98,10 @@ live remote tmux sessions. A stale `failed-closeout` record is shown as running
 while the same remote-native agent session is still alive. An `open`
 remote-native record without a live remote-agent session is shown as stopped
 until the next terminal record, terminal bundle, or operator continue action.
+If remote-agent launch succeeds but the remote task record and tmux session are
+not visible, Q-COLD schedules a bounded relaunch instead of leaving a terminal
+failed row. Remote port-forward failures run a best-effort `remote-agent down`
+before rotating to the next candidate remote proxy port.
 Queue rows with a live executor terminal open the task chat modal with the
 latest bounded terminal tail, including remote-native tmux panes captured
 through the configured remote launcher.
