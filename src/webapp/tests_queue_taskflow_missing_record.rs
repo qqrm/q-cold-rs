@@ -79,6 +79,40 @@ mod queue_taskflow_missing_record_tests {
         assert!(items[0].message.contains("task record visibility"));
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn remote_native_open_record_refreshes_stale_visibility_message() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-sync", &repo);
+        let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/true"));
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.status = "running".to_string();
+        item.message =
+            "waiting for remote-native task record visibility after remote-agent open".to_string();
+        item.agent_id = Some(queue_agent_id(&item));
+        let mut record = task_record_fixture("task-remote-native-sync", "open", &repo);
+        record.agent_id.clone_from(&item.agent_id);
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+        state::upsert_task_record(&record).unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored = &stored_items[0];
+        let agent_id = item.agent_id.as_deref().unwrap();
+        assert_eq!(stored.status, "running");
+        assert_eq!(stored.message, format!("repo {} ({agent_id})", item.slug));
+    }
+
     fn queue_run_fixture(id: &str, repo: &Path) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
@@ -128,5 +162,19 @@ mod queue_taskflow_missing_record_tests {
             started_at: 0,
             updated_at: 0,
         }
+    }
+
+    fn task_record_fixture(slug: &str, status: &str, repo: &Path) -> state::TaskRecordRow {
+        state::new_task_record(
+            format!("task/{slug}"),
+            "task-flow".to_string(),
+            slug.to_string(),
+            "existing task".to_string(),
+            status.to_string(),
+            Some(repo.display().to_string()),
+            Some(repo.join("WT").join(slug).display().to_string()),
+            None,
+            None,
+        )
     }
 }
