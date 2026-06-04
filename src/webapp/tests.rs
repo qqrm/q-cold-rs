@@ -445,11 +445,111 @@ mod tests {
         );
 
         assert!(!response.ok);
-        assert!(response.output.contains("already active in run existing-run"));
+        assert!(response.output.contains("already exists in run existing-run"));
         assert!(response.output.contains("queue append/continue"));
         let (retry_run, retry_items) = state::load_web_queue_run("retry-run").unwrap();
         assert!(retry_run.is_none());
         assert!(retry_items.is_empty());
+    }
+
+    #[test]
+    fn queue_run_rejects_retry_shaped_duplicate_slug_before_persisting() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let existing_run = queue_run_fixture("existing-run", "failed", 0);
+        let mut existing_item = queue_item_fixture("existing-run", "existing", 0, "failed", None);
+        existing_item.slug =
+            "post-285-289-t07-soak-real-time-lane-after-repair-p18116-20260604".to_string();
+        state::replace_web_queue(&existing_run, &[existing_item]).unwrap();
+
+        let response = handle_queue_run(
+            &HeaderMap::new(),
+            QueueRunRequest {
+                run_id: Some("retry-run".to_string()),
+                tab_id: None,
+                execution_mode: None,
+                selected_execution_host: Some("remote-native".to_string()),
+                selected_agent_command: "remote-only-agent".to_string(),
+                selected_remote_launcher: Some("remote-dev-env".to_string()),
+                selected_remote_agent_local_proxy: None,
+                selected_remote_agent_remote_proxy: None,
+                selected_repo_root: Some("/workspace/repo".to_string()),
+                selected_repo_name: Some("repo".to_string()),
+                items: vec![QueueRunItemRequest {
+                    id: Some("retry-item".to_string()),
+                    prompt: "retry the same task with another port".to_string(),
+                    slug: Some(
+                        "post-285-289-t07-soak-real-time-lane-after-repair-p18123-20260604"
+                            .to_string(),
+                    ),
+                    depends_on: None,
+                    repo_root: None,
+                    repo_name: None,
+                    execution_host: Some("remote-native".to_string()),
+                    agent_command: None,
+                    remote_launcher: None,
+                    remote_agent_local_proxy: None,
+                    remote_agent_remote_proxy: None,
+                }],
+            },
+        );
+
+        assert!(!response.ok);
+        assert!(response.output.contains("already exists in run existing-run"));
+        assert!(response.output.contains("status failed"));
+        let (retry_run, retry_items) = state::load_web_queue_run("retry-run").unwrap();
+        assert!(retry_run.is_none());
+        assert!(retry_items.is_empty());
+    }
+
+    #[test]
+    fn queue_run_allows_retry_shaped_duplicate_after_success() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let existing_run = queue_run_fixture("existing-run", "success", 0);
+        let mut existing_item = queue_item_fixture("existing-run", "existing", 0, "success", None);
+        existing_item.slug =
+            "post-285-289-t07-soak-real-time-lane-after-repair-p18116-20260604".to_string();
+        state::replace_web_queue(&existing_run, &[existing_item]).unwrap();
+
+        let response = handle_queue_run(
+            &HeaderMap::new(),
+            QueueRunRequest {
+                run_id: Some("new-run".to_string()),
+                tab_id: None,
+                execution_mode: None,
+                selected_execution_host: Some("remote-native".to_string()),
+                selected_agent_command: "remote-only-agent".to_string(),
+                selected_remote_launcher: Some("remote-dev-env".to_string()),
+                selected_remote_agent_local_proxy: None,
+                selected_remote_agent_remote_proxy: None,
+                selected_repo_root: Some("/workspace/repo".to_string()),
+                selected_repo_name: Some("repo".to_string()),
+                items: vec![QueueRunItemRequest {
+                    id: Some("new-item".to_string()),
+                    prompt: "new accepted run after success".to_string(),
+                    slug: Some(
+                        "post-285-289-t07-soak-real-time-lane-after-repair-p18123-20260604"
+                            .to_string(),
+                    ),
+                    depends_on: None,
+                    repo_root: None,
+                    repo_name: None,
+                    execution_host: Some("remote-native".to_string()),
+                    agent_command: None,
+                    remote_launcher: None,
+                    remote_agent_local_proxy: None,
+                    remote_agent_remote_proxy: None,
+                }],
+            },
+        );
+
+        assert!(response.ok, "{}", response.output);
+        let (new_run, new_items) = state::load_web_queue_run("new-run").unwrap();
+        assert!(new_run.is_some());
+        assert_eq!(new_items.len(), 1);
     }
 
     #[test]

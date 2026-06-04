@@ -77,26 +77,7 @@ fn ensure_queue_run_slugs_available(
     run: &state::QueueRunRow,
     items: &[state::QueueItemRow],
 ) -> Result<()> {
-    let requested = items
-        .iter()
-        .map(|item| item.slug.as_str())
-        .collect::<HashSet<_>>();
-    if requested.is_empty() {
-        return Ok(());
-    }
-    let Some(conflict) = state::load_web_queue_items()?.into_iter().find(|other| {
-        requested.contains(other.slug.as_str())
-            && other.run_id != run.id
-            && !queue_item_terminal(&other.status)
-    }) else {
-        return Ok(());
-    };
-    bail!(
-        "queue task slug task/{} is already active in run {}; \
-         use queue append/continue or clear/delete the stale run before creating another queue",
-        conflict.slug,
-        conflict.run_id
-    )
+    ensure_queue_run_conflict_free(run, items)
 }
 
 fn handle_queue_append(headers: &HeaderMap, payload: QueueAppendRequest) -> TerminalSendResponse {
