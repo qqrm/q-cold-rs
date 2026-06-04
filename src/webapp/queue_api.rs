@@ -63,6 +63,7 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     let mut items = queue_items_from_requests(&run, prompts, 0, &mut used_slugs, now);
     validate_queue_execution_hosts(&run, &items)?;
     normalize_queue_dependencies(&run.execution_mode, &mut items)?;
+    ensure_queue_run_slugs_available(&run, &items)?;
     if let Some(tab_id) = tab_id.as_deref() {
         state::replace_web_queue_for_tab(tab_id, &run, &items)?;
     } else {
@@ -70,6 +71,32 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     }
     spawn_web_queue_worker(run_id.clone());
     Ok(run_id)
+}
+
+fn ensure_queue_run_slugs_available(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+) -> Result<()> {
+    let requested = items
+        .iter()
+        .map(|item| item.slug.as_str())
+        .collect::<HashSet<_>>();
+    if requested.is_empty() {
+        return Ok(());
+    }
+    let Some(conflict) = state::load_web_queue_items()?.into_iter().find(|other| {
+        requested.contains(other.slug.as_str())
+            && other.run_id != run.id
+            && !queue_item_terminal(&other.status)
+    }) else {
+        return Ok(());
+    };
+    bail!(
+        "queue task slug task/{} is already active in run {}; \
+         use queue append/continue or clear/delete the stale run before creating another queue",
+        conflict.slug,
+        conflict.run_id
+    )
 }
 
 fn handle_queue_append(headers: &HeaderMap, payload: QueueAppendRequest) -> TerminalSendResponse {
