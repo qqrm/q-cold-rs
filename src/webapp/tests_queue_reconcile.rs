@@ -363,6 +363,90 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    fn failed_graph_queue_restarts_after_newer_reintegrate_task_succeeds() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("graph-reintegrate-record", "failed", 1);
+        run.execution_mode = "graph".to_string();
+        run.message = "failed-closeout".to_string();
+        let first = queue_item_fixture(&run.id, "EBSR2-00B", 0, "success", Some("agent-1"));
+        let mut second = queue_item_fixture(&run.id, "EBSR2-00A", 1, "failed", Some("agent-2"));
+        second.slug =
+            "blockstore-ebs-v3f288-00a-fio-product-qemu-iouring-env-20260604-after-ebs00-p18320-20260605"
+                .to_string();
+        second.repo_root = Some(repo.clone());
+        second.execution_host = "remote-native".to_string();
+        second.remote_launcher = Some("remote-dev-env".to_string());
+        second.message = "failed-closeout".to_string();
+        second.started_at = 100;
+        let mut third = queue_item_fixture(&run.id, "EBSR2-02", 2, "pending", None);
+        third.repo_root = Some(repo.clone());
+        third.depends_on = vec!["EBSR2-00A".to_string()];
+        state::replace_web_queue(&run, &[first, second, third]).unwrap();
+
+        let mut failed = state::new_task_record(
+            "task/blockstore-ebs-v3f288-00a-fio-product-qemu-iouring-env-20260604-after-ebs00-p18320-20260605"
+                .to_string(),
+            "task-flow".to_string(),
+            "original failed 00A".to_string(),
+            "prompt failed 00A".to_string(),
+            "failed-closeout".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/original-00a".to_string()),
+            Some("agent-2".to_string()),
+            Some(r#"{"remote_launcher":"remote-dev-env"}"#.to_string()),
+        );
+        failed.updated_at = 110;
+        state::upsert_task_record(&failed).unwrap();
+        let mut reintegrated = state::new_task_record(
+            "task/blockstore-ebs-v3f288-00a-fio-product-qemu-reintegrate-20260605".to_string(),
+            "task-flow".to_string(),
+            "00A reintegrated".to_string(),
+            "prompt 00A reintegrated".to_string(),
+            "closed:success".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/reintegrated-00a".to_string()),
+            Some("agent-reintegrate".to_string()),
+            Some(r#"{"remote_launcher":"remote-dev-env"}"#.to_string()),
+        );
+        reintegrated.updated_at = 120;
+        state::upsert_task_record(&reintegrated).unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(queue_run_needs_stale_reconcile(&run, &stored_items).unwrap());
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let Some((restarted_run, restarted_items)) =
+            restart_resolved_failed_queue_run(&stored_run.unwrap(), &stored_items).unwrap()
+        else {
+            panic!("expected resolved failed queue to restart");
+        };
+
+        assert_eq!(restarted_run.status, "running");
+        assert_eq!(
+            restarted_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [
+                ("EBSR2-00B", "success"),
+                ("EBSR2-00A", "success"),
+                ("EBSR2-02", "pending"),
+            ]
+        );
+        assert_eq!(queue_ready_item_ids(&restarted_run, &restarted_items), ids(&["EBSR2-02"]));
+    }
+
+    #[test]
     #[cfg(unix)]
     fn failed_graph_queue_restarts_while_remote_native_failed_closeout_retries() {
         let _guard = test_support::env_guard();

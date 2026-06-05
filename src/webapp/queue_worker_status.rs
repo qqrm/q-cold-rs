@@ -51,16 +51,42 @@ fn latest_related_recovery_task_record(
     let Some(repo_root) = item.repo_root.as_deref().filter(|value| !value.trim().is_empty()) else {
         return Ok(None);
     };
-    let recovery_prefix = format!("{task_id}-recovery");
     let records = state::load_task_records_for_repo(repo_root, None, 128)?;
     Ok(records
         .into_iter()
         .filter(|record| {
-            record.id.starts_with(&recovery_prefix)
+            related_recovery_task_record_id(task_id, &record.id)
                 && queue_task_record_matches_item(item, record)
                 && (item.started_at == 0 || record.updated_at >= item.started_at)
         })
         .max_by_key(|record| record.updated_at))
+}
+
+fn related_recovery_task_record_id(task_id: &str, record_id: &str) -> bool {
+    if record_id.starts_with(&format!("{task_id}-recovery")) {
+        return true;
+    }
+    if record_id == task_id || !record_id.contains("-reintegrate-") {
+        return false;
+    }
+    let Some(task_slug) = task_id.strip_prefix("task/") else {
+        return false;
+    };
+    let Some(record_slug) = record_id.strip_prefix("task/") else {
+        return false;
+    };
+    let Some(family_prefix) = task_slug_family_prefix(task_slug) else {
+        return false;
+    };
+    record_slug.starts_with(&family_prefix)
+}
+
+fn task_slug_family_prefix(slug: &str) -> Option<String> {
+    let parts = slug.split('-').take(4).collect::<Vec<_>>();
+    if parts.len() < 4 || parts.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    Some(format!("{}-", parts.join("-")))
 }
 
 enum RemoteNativeSyncFallback {
