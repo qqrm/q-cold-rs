@@ -82,9 +82,22 @@ fn related_recovery_task_record_id(task_id: &str, record_id: &str) -> bool {
 }
 
 fn related_repair_task_marker(record_id: &str) -> bool {
-    record_id.contains("-reintegrate-")
-        || record_id.contains("-relaunch-")
-        || record_id.contains("-repair-")
+    record_id
+        .split(['/', '-'])
+        .any(related_repair_task_marker_segment)
+}
+
+fn related_repair_task_marker_segment(segment: &str) -> bool {
+    segment == "reintegrate"
+        || retry_marker_segment(segment, "relaunch")
+        || retry_marker_segment(segment, "repair")
+}
+
+fn retry_marker_segment(segment: &str, prefix: &str) -> bool {
+    let Some(suffix) = segment.strip_prefix(prefix) else {
+        return false;
+    };
+    suffix.is_empty() || suffix.chars().all(|ch| ch.is_ascii_digit())
 }
 
 fn task_slug_family_prefix(slug: &str) -> Option<String> {
@@ -135,11 +148,7 @@ fn remote_native_failed_closeout_is_being_retried(
 }
 
 fn remote_native_retry_session_running(item: &state::QueueItemRow) -> bool {
-    queue_item_remote_native(item)
-        && item
-            .agent_id
-            .as_deref()
-            .is_some_and(|agent_id| remote_native_session_running(item, agent_id))
+    queue_item_remote_native(item) && remote_native_open_record_live_agent_id(item).is_some()
 }
 
 fn agent_running(agent_id: &str) -> bool {

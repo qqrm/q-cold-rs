@@ -166,17 +166,27 @@ fn remote_native_open_record_live_agent_id(item: &state::QueueItemRow) -> Option
     if remote_native_session_running(item, agent_id) {
         return Some(agent_id.to_string());
     }
-    remote_native_retry_agent_ids(agent_id)?
+    remote_native_retry_agent_ids(agent_id)
         .into_iter()
         .find(|candidate| remote_native_session_running(item, candidate))
 }
 
-fn remote_native_retry_agent_ids(agent_id: &str) -> Option<[String; 2]> {
-    let (prefix, suffix) = agent_id.rsplit_once('-')?;
-    if prefix.is_empty() || matches!(suffix, "relaunch" | "repair") {
-        return None;
+fn remote_native_retry_agent_ids(agent_id: &str) -> Vec<String> {
+    let Some((prefix, _suffix)) = agent_id.rsplit_once('-') else {
+        return Vec::new();
+    };
+    if prefix.is_empty() {
+        return Vec::new();
     }
-    Some([format!("{prefix}-relaunch"), format!("{prefix}-repair")])
+    ["relaunch", "repair"]
+        .into_iter()
+        .flat_map(|kind| {
+            ["", "2"]
+                .into_iter()
+                .map(move |ordinal| format!("{prefix}-{kind}{ordinal}"))
+        })
+        .filter(|candidate| candidate != agent_id)
+        .collect()
 }
 
 fn queue_item_status_closeout_outcome(
