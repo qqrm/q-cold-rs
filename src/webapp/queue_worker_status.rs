@@ -59,7 +59,18 @@ fn latest_related_recovery_task_record(
                 && queue_task_record_matches_item(item, record)
                 && (item.started_at == 0 || record.updated_at >= item.started_at)
         })
-        .max_by_key(|record| record.updated_at))
+        .max_by_key(recovery_task_record_precedence))
+}
+
+fn recovery_task_record_precedence(record: &state::TaskRecordRow) -> (u8, u64) {
+    let rank = if record.status == "closed:success" {
+        3
+    } else if !queue_task_record_is_terminal(record) {
+        2
+    } else {
+        1
+    };
+    (rank, record.updated_at)
 }
 
 fn related_recovery_task_record_id(task_id: &str, record_id: &str) -> bool {
