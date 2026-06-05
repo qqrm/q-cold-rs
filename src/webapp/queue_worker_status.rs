@@ -56,10 +56,35 @@ fn latest_related_recovery_task_record(
         .into_iter()
         .filter(|record| {
             related_recovery_task_record_id(task_id, &record.id)
-                && queue_task_record_matches_item(item, record)
+                && related_recovery_task_record_matches_item(item, record)
                 && (item.started_at == 0 || record.updated_at >= item.started_at)
         })
         .max_by_key(recovery_task_record_precedence))
+}
+
+fn related_recovery_task_record_matches_item(
+    item: &state::QueueItemRow,
+    record: &state::TaskRecordRow,
+) -> bool {
+    if queue_task_record_matches_item(item, record) {
+        return true;
+    }
+    related_manual_repair_task_record_matches_item(item, record)
+}
+
+fn related_manual_repair_task_record_matches_item(
+    item: &state::QueueItemRow,
+    record: &state::TaskRecordRow,
+) -> bool {
+    queue_item_remote_native(item)
+        && item.remote_launcher.is_some()
+        && record.source == "task-flow"
+        && task_record_remote_launcher(record).is_none()
+        && queue_task_record_repo_matches_item(item, record)
+        && record
+            .agent_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn recovery_task_record_precedence(record: &state::TaskRecordRow) -> (u8, u64) {

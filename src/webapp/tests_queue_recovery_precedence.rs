@@ -75,6 +75,117 @@ mod queue_recovery_precedence_tests {
         assert_eq!(queue_task_status(&item).unwrap().as_deref(), Some("open"));
     }
 
+    #[test]
+    fn manual_open_repair_without_remote_launcher_supersedes_original_failed() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let run = queue_run_fixture("manual-open-repair-record", "failed", 0);
+        let mut item = queue_item_fixture(&run.id, "EBSR2-11", 0, "failed", Some("agent-11"));
+        item.slug =
+            "blockstore-ebs-v3f288-11-performance-parity-original-cpp-20260604-after-ebs00-p18332-20260605"
+                .to_string();
+        item.repo_root = Some(repo.clone());
+        item.execution_host = "remote-native".to_string();
+        item.remote_launcher = Some("remote-dev-env".to_string());
+        item.message = "closed:failed".to_string();
+        item.started_at = 100;
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let mut failed = state::new_task_record(
+            "task/blockstore-ebs-v3f288-11-performance-parity-original-cpp-20260604-after-ebs00-p18332-20260605"
+                .to_string(),
+            "task-flow".to_string(),
+            "original failed 11".to_string(),
+            "prompt failed 11".to_string(),
+            "closed:failed".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/original-11".to_string()),
+            Some("agent-11".to_string()),
+            Some(r#"{"remote_launcher":"remote-dev-env"}"#.to_string()),
+        );
+        failed.updated_at = 110;
+        state::upsert_task_record(&failed).unwrap();
+
+        let mut manual_repair = state::new_task_record(
+            "task/blockstore-ebs-v3f288-11-current-fio-noprogress-repair-20260605".to_string(),
+            "task-flow".to_string(),
+            "11 manual repair".to_string(),
+            "prompt 11 manual repair".to_string(),
+            "open".to_string(),
+            Some(repo),
+            Some("/remote/repo/manual-repair-11".to_string()),
+            Some("agent-manual-repair".to_string()),
+            None,
+        );
+        manual_repair.updated_at = 120;
+        state::upsert_task_record(&manual_repair).unwrap();
+
+        assert_eq!(queue_task_status(&item).unwrap().as_deref(), Some("open"));
+    }
+
+    #[test]
+    fn manual_success_repair_without_remote_launcher_supersedes_original_failed() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let run = queue_run_fixture("manual-success-repair-record", "failed", 0);
+        let mut item = queue_item_fixture(&run.id, "EBSR2-11", 0, "failed", Some("agent-11"));
+        item.slug =
+            "blockstore-ebs-v3f288-11-performance-parity-original-cpp-20260604-after-ebs00-p18332-20260605"
+                .to_string();
+        item.repo_root = Some(repo.clone());
+        item.execution_host = "remote-native".to_string();
+        item.remote_launcher = Some("remote-dev-env".to_string());
+        item.message = "closed:failed".to_string();
+        item.started_at = 100;
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let mut failed = state::new_task_record(
+            "task/blockstore-ebs-v3f288-11-performance-parity-original-cpp-20260604-after-ebs00-p18332-20260605"
+                .to_string(),
+            "task-flow".to_string(),
+            "original failed 11".to_string(),
+            "prompt failed 11".to_string(),
+            "closed:failed".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/original-11".to_string()),
+            Some("agent-11".to_string()),
+            Some(r#"{"remote_launcher":"remote-dev-env"}"#.to_string()),
+        );
+        failed.updated_at = 110;
+        state::upsert_task_record(&failed).unwrap();
+
+        let mut manual_repair = state::new_task_record(
+            "task/blockstore-ebs-v3f288-11-current-fio-noprogress-repair-20260605".to_string(),
+            "task-flow".to_string(),
+            "11 manual repair".to_string(),
+            "prompt 11 manual repair".to_string(),
+            "closed:success".to_string(),
+            Some(repo),
+            Some("/remote/repo/manual-repair-11".to_string()),
+            Some("agent-manual-repair".to_string()),
+            None,
+        );
+        manual_repair.updated_at = 120;
+        state::upsert_task_record(&manual_repair).unwrap();
+
+        assert_eq!(
+            queue_task_status(&item).unwrap().as_deref(),
+            Some("closed:success")
+        );
+    }
+
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
