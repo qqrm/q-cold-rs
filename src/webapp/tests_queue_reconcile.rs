@@ -219,6 +219,77 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    fn queue_continue_restarts_failed_graph_after_stale_failed_row_resolves() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("graph-continue-resolved", "failed", 0);
+        run.execution_mode = "graph".to_string();
+        run.message = "failed-closeout".to_string();
+        let mut first = queue_item_fixture(&run.id, "first", 0, "failed", Some("qa-first"));
+        first.message = "failed-closeout".to_string();
+        let mut second = queue_item_fixture(&run.id, "second", 1, "pending", None);
+        second.depends_on = vec!["first".to_string()];
+        state::replace_web_queue(&run, &[first, second]).unwrap();
+        state::upsert_task_record(&state::new_task_record(
+            "task/task-first".to_string(),
+            "task-flow".to_string(),
+            "first".to_string(),
+            "prompt first".to_string(),
+            "closed:success".to_string(),
+            None,
+            None,
+            Some("qa-first".to_string()),
+            None,
+        ))
+        .unwrap();
+
+        handle_queue_continue_result(
+            &HeaderMap::new(),
+            &QueueContinueRequest {
+                run_id: run.id.clone(),
+            },
+        )
+        .unwrap();
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+
+        assert_eq!(stored_run.status, "running");
+        assert_eq!(
+            stored_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [("first", "success"), ("second", "pending")]
+        );
+        assert_eq!(queue_ready_item_ids(&stored_run, &stored_items), ids(&["second"]));
+    }
+
+    #[test]
+    fn queue_continue_accepts_already_resumed_graph_run() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("graph-continue-race", "running", 0);
+        run.execution_mode = "graph".to_string();
+        let first = queue_item_fixture(&run.id, "first", 0, "success", Some("qa-first"));
+        let mut second = queue_item_fixture(&run.id, "second", 1, "starting", Some("qa-second"));
+        second.depends_on = vec!["first".to_string()];
+        state::replace_web_queue(&run, &[first, second]).unwrap();
+
+        handle_queue_continue_result(
+            &HeaderMap::new(),
+            &QueueContinueRequest {
+                run_id: run.id.clone(),
+            },
+        )
+        .unwrap();
+        let (stored_run, _) = state::load_web_queue_run(&run.id).unwrap();
+
+        assert_eq!(stored_run.unwrap().status, "running");
+    }
+
+    #[test]
     fn failed_graph_queue_restarts_after_newer_recovery_task_succeeds() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

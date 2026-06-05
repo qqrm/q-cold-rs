@@ -301,7 +301,12 @@ fn handle_queue_continue_result(
         require_write_token(headers)?;
     }
     let run_id = clean_queue_run_id(&payload.run_id);
-    state::continue_web_queue_run(&run_id)?;
+    if let Err(err) = state::continue_web_queue_run(&run_id) {
+        if continue_resolved_failed_queue_run(&run_id)? {
+            return Ok(());
+        }
+        return Err(err);
+    }
     spawn_web_queue_worker(run_id);
     Ok(())
 }

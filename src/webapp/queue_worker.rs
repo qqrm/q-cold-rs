@@ -801,6 +801,38 @@ fn reconcile_stale_web_queue_run() -> Result<()> {
     Ok(())
 }
 
+fn continue_resolved_failed_queue_run(run_id: &str) -> Result<bool> {
+    let (run, items) = state::load_web_queue_run(run_id)?;
+    let Some(run) = run else {
+        return Ok(false);
+    };
+    if matches!(
+        run.status.as_str(),
+        "running" | "waiting" | "starting" | "stopping" | "success"
+    ) {
+        return Ok(true);
+    }
+    if run.status != "failed" {
+        return Ok(false);
+    }
+    reconcile_one_stale_web_queue_run(run, items)?;
+    let (run, _) = state::load_web_queue_run(run_id)?;
+    let Some(run) = run else {
+        return Ok(false);
+    };
+    match run.status.as_str() {
+        "running" | "waiting" | "starting" | "stopping" | "success" => Ok(true),
+        "failed" => bail!(
+            "queue is still failed after continue reconciliation: {}",
+            run.message
+        ),
+        _ => bail!(
+            "queue is not resumable after continue reconciliation: {}",
+            run.status
+        ),
+    }
+}
+
 fn reconcile_one_stale_web_queue_run(
     mut run: state::QueueRunRow,
     mut items: Vec<state::QueueItemRow>,
