@@ -527,6 +527,86 @@ mod queue_reconcile_tests {
     }
 
     #[test]
+    fn failed_graph_queue_restarts_after_newer_repair_task_succeeds() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("graph-repair-record", "failed", 0);
+        run.execution_mode = "graph".to_string();
+        run.message = "failed-closeout".to_string();
+        let mut first = queue_item_fixture(&run.id, "EBSR2-05", 0, "failed", Some("agent-5"));
+        first.slug =
+            "blockstore-ebs-v3f288-05-allocator-free-space-pressure-parity-20260604-after-ebs00-p18326-20260605"
+                .to_string();
+        first.repo_root = Some(repo.clone());
+        first.execution_host = "remote-native".to_string();
+        first.remote_launcher = Some("remote-dev-env".to_string());
+        first.message = "failed-closeout".to_string();
+        first.started_at = 100;
+        let mut second = queue_item_fixture(&run.id, "EBSR2-06", 1, "pending", None);
+        second.repo_root = Some(repo.clone());
+        second.depends_on = vec!["EBSR2-05".to_string()];
+        state::replace_web_queue(&run, &[first, second]).unwrap();
+
+        let mut failed = state::new_task_record(
+            "task/blockstore-ebs-v3f288-05-allocator-free-space-pressure-parity-20260604-after-ebs00-p18326-20260605"
+                .to_string(),
+            "task-flow".to_string(),
+            "original failed 05".to_string(),
+            "prompt failed 05".to_string(),
+            "failed-closeout".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/original-05".to_string()),
+            Some("agent-5".to_string()),
+            Some(r#"{"remote_launcher":"remote-dev-env"}"#.to_string()),
+        );
+        failed.updated_at = 110;
+        state::upsert_task_record(&failed).unwrap();
+        let mut repair = state::new_task_record(
+            "task/blockstore-ebs-v3f288-05-allocator-free-space-pressure-current-repair-20260605"
+                .to_string(),
+            "task-flow".to_string(),
+            "05 repair".to_string(),
+            "prompt 05 repair".to_string(),
+            "closed:success".to_string(),
+            Some(repo.clone()),
+            Some("/remote/repo/repair-05".to_string()),
+            Some("agent-repair".to_string()),
+            Some(r#"{"remote_launcher":"remote-dev-env"}"#.to_string()),
+        );
+        repair.updated_at = 120;
+        state::upsert_task_record(&repair).unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(queue_run_needs_stale_reconcile(&run, &stored_items).unwrap());
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let Some((restarted_run, restarted_items)) =
+            restart_resolved_failed_queue_run(&stored_run.unwrap(), &stored_items).unwrap()
+        else {
+            panic!("expected resolved failed queue to restart");
+        };
+
+        assert_eq!(restarted_run.status, "running");
+        assert_eq!(
+            restarted_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [("EBSR2-05", "success"), ("EBSR2-06", "pending")]
+        );
+        assert_eq!(queue_ready_item_ids(&restarted_run, &restarted_items), ids(&["EBSR2-06"]));
+    }
+
+    #[test]
     #[cfg(unix)]
     fn failed_graph_queue_restarts_while_remote_native_failed_closeout_retries() {
         let _guard = test_support::env_guard();

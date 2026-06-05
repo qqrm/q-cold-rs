@@ -241,6 +241,66 @@ mod queue_remote_sync_tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn stopped_remote_native_open_record_with_repair_session_resumes_running() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let remote_launcher = temp.path().join("remote-dev-env");
+        fs::write(
+            &remote_launcher,
+            "#!/bin/sh\n\
+             case \"$*\" in *qcold-qa-task-remote-native-live-repair*) exit 0;; *) exit 1;; esac\n",
+        )
+        .unwrap();
+        make_executable(&remote_launcher);
+        let mut run = queue_run("remote-native-repair-stopped", &repo);
+        run.status = "stopped".to_string();
+        run.current_index = 0;
+        run.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
+        let mut item = queue_item("task-remote-native-live-repair", &repo);
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".to_string();
+        item.remote_launcher = Some(remote_launcher.display().to_string());
+        item.status = "stopped".to_string();
+        item.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
+        item.agent_id = Some("qa-task-remote-native-live-deadbeef".to_string());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+        state::upsert_task_record(&task_record(
+            &item.slug,
+            "open",
+            &repo,
+            item.agent_id.as_deref(),
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+        let resumed = &stored_items[0];
+
+        assert_eq!(stored_run.status, "running");
+        assert_eq!(resumed.status, "running");
+        assert_eq!(
+            resumed.agent_id.as_deref(),
+            Some("qa-task-remote-native-live-repair")
+        );
+        assert!(
+            resumed
+                .message
+                .contains("resumed remote-native agent qa-task-remote-native-live-repair"),
+            "{}",
+            resumed.message
+        );
+    }
+
+    #[cfg(unix)]
     fn make_executable(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
 

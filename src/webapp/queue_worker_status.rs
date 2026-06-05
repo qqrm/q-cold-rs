@@ -82,7 +82,9 @@ fn related_recovery_task_record_id(task_id: &str, record_id: &str) -> bool {
 }
 
 fn related_repair_task_marker(record_id: &str) -> bool {
-    record_id.contains("-reintegrate-") || record_id.contains("-relaunch-")
+    record_id.contains("-reintegrate-")
+        || record_id.contains("-relaunch-")
+        || record_id.contains("-repair-")
 }
 
 fn task_slug_family_prefix(slug: &str) -> Option<String> {
