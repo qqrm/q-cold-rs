@@ -312,7 +312,12 @@ mod queue_remote_sync_tests {
         fs::write(
             &remote_launcher,
             "#!/bin/sh\n\
-             case \"$*\" in *qcold-qa-task-remote-native-live-repair2*) exit 0;; *) exit 1;; esac\n",
+             case \"$*\" in\n\
+             *=qcold-qa-task-remote-native-live-repair2*) exit 0 ;;\n\
+             *=qcold-qa-task-remote-native-live-repair*) exit 1 ;;\n\
+             *qcold-qa-task-remote-native-live-repair*) exit 0 ;;\n\
+             *) exit 1 ;;\n\
+             esac\n",
         )
         .unwrap();
         make_executable(&remote_launcher);

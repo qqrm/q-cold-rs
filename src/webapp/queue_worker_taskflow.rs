@@ -119,6 +119,10 @@ fn remote_native_queue_session(agent_id: &str) -> String {
     format!("qcold-{agent_id}")
 }
 
+fn remote_native_tmux_session_target(agent_id: &str) -> String {
+    format!("={}", remote_native_queue_session(agent_id))
+}
+
 fn remote_native_session_running(item: &state::QueueItemRow, agent_id: &str) -> bool {
     const REMOTE_NATIVE_SESSION_CHECK_TIMEOUT: &str = "45s";
     let Some(launcher) = item
@@ -128,7 +132,7 @@ fn remote_native_session_running(item: &state::QueueItemRow, agent_id: &str) -> 
     else {
         return false;
     };
-    let session = remote_native_queue_session(agent_id);
+    let session = remote_native_tmux_session_target(agent_id);
     let script = format!("tmux has-session -t {}", queue_shell_quote(&session));
     Command::new("timeout")
         .arg(REMOTE_NATIVE_SESSION_CHECK_TIMEOUT)
@@ -158,7 +162,7 @@ fn parse_remote_native_terminal_target(target: &str) -> Option<(&str, &str)> {
 }
 
 fn remote_native_tmux_target(agent_id: &str, pane: &str) -> String {
-    format!("{}:{pane}", remote_native_queue_session(agent_id))
+    format!("{}:{pane}", remote_native_tmux_session_target(agent_id))
 }
 
 fn remote_native_terminal_item(agent_id: &str) -> Result<state::QueueItemRow> {
