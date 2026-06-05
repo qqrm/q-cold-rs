@@ -67,18 +67,14 @@ fn reconcile_remote_native_open_record(
     changed: &mut bool,
     terminal_run: &mut Option<(String, i64, String)>,
 ) -> Result<bool> {
-    if remote_native_stopped_open_record_with_live_session(item, status) {
-        let agent_id = item.agent_id.as_deref();
-        let message = agent_id.map_or_else(
-            || "remote-native open task resumed".to_string(),
-            |agent_id| format!("resumed remote-native agent {agent_id}"),
-        );
+    if let Some(agent_id) = remote_native_stopped_open_record_live_agent_id(item, status) {
+        let message = format!("resumed remote-native agent {agent_id}");
         state::update_web_queue_item(
             &run.id,
             &item.id,
             "running",
             &message,
-            agent_id,
+            Some(&agent_id),
             item.attempts,
             None,
         )?;
@@ -86,19 +82,18 @@ fn reconcile_remote_native_open_record(
         *changed = true;
         return Ok(true);
     }
-    if remote_native_active_open_record_with_live_session(item, status) {
-        let agent_id = item.agent_id.as_deref();
-        let message = agent_id.map_or_else(
-            || "remote-native task record visible".to_string(),
-            |agent_id| remote_native_active_open_message(item, agent_id),
-        );
-        if item.status != "running" || item.message != message {
+    if let Some(agent_id) = remote_native_active_open_record_live_agent_id(item, status) {
+        let message = remote_native_active_open_message(item, &agent_id);
+        if item.status != "running"
+            || item.message != message
+            || item.agent_id.as_deref() != Some(agent_id.as_str())
+        {
             state::update_web_queue_item(
                 &run.id,
                 &item.id,
                 "running",
                 &message,
-                agent_id,
+                Some(&agent_id),
                 item.attempts,
                 None,
             )?;
@@ -131,17 +126,15 @@ fn remote_native_active_open_message(item: &state::QueueItemRow, agent_id: &str)
     format!("{} ({agent_id})", queue_display_label(item))
 }
 
-fn remote_native_active_open_record_with_live_session(
+fn remote_native_active_open_record_live_agent_id(
     item: &state::QueueItemRow,
     status: &str,
-) -> bool {
-    status == "open"
+) -> Option<String> {
+    (status == "open"
         && queue_item_remote_native(item)
-        && matches!(item.status.as_str(), "starting" | "running")
-        && item
-            .agent_id
-            .as_deref()
-            .is_some_and(|agent_id| remote_native_session_running(item, agent_id))
+        && matches!(item.status.as_str(), "starting" | "running"))
+    .then(|| remote_native_open_record_live_agent_id(item))
+    .flatten()
 }
 
 fn remote_native_open_record_without_live_session(
@@ -151,23 +144,38 @@ fn remote_native_open_record_without_live_session(
     status == "open"
         && queue_item_remote_native(item)
         && matches!(item.status.as_str(), "starting" | "running")
-        && item
-            .agent_id
-            .as_deref()
-            .is_some_and(|agent_id| !remote_native_session_running(item, agent_id))
+        && remote_native_open_record_live_agent_id(item).is_none()
 }
 
-fn remote_native_stopped_open_record_with_live_session(
+fn remote_native_stopped_open_record_live_agent_id(
     item: &state::QueueItemRow,
     status: &str,
-) -> bool {
-    status == "open"
+) -> Option<String> {
+    (status == "open"
         && queue_item_remote_native(item)
-        && matches!(item.status.as_str(), "stopped" | "paused")
-        && item
-            .agent_id
-            .as_deref()
-            .is_some_and(|agent_id| remote_native_session_running(item, agent_id))
+        && matches!(item.status.as_str(), "stopped" | "paused"))
+    .then(|| remote_native_open_record_live_agent_id(item))
+    .flatten()
+}
+
+fn remote_native_open_record_live_agent_id(item: &state::QueueItemRow) -> Option<String> {
+    let agent_id = item.agent_id.as_deref()?.trim();
+    if agent_id.is_empty() {
+        return None;
+    }
+    if remote_native_session_running(item, agent_id) {
+        return Some(agent_id.to_string());
+    }
+    let relaunch_agent_id = remote_native_relaunch_agent_id(agent_id)?;
+    remote_native_session_running(item, &relaunch_agent_id).then_some(relaunch_agent_id)
+}
+
+fn remote_native_relaunch_agent_id(agent_id: &str) -> Option<String> {
+    let (prefix, suffix) = agent_id.rsplit_once('-')?;
+    if prefix.is_empty() || suffix == "relaunch" {
+        return None;
+    }
+    Some(format!("{prefix}-relaunch"))
 }
 
 fn queue_item_status_closeout_outcome(
@@ -204,13 +212,13 @@ fn queue_item_status_closeout_outcome(
     if queue_task_status_terminal(&status) {
         return fail_queue_item_from_task_status(run_id, item, agent_id, attempts, status).map(Some);
     }
-    if remote_native_stopped_open_record_with_live_session(item, &status) {
+    if let Some(live_agent_id) = remote_native_stopped_open_record_live_agent_id(item, &status) {
         state::update_web_queue_item(
             run_id,
             &item.id,
             "running",
-            &format!("resumed remote-native agent {agent_id}"),
-            Some(agent_id),
+            &format!("resumed remote-native agent {live_agent_id}"),
+            Some(&live_agent_id),
             attempts,
             None,
         )?;

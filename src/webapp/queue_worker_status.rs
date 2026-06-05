@@ -66,7 +66,7 @@ fn related_recovery_task_record_id(task_id: &str, record_id: &str) -> bool {
     if record_id.starts_with(&format!("{task_id}-recovery")) {
         return true;
     }
-    if record_id == task_id || !record_id.contains("-reintegrate-") {
+    if record_id == task_id || !related_repair_task_marker(record_id) {
         return false;
     }
     let Some(task_slug) = task_id.strip_prefix("task/") else {
@@ -79,6 +79,10 @@ fn related_recovery_task_record_id(task_id: &str, record_id: &str) -> bool {
         return false;
     };
     record_slug.starts_with(&family_prefix)
+}
+
+fn related_repair_task_marker(record_id: &str) -> bool {
+    record_id.contains("-reintegrate-") || record_id.contains("-relaunch-")
 }
 
 fn task_slug_family_prefix(slug: &str) -> Option<String> {
