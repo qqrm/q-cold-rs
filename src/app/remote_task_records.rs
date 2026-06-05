@@ -480,7 +480,11 @@ fn preserve_existing_remote_status(
     existing: &state::TaskRecordRow,
     remote: &state::TaskRecordRow,
 ) -> bool {
-    task_record_terminal_status(&existing.status).is_some()
-        && (task_record_terminal_status(&remote.status).is_none()
-            || existing.updated_at > remote.updated_at)
+    if task_record_terminal_status(&existing.status).is_none() {
+        return false;
+    }
+    if task_record_terminal_status(&remote.status).is_some() {
+        return existing.updated_at > remote.updated_at;
+    }
+    remote.created_at <= existing.updated_at
 }

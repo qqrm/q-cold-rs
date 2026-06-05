@@ -2,7 +2,7 @@
 #[allow(clippy::unwrap_used)]
 mod remote_adapter_tests {
     use super::{
-        add_remote_adapter_metadata, parse_task_record_json_lines,
+        add_remote_adapter_metadata, canonical_remote_task_record, parse_task_record_json_lines,
         preserve_existing_remote_status, remote_adapter_label, remote_adapter_prefix_args,
         remote_task_open_env_words, remote_task_open_words, remote_task_record_export_words,
         RemoteAdapterArgs, RemoteTaskOpenEnvArgs,
@@ -166,6 +166,7 @@ mod remote_adapter_tests {
         existing.updated_at = 200;
         let mut remote = existing.clone();
         remote.status = "open".to_string();
+        remote.created_at = 100;
         remote.updated_at = 300;
 
         assert!(preserve_existing_remote_status(&existing, &remote));
@@ -176,5 +177,33 @@ mod remote_adapter_tests {
 
         remote.updated_at = 300;
         assert!(!preserve_existing_remote_status(&existing, &remote));
+    }
+
+    #[test]
+    fn remote_status_merge_accepts_newer_reopened_task_record() {
+        let mut existing = state::new_task_record(
+            "task/reopened".to_string(),
+            "task-flow".to_string(),
+            "Reopened".to_string(),
+            "Closed task".to_string(),
+            "closed:blocked".to_string(),
+            Some("/local/repo".to_string()),
+            Some("/remote/repo".to_string()),
+            None,
+            None,
+        );
+        existing.created_at = 100;
+        existing.updated_at = 200;
+        let mut remote = existing.clone();
+        remote.status = "open".to_string();
+        remote.created_at = 300;
+        remote.updated_at = 300;
+        remote.cwd = Some("/remote/repo/reopened".to_string());
+
+        assert!(!preserve_existing_remote_status(&existing, &remote));
+        let merged = canonical_remote_task_record(&remote, Some(&existing), "/local/repo");
+        assert_eq!(merged.status, "open");
+        assert_eq!(merged.updated_at, 300);
+        assert_eq!(merged.cwd.as_deref(), Some("/remote/repo/reopened"));
     }
 }
