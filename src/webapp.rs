@@ -657,6 +657,7 @@ include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_reconcile.rs");
 include!("webapp/tests_queue_recovery_precedence.rs");
 include!("webapp/tests_queue_remote_sync.rs");
+include!("webapp/tests_queue_state_model.rs");
 include!("webapp/tests_queue_tabs.rs");
 include!("webapp/tests_queue_taskflow_missing_record.rs");
 include!("webapp/tests_queue_taskflow.rs");

@@ -74,7 +74,7 @@ pub(crate) fn env_guard() -> EnvGuard {
         .iter()
         .map(|name| (*name, env::var(name).ok()))
         .collect();
-    if let Some(cleaned_path) = path_without_output_guard_bin(path.as_ref(), output_guard_bin.as_deref()) {
+    if let Some(cleaned_path) = clean_test_path(path.as_ref(), output_guard_bin.as_deref()) {
         env::set_var("PATH", cleaned_path);
     }
     for name in QCOLD_ENV_VARS {
@@ -88,7 +88,7 @@ pub(crate) fn env_guard() -> EnvGuard {
     }
 }
 
-fn path_without_output_guard_bin(path: Option<&OsString>, guard_bin: Option<&Path>) -> Option<OsString> {
+fn clean_test_path(path: Option<&OsString>, guard_bin: Option<&Path>) -> Option<OsString> {
     let path = path?;
     let paths = env::split_paths(path)
         .filter(|entry| {
@@ -96,7 +96,10 @@ fn path_without_output_guard_bin(path: Option<&OsString>, guard_bin: Option<&Pat
             let is_qcold_guard = entry
                 .to_string_lossy()
                 .contains("/.local/state/qcold/guard-bin/");
-            !is_current_guard && !is_qcold_guard
+            // Tests create fake remote launchers explicitly. Inheriting the operator's real
+            // launcher makes remote-native unit tests observe external state.
+            let has_external_remote_launcher = entry.join("remote-dev-env").is_file();
+            !is_current_guard && !is_qcold_guard && !has_external_remote_launcher
         })
         .collect::<Vec<_>>();
     env::join_paths(paths).ok()
