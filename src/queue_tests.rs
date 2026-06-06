@@ -181,9 +181,9 @@ fn queue_run_fixture(id: &str) -> (state::QueueRunRow, Vec<state::QueueItemRow>)
     (
         state::QueueRunRow {
             id: id.to_string(),
-            status: "failed".to_string(),
-            execution_mode: "graph".to_string(),
-            execution_host: "local".to_string(),
+            status: "failed".into(),
+            execution_mode: "graph".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,

@@ -53,10 +53,7 @@ fn run_preflight(profile: PreflightProfile) -> Result<()> {
             .map(OsString::from)
             .to_vec(),
     )?;
-    run_required(
-        "cargo",
-        ["test", "--locked", "--bins"].map(OsString::from).to_vec(),
-    )?;
+    run_cargo_bin_tests_serially()?;
     run_required(
         "cargo",
         ["test", "--locked", "--test", "command_version"]
@@ -118,6 +115,21 @@ fn run_preflight(profile: PreflightProfile) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn run_cargo_bin_tests_serially() -> Result<()> {
+    run_required(
+        "cargo",
+        [
+            "test",
+            "--locked",
+            "--bins",
+            "--",
+            "--test-threads=1",
+        ]
+        .map(OsString::from)
+        .to_vec(),
+    )
 }
 
 fn run_web_asset_syntax_check() -> Result<()> {

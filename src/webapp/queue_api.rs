@@ -26,7 +26,8 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
                 item.execution_host.as_deref(),
                 None,
                 run_execution_host.clone(),
-            ) == "local"
+            )
+            .is_local()
     });
     if has_local_item
         && !agents::available_agent_commands()
@@ -102,10 +103,7 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
     let Some(run) = run else {
         bail!("unknown queue run: {run_id}");
     };
-    if !matches!(
-        run.status.as_str(),
-        "running" | "waiting" | "starting" | "stopped"
-    ) {
+    if !run.status.is_appendable() {
         bail!("queue is not appendable");
     }
     let prompts = payload
@@ -165,10 +163,7 @@ fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) 
     let Some(run) = run else {
         bail!("unknown queue run: {run_id}");
     };
-    if !matches!(
-        run.status.as_str(),
-        "running" | "waiting" | "starting" | "stopped"
-    ) {
+    if !run.status.is_editable() {
         bail!("queue is not editable");
     }
     let requested = payload
@@ -423,14 +418,11 @@ fn queue_run_has_live_work_with_agents(
     items: &[state::QueueItemRow],
     running_agents: &HashSet<String>,
 ) -> bool {
-    if matches!(
-        run.status.as_str(),
-        "running" | "waiting" | "starting" | "stopping"
-    ) {
+    if run.status.is_active() {
         return true;
     }
     items.iter().any(|item| {
-        matches!(item.status.as_str(), "running" | "starting" | "waiting")
+        item.status.is_active()
             || item
                 .agent_id
                 .as_ref()
@@ -438,10 +430,10 @@ fn queue_run_has_live_work_with_agents(
     })
 }
 
-fn clean_queue_execution_mode(value: Option<&str>) -> String {
+fn clean_queue_execution_mode(value: Option<&str>) -> state::QueueExecutionMode {
     match value.map(str::trim) {
-        Some("graph") => "graph".to_string(),
-        _ => "sequence".to_string(),
+        Some("graph") => state::QueueExecutionMode::Graph,
+        _ => state::QueueExecutionMode::Sequence,
     }
 }
 
@@ -489,7 +481,7 @@ fn queue_run_from_request(
     run_id: &str,
     payload: &QueueRunRequest,
     selected_agent_command: &str,
-    execution_mode: String,
+    execution_mode: state::QueueExecutionMode,
     now: u64,
 ) -> state::QueueRunRow {
     let selected_repo_root = payload
@@ -507,7 +499,7 @@ fn queue_run_from_request(
     let execution_host = resolve_queue_execution_host(payload.selected_execution_host.as_deref());
     state::QueueRunRow {
         id: run_id.to_string(),
-        status: "running".to_string(),
+        status: state::QueueRunStatus::Running,
         execution_mode,
         execution_host,
         selected_agent_command: selected_agent_command.to_string(),
@@ -614,7 +606,7 @@ fn queue_item_from_request(
             run.remote_agent_remote_proxy.clone(),
         ),
         agent_id: None,
-        status: "pending".to_string(),
+        status: state::QueueItemStatus::Pending,
         message: String::new(),
         attempts: 0,
         recovery_attempts: 0,
@@ -624,19 +616,19 @@ fn queue_item_from_request(
     }
 }
 
-fn resolve_queue_execution_host(requested: Option<&str>) -> String {
+fn resolve_queue_execution_host(requested: Option<&str>) -> state::QueueExecutionHost {
     if let Some(host) = queue_execution_host_setting(requested) {
         return host;
     }
     let env_host = env::var("QCOLD_QUEUE_EXECUTION_HOST").ok();
-    queue_execution_host_setting(env_host.as_deref()).unwrap_or_else(|| "local".to_string())
+    queue_execution_host_setting(env_host.as_deref()).unwrap_or(state::QueueExecutionHost::Local)
 }
 
 fn resolve_queue_item_execution_host(
     requested: Option<&str>,
-    current: Option<String>,
-    inherited: String,
-) -> String {
+    current: Option<state::QueueExecutionHost>,
+    inherited: state::QueueExecutionHost,
+) -> state::QueueExecutionHost {
     queue_execution_host_setting(requested)
         .or(current)
         .unwrap_or(inherited)
@@ -694,16 +686,12 @@ fn resolve_queue_item_optional_setting(
         .map_or_else(|| current.or(inherited), QueueOptionalSetting::into_value)
 }
 
-fn queue_execution_host_setting(value: Option<&str>) -> Option<String> {
+fn queue_execution_host_setting(value: Option<&str>) -> Option<state::QueueExecutionHost> {
     let value = value?.trim();
     if value.is_empty() {
         return None;
     }
-    match value {
-        "local" => Some("local".to_string()),
-        "remote" | "remote-native" | "remote_native" => Some("remote-native".to_string()),
-        _ => Some(value.to_string()),
-    }
+    Some(state::QueueExecutionHost::from_setting(value))
 }
 
 fn validate_queue_execution_hosts(
@@ -717,10 +705,11 @@ fn validate_queue_execution_hosts(
     Ok(())
 }
 
-fn validate_queue_execution_host_value(value: &str) -> Result<()> {
-    match value {
-        "local" | "remote-native" => Ok(()),
-        _ => bail!("unknown queue execution host: {value}"),
+fn validate_queue_execution_host_value(value: &state::QueueExecutionHost) -> Result<()> {
+    if value.is_known() {
+        Ok(())
+    } else {
+        bail!("unknown queue execution host: {value}")
     }
 }
 
@@ -775,10 +764,11 @@ fn queue_remote_launcher_setting(value: Option<&str>) -> Option<QueueRemoteLaunc
 }
 
 fn normalize_queue_dependencies(
-    execution_mode: &str,
+    execution_mode: impl Into<state::QueueExecutionMode>,
     items: &mut [state::QueueItemRow],
 ) -> Result<()> {
-    if execution_mode != "graph" {
+    let execution_mode = execution_mode.into();
+    if !execution_mode.is_graph() {
         for item in items {
             item.depends_on.clear();
         }
@@ -869,12 +859,7 @@ fn handle_queue_remove_result(headers: &HeaderMap, payload: &QueueRemoveRequest)
     }
     let (run, items) = state::load_web_queue_run(&run_id)?;
     let item = items.iter().find(|item| item.id == item_id);
-    if let Some(run) = run.as_ref().filter(|run| {
-        matches!(
-            run.status.as_str(),
-            "running" | "waiting" | "starting" | "stopping"
-        )
-    }) {
+    if let Some(run) = run.as_ref().filter(|run| run.status.is_active()) {
         let Some(item) = item else {
             return Ok(());
         };
@@ -903,7 +888,7 @@ fn queue_item_removable_while_running(
     if queue_item_terminal(&item.status) {
         return Ok(true);
     }
-    if matches!(item.status.as_str(), "pending" | "waiting")
+    if item.status.is_pending_or_waiting()
         && item.agent_id.is_none()
         && item.position > run.current_index
     {
@@ -916,7 +901,7 @@ fn queue_item_editable_while_running(
     run: &state::QueueRunRow,
     item: &state::QueueItemRow,
 ) -> Result<bool> {
-    if !matches!(item.status.as_str(), "pending" | "waiting") {
+    if !item.status.is_pending_or_waiting() {
         return Ok(false);
     }
     if item.agent_id.is_some() || queue_item_worker_active(&run.id, &item.id) {
@@ -959,10 +944,7 @@ fn handle_queue_clear_result(headers: &HeaderMap, payload: &QueueClearRequest) -
     let Some(run) = run else {
         return Ok(0);
     };
-    if matches!(
-        run.status.as_str(),
-        "running" | "waiting" | "starting" | "stopping"
-    ) {
+    if run.status.is_active() {
         state::request_web_queue_stop(Some(&run.id))?;
     }
     let cleanup_items = state::delete_web_queue_run_items(&run.id)?;

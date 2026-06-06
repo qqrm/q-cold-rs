@@ -9,7 +9,7 @@ fn reconcile_queue_task_record_status(
     terminal_run: &mut Option<(String, i64, String)>,
 ) -> Result<bool> {
     if status == "closed:success" {
-        if item.status != "success" || item.agent_id.as_deref().is_some_and(agent_running) {
+        if !item.status.is_success() || item.agent_id.as_deref().is_some_and(agent_running) {
             update_successful_queue_item(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
             *changed = true;
         }
@@ -18,7 +18,7 @@ fn reconcile_queue_task_record_status(
     if reconcile_remote_native_open_record(run, item, &status, changed, terminal_run)? {
         return Ok(true);
     }
-    if status == "paused" && item.status != "paused" {
+    if status == "paused" && !item.status.is_paused() {
         state::update_web_queue_item(
             &run.id,
             &item.id,
@@ -29,7 +29,7 @@ fn reconcile_queue_task_record_status(
             None,
         )?;
         *changed = true;
-        terminal_run.get_or_insert(("stopped".to_string(), item.position, status));
+        terminal_run.get_or_insert(("stopped".into(), item.position, status));
         return Ok(true);
     }
     if queue_status_auto_recoverable(&status)
@@ -43,7 +43,7 @@ fn reconcile_queue_task_record_status(
         *changed = true;
         return Ok(true);
     }
-    if queue_task_status_terminal(&status) && item.status != "success" {
+    if queue_task_status_terminal(&status) && !item.status.is_success() {
         state::update_web_queue_item(
             &run.id,
             &item.id,
@@ -54,7 +54,7 @@ fn reconcile_queue_task_record_status(
             None,
         )?;
         *changed = true;
-        terminal_run.get_or_insert(("failed".to_string(), item.position, status));
+        terminal_run.get_or_insert(("failed".into(), item.position, status));
         return Ok(true);
     }
     Ok(false)
@@ -84,7 +84,7 @@ fn reconcile_remote_native_open_record(
     }
     if let Some(agent_id) = remote_native_active_open_record_live_agent_id(item, status) {
         let message = remote_native_active_open_message(item, &agent_id);
-        if item.status != "running"
+        if !item.status.is_running()
             || item.message != message
             || item.agent_id.as_deref() != Some(agent_id.as_str())
         {
@@ -113,7 +113,7 @@ fn reconcile_remote_native_open_record(
         )?;
         *changed = true;
         terminal_run.get_or_insert((
-            "stopped".to_string(),
+            "stopped".into(),
             item.position,
             REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string(),
         ));
@@ -132,7 +132,7 @@ fn remote_native_active_open_record_live_agent_id(
 ) -> Option<String> {
     (status == "open"
         && queue_item_remote_native(item)
-        && matches!(item.status.as_str(), "starting" | "running"))
+        && item.status.is_starting_or_running())
     .then(|| remote_native_open_record_live_agent_id(item))
     .flatten()
 }
@@ -143,7 +143,7 @@ fn remote_native_open_record_without_live_session(
 ) -> bool {
     status == "open"
         && queue_item_remote_native(item)
-        && matches!(item.status.as_str(), "starting" | "running")
+        && item.status.is_starting_or_running()
         && remote_native_open_record_live_agent_id(item).is_none()
 }
 
@@ -153,7 +153,7 @@ fn remote_native_stopped_open_record_live_agent_id(
 ) -> Option<String> {
     (status == "open"
         && queue_item_remote_native(item)
-        && matches!(item.status.as_str(), "stopped" | "paused"))
+        && item.status.is_stopped_or_paused())
     .then(|| remote_native_open_record_live_agent_id(item))
     .flatten()
 }

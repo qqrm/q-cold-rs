@@ -396,12 +396,12 @@ mod queue_tabs_tests {
         let repo = temp.path().join("repo");
         std::fs::create_dir(&repo).unwrap();
         let mut run = queue_run_fixture("remote-run", "running", -1);
-        run.execution_mode = "graph".to_string();
-        run.execution_host = "remote-native".to_string();
+        run.execution_mode = "graph".into();
+        run.execution_host = "remote-native".into();
         run.selected_repo_root = Some(repo.display().to_string());
         let mut item =
             queue_item_fixture("remote-run", "remote-item", 0, "running", Some("agent-remote"));
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.repo_root = Some(repo.display().to_string());
         item.remote_launcher = Some("/bin/false".to_string());
         state::replace_web_queue(&run, &[item]).unwrap();
@@ -417,9 +417,9 @@ mod queue_tabs_tests {
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: status.to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "local".to_string(),
+            status: status.into(),
+            execution_mode: "sequence".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
@@ -451,13 +451,13 @@ mod queue_tabs_tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
-            status: status.to_string(),
+            status: status.into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

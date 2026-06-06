@@ -71,7 +71,7 @@ fn run_web_queue(run_id: &str) -> Result<()> {
         }
         if let Some(item) = items
             .iter()
-            .find(|item| matches!(item.status.as_str(), "failed" | "blocked"))
+            .find(|item| item.status.is_failed_or_blocked())
         {
             state::update_web_queue_run(run_id, "failed", item.position, &item.message)?;
             return Ok(());
@@ -159,14 +159,14 @@ fn reconcile_queue_task_statuses(
                 )?;
                 changed = true;
                 terminal_run.get_or_insert((
-                    "failed".to_string(),
+                    "failed".into(),
                     item.position,
                     message.to_string(),
                 ));
                 continue;
             }
         }
-        if item.status == "success"
+        if item.status.is_success()
             && item
                 .agent_id
                 .as_deref()
@@ -191,7 +191,7 @@ fn queue_ready_items(
     run: &state::QueueRunRow,
     items: &[state::QueueItemRow],
 ) -> Vec<state::QueueItemRow> {
-    if run.execution_mode != "graph" {
+    if !run.execution_mode.is_graph() {
         let Some(item) = items
             .iter()
             .filter(|item| !queue_item_terminal(&item.status))
@@ -219,7 +219,7 @@ fn queue_item_is_ready_to_spawn(
     items: &[state::QueueItemRow],
 ) -> bool {
     if queue_item_remote_native(item)
-        && matches!(item.status.as_str(), "starting" | "running")
+        && item.status.is_starting_or_running()
         && item
             .agent_id
             .as_deref()
@@ -229,7 +229,7 @@ fn queue_item_is_ready_to_spawn(
     }
     !queue_item_terminal(&item.status)
         && !queue_item_worker_active(&run.id, &item.id)
-        && (!matches!(item.status.as_str(), "starting" | "running")
+        && (!item.status.is_starting_or_running()
             || item
                 .agent_id
                 .as_deref()
@@ -246,7 +246,7 @@ fn queue_dependencies_satisfied(
         items
             .iter()
             .find(|candidate| candidate.id == *dependency)
-            .is_none_or(|candidate| candidate.status == "success")
+            .is_none_or(|candidate| candidate.status.is_success())
     })
 }
 
@@ -255,7 +255,7 @@ fn queue_active_item_count(run_id: &str, items: &[state::QueueItemRow]) -> usize
         .iter()
         .filter(|item| {
             queue_item_worker_active(run_id, &item.id)
-                || matches!(item.status.as_str(), "starting" | "running" | "waiting")
+                || item.status.is_active()
         })
         .count()
 }
@@ -332,8 +332,8 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     "unknown panic payload".to_string()
 }
 
-fn queue_item_terminal(status: &str) -> bool {
-    matches!(status, "success" | "failed" | "blocked")
+fn queue_item_terminal(status: impl Into<state::QueueItemStatus>) -> bool {
+    status.into().is_terminal()
 }
 
 enum QueueItemOutcome {
@@ -391,7 +391,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             return Ok(QueueItemOutcome::failed(status));
         }
     }
-    if matches!(item.status.as_str(), "running" | "starting") {
+    if item.status.is_starting_or_running() {
         if let Some(agent_id) = item.agent_id.as_deref() {
             if queue_item_remote_native(&item) {
                 return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts);
@@ -419,7 +419,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             );
         }
     }
-    if matches!(item.status.as_str(), "stopped" | "paused") {
+    if item.status.is_stopped_or_paused() {
         if let Some(agent_id) = item.agent_id.as_deref() {
             if queue_item_remote_native(&item) {
                 state::update_web_queue_item(
@@ -806,13 +806,10 @@ fn continue_resolved_failed_queue_run(run_id: &str) -> Result<bool> {
     let Some(run) = run else {
         return Ok(false);
     };
-    if matches!(
-        run.status.as_str(),
-        "running" | "waiting" | "starting" | "stopping" | "success"
-    ) {
+    if run.status.is_active() || run.status.is_success() {
         return Ok(true);
     }
-    if run.status != "failed" {
+    if !run.status.is_failed() {
         return Ok(false);
     }
     reconcile_one_stale_web_queue_run(run, items)?;
@@ -820,16 +817,18 @@ fn continue_resolved_failed_queue_run(run_id: &str) -> Result<bool> {
     let Some(run) = run else {
         return Ok(false);
     };
-    match run.status.as_str() {
-        "running" | "waiting" | "starting" | "stopping" | "success" => Ok(true),
-        "failed" => bail!(
+    if run.status.is_active() || run.status.is_success() {
+        Ok(true)
+    } else if run.status.is_failed() {
+        bail!(
             "queue is still failed after continue reconciliation: {}",
             run.message
-        ),
-        _ => bail!(
+        )
+    } else {
+        bail!(
             "queue is not resumable after continue reconciliation: {}",
             run.status
-        ),
+        )
     }
 }
 
@@ -859,10 +858,7 @@ fn reconcile_one_stale_web_queue_run(
     if let Some((updated_run, updated_items)) = restart_resolved_failed_queue_run(&run, &items)? {
         return resume_stale_active_queue_run(&updated_run, updated_items);
     }
-    if !matches!(
-        run.status.as_str(),
-        "running" | "waiting" | "starting" | "stopping"
-    ) {
+    if !run.status.is_active() {
         return Ok(());
     }
     resume_stale_active_queue_run(&run, items)

@@ -1,7 +1,11 @@
 fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
     let task_id = format!("task/{}", item.slug);
+    let local_status = queue_task_status_from_local_records(item, &task_id)?;
     if item.remote_launcher.is_some() {
         let required_remote_native_sync = remote_native_requires_task_record_sync(item);
+        if !required_remote_native_sync && local_status.supersedes_optional_remote_sync() {
+            return Ok(local_status.status);
+        }
         let sync_result = sync_remote_queue_task_records(item, required_remote_native_sync);
         if let Err(err) = sync_result {
             if required_remote_native_sync {
@@ -14,34 +18,80 @@ fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
             }
         }
     }
-    let record = match state::get_task_record(&task_id)? {
+    Ok(queue_task_status_from_local_records(item, &task_id)?.status)
+}
+
+struct QueueTaskLocalStatus {
+    status: Option<String>,
+    from_recovery: bool,
+}
+
+impl QueueTaskLocalStatus {
+    fn none() -> Self {
+        Self {
+            status: None,
+            from_recovery: false,
+        }
+    }
+
+    fn from_status(status: Option<String>) -> Self {
+        Self {
+            status,
+            from_recovery: false,
+        }
+    }
+
+    fn from_recovery_status(status: String) -> Self {
+        Self {
+            status: Some(status),
+            from_recovery: true,
+        }
+    }
+
+    fn supersedes_optional_remote_sync(&self) -> bool {
+        self.from_recovery
+            && self.status.as_deref().is_some_and(|status| {
+                status == "closed:success" || !queue_task_status_terminal(status)
+            })
+    }
+}
+
+fn queue_task_status_from_local_records(
+    item: &state::QueueItemRow,
+    task_id: &str,
+) -> Result<QueueTaskLocalStatus> {
+    let record = match state::get_task_record(task_id)? {
         Some(record) if queue_task_record_matches_item(item, &record) => Some(record),
-        Some(_) => return Ok(None),
+        Some(_) => return Ok(QueueTaskLocalStatus::none()),
         None => None,
     };
-    queue_task_status_from_record_or_recovery(item, &task_id, record.as_ref())
+    queue_task_status_from_record_or_recovery(item, task_id, record.as_ref())
 }
 
 fn queue_task_status_from_record_or_recovery(
     item: &state::QueueItemRow,
     task_id: &str,
     record: Option<&state::TaskRecordRow>,
-) -> Result<Option<String>> {
+) -> Result<QueueTaskLocalStatus> {
     let recovery = latest_related_recovery_task_record(item, task_id)?;
     if let Some(recovery) = recovery.as_ref() {
         if record.is_none_or(|record| recovery.updated_at >= record.updated_at) {
             if remote_native_failed_closeout_is_being_retried(item, &recovery.status) {
-                return Ok(None);
+                return Ok(QueueTaskLocalStatus::none());
             }
-            return Ok(Some(recovery.status.clone()));
+            return Ok(QueueTaskLocalStatus::from_recovery_status(
+                recovery.status.clone(),
+            ));
         }
     }
     if record.is_some_and(|record| {
         remote_native_failed_closeout_is_being_retried(item, &record.status)
     }) {
-        return Ok(None);
+        return Ok(QueueTaskLocalStatus::none());
     }
-    Ok(record.map(|record| record.status.clone()))
+    Ok(QueueTaskLocalStatus::from_status(
+        record.map(|record| record.status.clone()),
+    ))
 }
 
 fn latest_related_recovery_task_record(
@@ -173,7 +223,7 @@ fn remote_native_sync_failure_fallback_status(
 }
 
 fn remote_native_requires_task_record_sync(item: &state::QueueItemRow) -> bool {
-    queue_item_remote_native(item) && matches!(item.status.as_str(), "starting" | "running")
+    queue_item_remote_native(item) && item.status.is_starting_or_running()
 }
 
 fn remote_native_failed_closeout_is_being_retried(

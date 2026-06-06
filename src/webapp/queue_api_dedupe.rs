@@ -30,8 +30,8 @@ fn ensure_queue_run_conflict_free(
     )
 }
 
-fn queue_item_blocks_new_run(status: &str) -> bool {
-    status != "success"
+fn queue_item_blocks_new_run(status: &state::QueueItemStatus) -> bool {
+    !status.is_success()
 }
 
 fn queue_task_conflict_key(slug: &str) -> String {

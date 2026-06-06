@@ -8,7 +8,7 @@ struct QueueLaunchWorkspace {
 }
 
 fn queue_item_remote_native(item: &state::QueueItemRow) -> bool {
-    item.execution_host == "remote-native"
+    item.execution_host.is_remote_native()
 }
 
 fn queue_launch_workspace(item: &state::QueueItemRow) -> Result<QueueLaunchWorkspace> {
@@ -178,7 +178,7 @@ fn remote_native_terminal_item(agent_id: &str) -> Result<state::QueueItemRow> {
 
 fn remote_native_running_wait_item(item: &state::QueueItemRow) -> state::QueueItemRow {
     let mut item = item.clone();
-    item.status = "running".to_string();
+    item.status = state::QueueItemStatus::Running;
     item
 }
 
@@ -190,7 +190,7 @@ fn latest_queue_item_terminal_outcome(
     let Some(item) = items.into_iter().find(|item| item.id == item_id) else {
         return Ok(None);
     };
-    if item.status == "success" {
+    if item.status.is_success() {
         return Ok(Some(QueueItemOutcome::Success));
     }
     if queue_item_terminal(&item.status) {

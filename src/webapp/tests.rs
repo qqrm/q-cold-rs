@@ -143,13 +143,13 @@ mod tests {
             slug: "task-mozgpaqk-03".to_string(),
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: None,
-            status: "pending".to_string(),
+            status: "pending".into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,
@@ -172,13 +172,13 @@ mod tests {
             slug: "task-run-01".to_string(),
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: None,
-            status: "pending".to_string(),
+            status: "pending".into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,
@@ -390,7 +390,7 @@ mod tests {
                     depends_on: None,
                     repo_root: None,
                     repo_name: None,
-                    execution_host: Some("remote-native".to_string()),
+                    execution_host: Some("remote-native".into()),
                     agent_command: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
@@ -421,7 +421,7 @@ mod tests {
                 run_id: Some("retry-run".to_string()),
                 tab_id: None,
                 execution_mode: None,
-                selected_execution_host: Some("remote-native".to_string()),
+                selected_execution_host: Some("remote-native".into()),
                 selected_agent_command: "remote-only-agent".to_string(),
                 selected_remote_launcher: Some("remote-dev-env".to_string()),
                 selected_remote_agent_local_proxy: None,
@@ -435,7 +435,7 @@ mod tests {
                     depends_on: None,
                     repo_root: None,
                     repo_name: None,
-                    execution_host: Some("remote-native".to_string()),
+                    execution_host: Some("remote-native".into()),
                     agent_command: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
@@ -469,7 +469,7 @@ mod tests {
                 run_id: Some("retry-run".to_string()),
                 tab_id: None,
                 execution_mode: None,
-                selected_execution_host: Some("remote-native".to_string()),
+                selected_execution_host: Some("remote-native".into()),
                 selected_agent_command: "remote-only-agent".to_string(),
                 selected_remote_launcher: Some("remote-dev-env".to_string()),
                 selected_remote_agent_local_proxy: None,
@@ -486,7 +486,7 @@ mod tests {
                     depends_on: None,
                     repo_root: None,
                     repo_name: None,
-                    execution_host: Some("remote-native".to_string()),
+                    execution_host: Some("remote-native".into()),
                     agent_command: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
@@ -520,7 +520,7 @@ mod tests {
                 run_id: Some("new-run".to_string()),
                 tab_id: None,
                 execution_mode: None,
-                selected_execution_host: Some("remote-native".to_string()),
+                selected_execution_host: Some("remote-native".into()),
                 selected_agent_command: "remote-only-agent".to_string(),
                 selected_remote_launcher: Some("remote-dev-env".to_string()),
                 selected_remote_agent_local_proxy: None,
@@ -537,7 +537,7 @@ mod tests {
                     depends_on: None,
                     repo_root: None,
                     repo_name: None,
-                    execution_host: Some("remote-native".to_string()),
+                    execution_host: Some("remote-native".into()),
                     agent_command: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
@@ -568,7 +568,7 @@ mod tests {
                 run_id: Some("same-run".to_string()),
                 tab_id: None,
                 execution_mode: None,
-                selected_execution_host: Some("remote-native".to_string()),
+                selected_execution_host: Some("remote-native".into()),
                 selected_agent_command: "remote-only-agent".to_string(),
                 selected_remote_launcher: Some("remote-dev-env".to_string()),
                 selected_remote_agent_local_proxy: None,
@@ -582,7 +582,7 @@ mod tests {
                     depends_on: None,
                     repo_root: None,
                     repo_name: None,
-                    execution_host: Some("remote-native".to_string()),
+                    execution_host: Some("remote-native".into()),
                     agent_command: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn graph_queue_ready_items_respect_dependencies() {
         let mut run = queue_run_fixture("graph", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let mut first = queue_item_fixture("graph", "first", 0, "pending", None);
         let second = queue_item_fixture("graph", "second", 1, "pending", None);
         let mut third = queue_item_fixture("graph", "third", 2, "pending", None);
@@ -690,7 +690,7 @@ mod tests {
             ["first", "second"]
         );
 
-        first.status = "success".to_string();
+        first.status = "success".into();
         let items = vec![first, second, third];
         assert_eq!(
             queue_ready_items(&run, &items)
@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn graph_queue_ready_items_advance_in_dependency_waves() {
         let mut run = queue_run_fixture("graph-waves", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let mut plan = vec![
             queue_item_fixture("graph-waves", "bootstrap-a", 0, "pending", None),
             queue_item_fixture("graph-waves", "bootstrap-b", 1, "pending", None),
@@ -751,7 +751,7 @@ mod tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-closeout", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let upstream =
             queue_item_fixture("graph-closeout", "upstream", 0, "running", Some("agent-1"));
         let mut downstream_a =
@@ -802,7 +802,7 @@ mod tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-drift", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let mut item = queue_item_fixture("graph-drift", "upstream", 0, "running", Some("agent-1"));
         item.repo_root = Some("/tmp/old-active".to_string());
         let mut dependent = queue_item_fixture("graph-drift", "dependent", 1, "pending", None);
@@ -838,7 +838,7 @@ mod tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-failed-reconcile", "failed", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
         let mut second = queue_item_fixture(&run.id, "second", 1, "failed", Some("agent-2"));
         second.message = "agent reached idle prompt after failed Q-COLD closeout".to_string();
@@ -883,7 +883,7 @@ mod tests {
     fn graph_queue_does_not_unblock_dependents_on_failed_or_blocked_prerequisites() {
         for terminal_status in ["failed", "blocked"] {
             let mut run = queue_run_fixture("graph-stop", "running", -1);
-            run.execution_mode = "graph".to_string();
+            run.execution_mode = "graph".into();
             let upstream =
                 queue_item_fixture("graph-stop", "upstream", 0, terminal_status, Some("agent-1"));
             let mut dependent = queue_item_fixture("graph-stop", "dependent", 1, "pending", None);
@@ -933,7 +933,7 @@ mod tests {
             let temp = tempdir().unwrap();
             std::env::set_var("QCOLD_STATE_DIR", temp.path());
             let mut run = queue_run_fixture(&format!("run-{terminal_status}"), "running", -1);
-            run.execution_mode = "graph".to_string();
+            run.execution_mode = "graph".into();
             let mut upstream =
                 queue_item_fixture(&run.id, "upstream", 0, terminal_status, Some("agent-1"));
             upstream.message = format!("upstream ended as {terminal_status}");
@@ -1049,15 +1049,15 @@ mod tests {
             .iter_mut()
             .find(|item| item.id == id)
             .unwrap_or_else(|| panic!("missing queue item fixture {id}"));
-        item.status = status.to_string();
+        item.status = status.into();
     }
 
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: status.to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "local".to_string(),
+            status: status.into(),
+            execution_mode: "sequence".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
@@ -1089,13 +1089,13 @@ mod tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
-            status: status.to_string(),
+            status: status.into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,
@@ -1189,7 +1189,7 @@ mod tests {
             sequence: Some(7),
             title: "example".to_string(),
             description: "operator body".to_string(),
-            status: "paused".to_string(),
+            status: "paused".into(),
             created_at: 1,
             updated_at: 2,
             repo_root: Some(temp.path().join("repo").display().to_string()),
@@ -1221,7 +1221,7 @@ mod tests {
             sequence: Some(7),
             title: "example".to_string(),
             description: "operator body".to_string(),
-            status: "paused".to_string(),
+            status: "paused".into(),
             created_at: 1,
             updated_at: 2,
             repo_root: None,

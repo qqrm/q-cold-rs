@@ -11,7 +11,7 @@ mod queue_live_edit_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-update", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let upstream =
             queue_item_fixture("graph-update", "upstream", 0, "running", Some("agent-1"));
         let pending = queue_item_fixture("graph-update", "pending", 1, "waiting", None);
@@ -22,7 +22,7 @@ mod queue_live_edit_tests {
             QueueUpdateRequest {
                 run_id: run.id.clone(),
                 items: vec![QueueUpdateItemRequest {
-                    id: "pending".to_string(),
+                    id: "pending".into(),
                     prompt: "updated prompt".to_string(),
                     position: Some(2),
                     depends_on: Some(vec!["upstream".to_string(), "missing".to_string()]),
@@ -54,7 +54,7 @@ mod queue_live_edit_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-append", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let current_wave =
             queue_item_fixture("graph-append", "current-wave", 0, "running", Some("agent-1"));
         state::replace_web_queue(&run, &[current_wave]).unwrap();
@@ -94,7 +94,7 @@ mod queue_live_edit_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-update-active", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let active =
             queue_item_fixture("graph-update-active", "active", 0, "running", Some("agent-1"));
         state::replace_web_queue(&run, &[active]).unwrap();
@@ -138,7 +138,7 @@ mod queue_live_edit_tests {
             QueueUpdateRequest {
                 run_id: run.id.clone(),
                 items: vec![QueueUpdateItemRequest {
-                    id: "pending".to_string(),
+                    id: "pending".into(),
                     prompt: "sequence prompt".to_string(),
                     position: Some(2),
                     depends_on: Some(vec!["active".to_string()]),
@@ -179,7 +179,7 @@ mod queue_live_edit_tests {
             QueueUpdateRequest {
                 run_id: run.id.clone(),
                 items: vec![QueueUpdateItemRequest {
-                    id: "pending".to_string(),
+                    id: "pending".into(),
                     prompt: "updated prompt".to_string(),
                     position: Some(1),
                     depends_on: Some(Vec::new()),
@@ -212,7 +212,7 @@ mod queue_live_edit_tests {
             &HeaderMap::new(),
             &QueueRemoveRequest {
                 run_id: run.id.clone(),
-                item_id: "pending".to_string(),
+                item_id: "pending".into(),
                 task_id: None,
                 agent_id: None,
             },
@@ -227,9 +227,9 @@ mod queue_live_edit_tests {
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: status.to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "local".to_string(),
+            status: status.into(),
+            execution_mode: "sequence".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
@@ -261,13 +261,13 @@ mod queue_live_edit_tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
-            status: status.to_string(),
+            status: status.into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

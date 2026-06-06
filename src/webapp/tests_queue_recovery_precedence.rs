@@ -23,7 +23,7 @@ mod queue_recovery_precedence_tests {
             "blockstore-ebs-v3f288-11-performance-parity-original-cpp-20260604-after-ebs00-p18332-20260605"
                 .to_string();
         item.repo_root = Some(repo.clone());
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some("remote-dev-env".to_string());
         item.message = "failed-closeout".to_string();
         item.started_at = 100;
@@ -91,7 +91,7 @@ mod queue_recovery_precedence_tests {
             "blockstore-ebs-v3f288-11-performance-parity-original-cpp-20260604-after-ebs00-p18332-20260605"
                 .to_string();
         item.repo_root = Some(repo.clone());
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some("remote-dev-env".to_string());
         item.message = "closed:failed".to_string();
         item.started_at = 100;
@@ -145,7 +145,7 @@ mod queue_recovery_precedence_tests {
             "blockstore-ebs-v3f288-11-performance-parity-original-cpp-20260604-after-ebs00-p18332-20260605"
                 .to_string();
         item.repo_root = Some(repo.clone());
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some("remote-dev-env".to_string());
         item.message = "closed:failed".to_string();
         item.started_at = 100;
@@ -189,9 +189,9 @@ mod queue_recovery_precedence_tests {
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: status.to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "local".to_string(),
+            status: status.into(),
+            execution_mode: "sequence".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
@@ -223,13 +223,13 @@ mod queue_recovery_precedence_tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
-            status: status.to_string(),
+            status: status.into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

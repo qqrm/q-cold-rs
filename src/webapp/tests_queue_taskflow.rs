@@ -108,7 +108,7 @@ mod queue_taskflow_tests {
         let run = queue_run_fixture("auto-recovery", &repo);
         let mut item = queue_taskflow_item("task-auto-recovery", &repo, None);
         item.run_id = run.id.clone();
-        item.status = "running".to_string();
+        item.status = "running".into();
         item.agent_id = Some("agent-failed".to_string());
         state::replace_web_queue(&run, &[item]).unwrap();
         state::upsert_task_record(&task_record_fixture(
@@ -152,7 +152,7 @@ mod queue_taskflow_tests {
         let run = queue_run_fixture("auto-recovery-exhausted", &repo);
         let mut item = queue_taskflow_item("task-auto-recovery-exhausted", &repo, None);
         item.run_id = run.id.clone();
-        item.status = "running".to_string();
+        item.status = "running".into();
         item.agent_id = Some("agent-recovery".to_string());
         item.recovery_attempts = 1;
         state::replace_web_queue(&run, &[item]).unwrap();
@@ -187,8 +187,8 @@ mod queue_taskflow_tests {
         let run = queue_run_fixture("failed-closeout", &repo);
         let mut item = queue_taskflow_item("task-failed-closeout", &repo, None);
         item.run_id = run.id.clone();
-        item.status = "running".to_string();
-        item.execution_host = "remote-native".to_string();
+        item.status = "running".into();
+        item.execution_host = "remote-native".into();
         item.agent_id = Some("qa-task-failed-closeout".to_string());
         state::replace_web_queue(&run, &[item]).unwrap();
         state::upsert_task_record(&task_record_fixture(
@@ -227,7 +227,7 @@ mod queue_taskflow_tests {
         let mut existing = queue_taskflow_item("shared-slug", &repo_a, None);
         existing.id = "item-a".to_string();
         existing.run_id = run.id.clone();
-        existing.status = "running".to_string();
+        existing.status = "running".into();
         state::replace_web_queue(&run, &[existing]).unwrap();
         let candidate = queue_taskflow_item("shared-slug", &repo_b, None);
 
@@ -368,7 +368,7 @@ mod queue_taskflow_tests {
         let run = queue_run_fixture("remote-native-retry", &repo);
         let mut item = queue_taskflow_item("task-remote-native-retry", &repo, Some("/bin/false"));
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.attempts = WEB_QUEUE_RETRY_DELAYS.len() as i64;
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
 
@@ -405,7 +405,7 @@ mod queue_taskflow_tests {
         let run = queue_run_fixture("remote-native-port-rotate", &repo);
         let mut item = queue_taskflow_item("task-remote-native-port-rotate", &repo, Some("remote-dev-env"));
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_agent_remote_proxy = Some("127.0.0.1:18330".to_string());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
 
@@ -440,14 +440,14 @@ mod queue_taskflow_tests {
         let run = queue_run_fixture("remote-native-port-reserve", &repo);
         let mut failed = queue_taskflow_item("task-remote-native-failed", &repo, Some("remote-dev-env"));
         failed.run_id = run.id.clone();
-        failed.id = "failed".to_string();
-        failed.execution_host = "remote-native".to_string();
-        failed.status = "failed".to_string();
+        failed.id = "failed".into();
+        failed.execution_host = "remote-native".into();
+        failed.status = "failed".into();
         failed.remote_agent_remote_proxy = Some("127.0.0.1:18330".to_string());
         let mut pending = queue_taskflow_item("task-remote-native-pending", &repo, Some("remote-dev-env"));
         pending.run_id = run.id.clone();
-        pending.id = "pending".to_string();
-        pending.execution_host = "remote-native".to_string();
+        pending.id = "pending".into();
+        pending.execution_host = "remote-native".into();
         pending.position = 1;
         pending.remote_agent_remote_proxy = Some("127.0.0.1:18330".to_string());
         state::replace_web_queue(&run, &[failed, pending.clone()]).unwrap();
@@ -475,8 +475,8 @@ mod queue_taskflow_tests {
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
         let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/false"));
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.agent_id = Some(queue_agent_id(&item));
         let mut record = task_record_fixture("task-remote-native-sync", "open", &repo);
         record.agent_id.clone_from(&item.agent_id);
@@ -529,8 +529,8 @@ mod queue_taskflow_tests {
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
         let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/false"));
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.recovery_attempts = 1;
         item.agent_id = Some(queue_agent_id(&item));
         let mut record = task_record_fixture("task-remote-native-sync", "closed:failed", &repo);
@@ -550,8 +550,8 @@ mod queue_taskflow_tests {
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
         let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/false"));
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.agent_id = Some(queue_agent_id(&item));
 
         let err = queue_task_status(&item).unwrap_err();
@@ -568,7 +568,7 @@ mod queue_taskflow_tests {
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
         let mut item = queue_taskflow_item("task-remote-native-wait", &repo, Some("remote-dev-env"));
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
 
         let wait_item = remote_native_running_wait_item(&item);
 
@@ -592,7 +592,7 @@ mod queue_taskflow_tests {
             &repo,
             Some("remote-dev-env"),
         );
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         let prompt_file = write_remote_native_task_packet_file(&item).unwrap();
 
         run_remote_agent_contract(
@@ -633,8 +633,8 @@ mod queue_taskflow_tests {
             Some(launcher.to_str().unwrap()),
         );
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.agent_id = Some(queue_agent_id(&item));
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
 
@@ -677,8 +677,8 @@ mod queue_taskflow_tests {
             Some(launcher.to_str().unwrap()),
         );
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.agent_id = Some(queue_agent_id(&item));
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
         let target = remote_native_terminal_target(item.agent_id.as_deref().unwrap());
@@ -709,8 +709,8 @@ mod queue_taskflow_tests {
             Some(launcher.to_str().unwrap()),
         );
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.agent_id = Some(queue_agent_id(&item));
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
         let target = remote_native_terminal_target(item.agent_id.as_deref().unwrap());
@@ -759,8 +759,8 @@ mod queue_taskflow_tests {
             &repo,
             Some("remote-dev-env"),
         );
-        item.execution_host = "remote-native".to_string();
-        item.status = "failed".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "failed".into();
         item.agent_id = Some(queue_agent_id(&item));
         let mut task = task_record_fixture("task-remote-native-cleanup", "open", &repo);
         task.agent_id = item.agent_id.clone();
@@ -789,8 +789,8 @@ mod queue_taskflow_tests {
         let run = queue_run_fixture("remote-native-stopped", &repo);
         let mut item = queue_taskflow_item("task-remote-native-stopped", &repo, None);
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "stopped".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "stopped".into();
         item.agent_id = Some(queue_agent_id(&item));
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
 
@@ -892,9 +892,9 @@ mod queue_taskflow_tests {
     fn queue_run_fixture(id: &str, repo: &Path) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: "running".to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "local".to_string(),
+            status: "running".into(),
+            execution_mode: "sequence".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
@@ -947,13 +947,13 @@ mod queue_taskflow_tests {
             slug: slug.to_string(),
             repo_root: Some(repo.display().to_string()),
             repo_name: Some("repo".to_string()),
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: remote_launcher.map(str::to_string),
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: None,
-            status: "pending".to_string(),
+            status: "pending".into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

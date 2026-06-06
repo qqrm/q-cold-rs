@@ -384,8 +384,8 @@ fn list_queue() -> Result<u8> {
         println!(
             "queue-run\t{}\tstatus={}\tmode={}\tagent={}\titems={}\tmessage={}",
             compact_field(&run.id),
-            compact_field(&run.status),
-            compact_field(&run.execution_mode),
+            compact_field(run.status.as_str()),
+            compact_field(run.execution_mode.as_str()),
             compact_field(&run.selected_agent_command),
             items.len(),
             compact_field(&run.message)
@@ -401,7 +401,7 @@ fn list_queue() -> Result<u8> {
                 item.position,
                 compact_field(&item.id),
                 compact_field(&item.slug),
-                compact_field(&item.status),
+                compact_field(item.status.as_str()),
                 compact_field(item.agent_id.as_deref().unwrap_or("-")),
                 compact_field(&depends_on),
                 compact_field(&item.message)

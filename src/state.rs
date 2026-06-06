@@ -10,6 +10,12 @@ use serde::{Deserialize, Serialize};
 
 const DEFAULT_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 
+mod queue_types;
+
+pub use queue_types::{
+    QueueExecutionHost, QueueExecutionMode, QueueItemStatus, QueueRunStatus,
+};
+
 #[derive(Clone, Debug)]
 pub struct AgentRow {
     pub id: String,
@@ -62,9 +68,9 @@ pub struct TerminalMetadataRow {
 #[derive(Clone, Debug, Serialize)]
 pub struct QueueRunRow {
     pub id: String,
-    pub status: String,
-    pub execution_mode: String,
-    pub execution_host: String,
+    pub status: QueueRunStatus,
+    pub execution_mode: QueueExecutionMode,
+    pub execution_host: QueueExecutionHost,
     pub selected_agent_command: String,
     pub remote_launcher: Option<String>,
     pub remote_agent_local_proxy: Option<String>,
@@ -100,13 +106,13 @@ pub struct QueueItemRow {
     pub slug: String,
     pub repo_root: Option<String>,
     pub repo_name: Option<String>,
-    pub execution_host: String,
+    pub execution_host: QueueExecutionHost,
     pub agent_command: String,
     pub remote_launcher: Option<String>,
     pub remote_agent_local_proxy: Option<String>,
     pub remote_agent_remote_proxy: Option<String>,
     pub agent_id: Option<String>,
-    pub status: String,
+    pub status: QueueItemStatus,
     pub message: String,
     pub attempts: i64,
     pub recovery_attempts: i64,
@@ -194,9 +200,9 @@ fn replace_web_queue_with_assignment(
              updated_at_unix = excluded.updated_at_unix",
         params![
             run.id,
-            run.status,
-            run.execution_mode,
-            run.execution_host,
+            run.status.as_str(),
+            run.execution_mode.as_str(),
+            run.execution_host.as_str(),
             run.selected_agent_command,
             run.remote_launcher,
             run.remote_agent_local_proxy,
@@ -230,12 +236,12 @@ fn replace_web_queue_with_assignment(
                 item.repo_root,
                 item.repo_name,
                 item.agent_command,
-                item.execution_host,
+                item.execution_host.as_str(),
                 item.remote_launcher,
                 item.remote_agent_local_proxy,
                 item.remote_agent_remote_proxy,
                 item.agent_id,
-                item.status,
+                item.status.as_str(),
                 item.message,
                 item.attempts,
                 item.recovery_attempts,
@@ -296,12 +302,12 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
                 item.repo_root,
                 item.repo_name,
                 item.agent_command,
-                item.execution_host,
+                item.execution_host.as_str(),
                 item.remote_launcher,
                 item.remote_agent_local_proxy,
                 item.remote_agent_remote_proxy,
                 item.agent_id,
-                item.status,
+                item.status.as_str(),
                 item.message,
                 item.attempts,
                 item.recovery_attempts,
@@ -353,7 +359,7 @@ pub fn update_web_queue_item_plans(run_id: &str, items: &[QueueItemRow]) -> Resu
                 item.prompt,
                 item.repo_root,
                 item.repo_name,
-                item.execution_host,
+                item.execution_host.as_str(),
                 item.agent_command,
                 item.remote_launcher,
                 item.remote_agent_local_proxy,
@@ -486,17 +492,18 @@ pub fn load_web_queue_run(run_id: &str) -> Result<(Option<QueueRunRow>, Vec<Queu
 
 pub fn update_web_queue_run(
     run_id: &str,
-    status: &str,
+    status: impl Into<QueueRunStatus>,
     current_index: i64,
     message: &str,
 ) -> Result<()> {
     let connection = open_db()?;
+    let status = status.into();
     connection
         .execute(
             "update web_queue_runs
              set status = ?2, current_index = ?3, message = ?4, updated_at_unix = ?5
              where id = ?1",
-            params![run_id, status, current_index, message, unix_now()],
+            params![run_id, status.as_str(), current_index, message, unix_now()],
         )
         .context("failed to update web queue run")?;
     Ok(())
@@ -570,13 +577,14 @@ pub fn web_queue_stop_requested(run_id: &str) -> Result<bool> {
 pub fn update_web_queue_item(
     run_id: &str,
     item_id: &str,
-    status: &str,
+    status: impl Into<QueueItemStatus>,
     message: &str,
     agent_id: Option<&str>,
     attempts: i64,
     next_attempt_at: Option<u64>,
 ) -> Result<()> {
     let connection = open_db()?;
+    let status = status.into();
     connection
         .execute(
             "update web_queue_items
@@ -586,7 +594,7 @@ pub fn update_web_queue_item(
             params![
                 run_id,
                 item_id,
-                status,
+                status.as_str(),
                 message,
                 agent_id,
                 attempts,

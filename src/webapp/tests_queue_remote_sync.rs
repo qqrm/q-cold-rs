@@ -28,8 +28,8 @@ mod queue_remote_sync_tests {
         .unwrap();
         make_executable(&qcold);
         let mut item = queue_item("task-remote-sync-overlay", &repo);
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
 
         sync_remote_queue_task_records_with_executable(&item, true, &qcold).unwrap();
 
@@ -68,8 +68,8 @@ mod queue_remote_sync_tests {
         .unwrap();
         make_executable(&qcold);
         let mut item = queue_item("task-remote-sync-overlay-fallback", &repo);
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
 
         sync_remote_queue_task_records_with_executable(&item, true, &qcold).unwrap();
 
@@ -93,9 +93,9 @@ mod queue_remote_sync_tests {
         let run = queue_run("remote-native-disconnected", &repo);
         let mut item = queue_item("task-remote-native-disconnected", &repo);
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some("/bin/false".to_string());
-        item.status = "running".to_string();
+        item.status = "running".into();
         item.agent_id = Some("qa-task-remote-native-disconnected".to_string());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
         state::upsert_task_record(&task_record(
@@ -137,14 +137,14 @@ mod queue_remote_sync_tests {
         fs::write(&remote_launcher, "#!/bin/sh\nexit 0\n").unwrap();
         make_executable(&remote_launcher);
         let mut run = queue_run("remote-native-live-stopped", &repo);
-        run.status = "stopped".to_string();
+        run.status = "stopped".into();
         run.current_index = 0;
         run.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         let mut item = queue_item("task-remote-native-live-stopped", &repo);
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some(remote_launcher.display().to_string());
-        item.status = "stopped".to_string();
+        item.status = "stopped".into();
         item.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         item.agent_id = Some("qa-task-remote-native-live-stopped".to_string());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
@@ -197,14 +197,14 @@ mod queue_remote_sync_tests {
         .unwrap();
         make_executable(&remote_launcher);
         let mut run = queue_run("remote-native-relaunch-stopped", &repo);
-        run.status = "stopped".to_string();
+        run.status = "stopped".into();
         run.current_index = 0;
         run.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         let mut item = queue_item("task-remote-native-live-relaunch", &repo);
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some(remote_launcher.display().to_string());
-        item.status = "stopped".to_string();
+        item.status = "stopped".into();
         item.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         item.agent_id = Some("qa-task-remote-native-live-deadbeef".to_string());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
@@ -257,14 +257,14 @@ mod queue_remote_sync_tests {
         .unwrap();
         make_executable(&remote_launcher);
         let mut run = queue_run("remote-native-repair-stopped", &repo);
-        run.status = "stopped".to_string();
+        run.status = "stopped".into();
         run.current_index = 0;
         run.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         let mut item = queue_item("task-remote-native-live-repair", &repo);
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some(remote_launcher.display().to_string());
-        item.status = "stopped".to_string();
+        item.status = "stopped".into();
         item.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         item.agent_id = Some("qa-task-remote-native-live-deadbeef".to_string());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
@@ -322,14 +322,14 @@ mod queue_remote_sync_tests {
         .unwrap();
         make_executable(&remote_launcher);
         let mut run = queue_run("remote-native-numbered-repair-stopped", &repo);
-        run.status = "stopped".to_string();
+        run.status = "stopped".into();
         run.current_index = 0;
         run.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         let mut item = queue_item("task-remote-native-live-repair2", &repo);
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some(remote_launcher.display().to_string());
-        item.status = "stopped".to_string();
+        item.status = "stopped".into();
         item.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
         item.agent_id = Some("qa-task-remote-native-live-repair".to_string());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
@@ -382,9 +382,9 @@ mod queue_remote_sync_tests {
     fn queue_run(id: &str, repo: &Path) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: "running".to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "remote-native".to_string(),
+            status: "running".into(),
+            execution_mode: "sequence".into(),
+            execution_host: "remote-native".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: Some("remote-dev-env".to_string()),
             remote_agent_local_proxy: None,
@@ -429,13 +429,13 @@ mod queue_remote_sync_tests {
             slug: slug.to_string(),
             repo_root: Some(repo.display().to_string()),
             repo_name: Some("repo".to_string()),
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: Some("remote-dev-env".to_string()),
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: None,
-            status: "pending".to_string(),
+            status: "pending".into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

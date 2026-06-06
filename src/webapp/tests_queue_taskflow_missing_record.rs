@@ -22,8 +22,8 @@ mod queue_taskflow_missing_record_tests {
             Some("/bin/false"),
         );
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         let agent_id = queue_agent_id(&item);
         item.agent_id = Some(agent_id.clone());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
@@ -58,8 +58,8 @@ mod queue_taskflow_missing_record_tests {
             Some("/bin/false"),
         );
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.attempts = WEB_QUEUE_RETRY_DELAYS.len() as i64;
         let agent_id = queue_agent_id(&item);
         item.agent_id = Some(agent_id.clone());
@@ -95,8 +95,8 @@ mod queue_taskflow_missing_record_tests {
         let run = queue_run_fixture("remote-native-missing-record-no-launcher", &repo);
         let mut item = queue_taskflow_item("task-remote-native-no-launcher", &repo, None);
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         let agent_id = queue_agent_id(&item);
         item.agent_id = Some(agent_id.clone());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
@@ -131,8 +131,8 @@ mod queue_taskflow_missing_record_tests {
             Some("/bin/true"),
         );
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         let agent_id = queue_agent_id(&item);
         item.agent_id = Some(agent_id.clone());
         state::replace_web_queue(&run, &[item.clone()]).unwrap();
@@ -158,8 +158,8 @@ mod queue_taskflow_missing_record_tests {
         let run = queue_run_fixture("remote-native-sync", &repo);
         let mut item = queue_taskflow_item("task-remote-native-sync", &repo, Some("/bin/true"));
         item.run_id = run.id.clone();
-        item.execution_host = "remote-native".to_string();
-        item.status = "running".to_string();
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
         item.message =
             "waiting for remote-native task record visibility after remote-agent open".to_string();
         item.agent_id = Some(queue_agent_id(&item));
@@ -184,9 +184,9 @@ mod queue_taskflow_missing_record_tests {
     fn queue_run_fixture(id: &str, repo: &Path) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: "running".to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "remote-native".to_string(),
+            status: "running".into(),
+            execution_mode: "sequence".into(),
+            execution_host: "remote-native".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: Some("remote-dev-env".to_string()),
             remote_agent_local_proxy: None,
@@ -216,13 +216,13 @@ mod queue_taskflow_missing_record_tests {
             slug: slug.to_string(),
             repo_root: Some(repo.display().to_string()),
             repo_name: Some("repo".to_string()),
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: remote_launcher.map(str::to_string),
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: None,
-            status: "pending".to_string(),
+            status: "pending".into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

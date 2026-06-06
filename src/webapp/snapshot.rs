@@ -210,9 +210,7 @@ fn queue_snapshot() -> QueueSnapshot {
     match state::load_web_queue() {
         Ok((run, records)) => QueueSnapshot {
             count: records.len(),
-            running: run.as_ref().is_some_and(|run| {
-                matches!(run.status.as_str(), "running" | "waiting" | "starting" | "stopping")
-            }),
+            running: run.as_ref().is_some_and(|run| run.status.is_active()),
             run,
             records,
             tabs,
@@ -247,7 +245,7 @@ fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
                 return None;
             }
             let status =
-                run_entry.map_or_else(|| "draft".to_string(), |(run, _)| run.status.clone());
+                run_entry.map_or_else(|| "draft".to_string(), |(run, _)| run.status.to_string());
             let running = run_entry
                 .is_some_and(|(run, items)| queue_run_has_live_work_with_agents(run, items, &running_agents));
             Some(QueueTabSnapshot {
@@ -549,7 +547,7 @@ fn discover_remote_native_terminal_sessions(
         .unwrap_or_default()
         .into_iter()
         .filter(queue_item_remote_native)
-        .filter(|item| matches!(item.status.as_str(), "starting" | "running" | "stopping"))
+        .filter(|item| item.status.has_executor_session())
         .filter_map(|item| {
             let agent_id = item.agent_id.as_deref()?.trim();
             if agent_id.is_empty() || local_agent_ids.contains(agent_id) {

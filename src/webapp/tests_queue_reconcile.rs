@@ -13,7 +13,7 @@ mod queue_reconcile_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-resolved-blocker", "failed", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "closed:blocked".to_string();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
         let mut second = queue_item_fixture(&run.id, "second", 1, "failed", Some("agent-2"));
@@ -79,12 +79,12 @@ mod queue_reconcile_tests {
             queue_item_fixture(&run.id, "remote-native-terminal-record", 0, "running", None);
         stale_item.repo_root = Some(repo.display().to_string());
         stale_item.repo_name = Some("repo".to_string());
-        stale_item.execution_host = "remote-native".to_string();
+        stale_item.execution_host = "remote-native".into();
         stale_item.remote_launcher = Some("/bin/false".to_string());
         let agent_id = queue_agent_id(&stale_item);
         stale_item.agent_id = Some(agent_id.clone());
         let mut persisted_item = stale_item.clone();
-        persisted_item.status = "success".to_string();
+        persisted_item.status = "success".into();
         persisted_item.message = "closed successfully remotely".to_string();
         state::replace_web_queue(&run, &[persisted_item]).unwrap();
 
@@ -108,9 +108,9 @@ mod queue_reconcile_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("remote-native-terminal-stale-update", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let mut item = queue_item_fixture(&run.id, "remote-stale", 0, "success", None);
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
         item.remote_launcher = Some("/bin/false".to_string());
         item.agent_id = Some(queue_agent_id(&item));
         item.message = "closed successfully remotely".to_string();
@@ -140,7 +140,7 @@ mod queue_reconcile_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-partial-reconcile", "failed", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
         let second = queue_item_fixture(&run.id, "second", 1, "success", Some("agent-2"));
         let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
@@ -170,7 +170,7 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("graph-remote-import", "failed", 0);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let mut first = queue_item_fixture(&run.id, "first", 0, "failed", Some("qa-first"));
         first.repo_root = Some(repo.clone());
         first.message = "agent reached idle prompt after failed Q-COLD closeout".to_string();
@@ -224,7 +224,7 @@ mod queue_reconcile_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-continue-resolved", "failed", 0);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "failed-closeout".to_string();
         let mut first = queue_item_fixture(&run.id, "first", 0, "failed", Some("qa-first"));
         first.message = "failed-closeout".to_string();
@@ -271,7 +271,7 @@ mod queue_reconcile_tests {
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
         let mut run = queue_run_fixture("graph-continue-race", "running", 0);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("qa-first"));
         let mut second = queue_item_fixture(&run.id, "second", 1, "starting", Some("qa-second"));
         second.depends_on = vec!["first".to_string()];
@@ -300,7 +300,7 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("graph-recovery-record", "failed", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "closed:blocked".to_string();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
         let mut second = queue_item_fixture(&run.id, "second", 1, "failed", Some("agent-2"));
@@ -373,7 +373,7 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("graph-reintegrate-record", "failed", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "failed-closeout".to_string();
         let first = queue_item_fixture(&run.id, "EBSR2-00B", 0, "success", Some("agent-1"));
         let mut second = queue_item_fixture(&run.id, "EBSR2-00A", 1, "failed", Some("agent-2"));
@@ -381,7 +381,7 @@ mod queue_reconcile_tests {
             "blockstore-ebs-v3f288-00a-fio-product-qemu-iouring-env-20260604-after-ebs00-p18320-20260605"
                 .to_string();
         second.repo_root = Some(repo.clone());
-        second.execution_host = "remote-native".to_string();
+        second.execution_host = "remote-native".into();
         second.remote_launcher = Some("remote-dev-env".to_string());
         second.message = "failed-closeout".to_string();
         second.started_at = 100;
@@ -457,12 +457,12 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("graph-relaunch-record", "failed", 0);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "failed-closeout".to_string();
         let mut first = queue_item_fixture(&run.id, "EBSR2-05", 0, "failed", Some("agent-5"));
         first.slug = "blockstore-ebs-v3f288-05-original".to_string();
         first.repo_root = Some(repo.clone());
-        first.execution_host = "remote-native".to_string();
+        first.execution_host = "remote-native".into();
         first.remote_launcher = Some("remote-dev-env".to_string());
         first.message = "failed-closeout".to_string();
         first.started_at = 100;
@@ -534,14 +534,14 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("graph-repair-record", "failed", 0);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "failed-closeout".to_string();
         let mut first = queue_item_fixture(&run.id, "EBSR2-05", 0, "failed", Some("agent-5"));
         first.slug =
             "blockstore-ebs-v3f288-05-allocator-free-space-pressure-parity-20260604-after-ebs00-p18326-20260605"
                 .to_string();
         first.repo_root = Some(repo.clone());
-        first.execution_host = "remote-native".to_string();
+        first.execution_host = "remote-native".into();
         first.remote_launcher = Some("remote-dev-env".to_string());
         first.message = "failed-closeout".to_string();
         first.started_at = 100;
@@ -614,14 +614,14 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("graph-numbered-repair-record", "failed", 0);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "failed-closeout".to_string();
         let mut first = queue_item_fixture(&run.id, "EBSR2-05", 0, "failed", Some("agent-5"));
         first.slug =
             "blockstore-ebs-v3f288-05-allocator-free-space-pressure-parity-20260604-after-ebs00-p18326-20260605"
                 .to_string();
         first.repo_root = Some(repo.clone());
-        first.execution_host = "remote-native".to_string();
+        first.execution_host = "remote-native".into();
         first.remote_launcher = Some("remote-dev-env".to_string());
         first.message = "failed-closeout".to_string();
         first.started_at = 100;
@@ -693,7 +693,7 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("graph-remote-native-retry", "failed", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "failed-closeout".to_string();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
         let mut second = queue_item_fixture(
@@ -704,7 +704,7 @@ mod queue_reconcile_tests {
             Some("qa-task-second"),
         );
         second.repo_root = Some(repo.clone());
-        second.execution_host = "remote-native".to_string();
+        second.execution_host = "remote-native".into();
         second.remote_launcher = Some("/bin/true".to_string());
         second.message = "failed-closeout".to_string();
         let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
@@ -794,7 +794,7 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("stale-graph-remote-native-retry", "failed", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         run.message = "failed-closeout".to_string();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
         let mut second = queue_item_fixture(
@@ -805,7 +805,7 @@ mod queue_reconcile_tests {
             Some("qa-task-second"),
         );
         second.repo_root = Some(repo.clone());
-        second.execution_host = "remote-native".to_string();
+        second.execution_host = "remote-native".into();
         second.remote_launcher = Some("/bin/true".to_string());
         second.message = "failed-closeout".to_string();
         let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
@@ -861,7 +861,7 @@ mod queue_reconcile_tests {
         std::env::set_var("QCOLD_STATE_DIR", &state_dir);
         let repo = repo.to_string_lossy().to_string();
         let mut run = queue_run_fixture("stale-remote-native-missing-record", "running", 1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
         let mut second = queue_item_fixture(
             &run.id,
@@ -871,7 +871,7 @@ mod queue_reconcile_tests {
             Some("qa-task-second"),
         );
         second.repo_root = Some(repo.clone());
-        second.execution_host = "remote-native".to_string();
+        second.execution_host = "remote-native".into();
         second.remote_launcher = Some("/bin/false".to_string());
         second.message = "waiting for remote-native task record visibility after remote-agent open"
             .to_string();
@@ -920,7 +920,7 @@ mod queue_reconcile_tests {
             "running",
             Some("qa-remote-item"),
         );
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
 
         assert_eq!(
             queue_agent_failure_message(&item, "qa-remote-item"),
@@ -945,9 +945,9 @@ mod queue_reconcile_tests {
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: status.to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "local".to_string(),
+            status: status.into(),
+            execution_mode: "sequence".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
@@ -979,13 +979,13 @@ mod queue_reconcile_tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
-            status: status.to_string(),
+            status: status.into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

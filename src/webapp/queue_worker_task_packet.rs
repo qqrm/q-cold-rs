@@ -41,7 +41,7 @@ fn queue_task_instruction_inner(
             has_remote_launcher: remote_launcher.is_some(),
             has_remote_worktree: remote_worktree.is_some(),
             existing_task,
-            remote_native: item.execution_host == "remote-native",
+            remote_native: item.execution_host.is_remote_native(),
         },
     );
     write_queue_auto_recovery(&mut packet, item);

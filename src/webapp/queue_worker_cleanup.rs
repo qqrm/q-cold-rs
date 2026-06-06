@@ -148,7 +148,7 @@ fn reserve_remote_native_proxy(item: &mut state::QueueItemRow) -> Result<Option<
     let conflict = state::load_web_queue_items()?.into_iter().any(|other| {
         other.remote_agent_remote_proxy.as_deref() == Some(proxy)
             && (other.run_id != item.run_id || other.id != item.id)
-            && other.status != "success"
+            && !other.status.is_success()
     });
     if !conflict {
         return Ok(None);
@@ -164,7 +164,7 @@ fn rotate_remote_native_proxy(
     let used = state::load_web_queue_items()?
         .into_iter()
         .filter(|other| {
-            (other.run_id != item.run_id || other.id != item.id) && other.status != "success"
+            (other.run_id != item.run_id || other.id != item.id) && !other.status.is_success()
         })
         .filter_map(|other| {
             other

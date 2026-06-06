@@ -113,7 +113,7 @@ mod queue_prompt_tests {
     #[test]
     fn remote_native_packet_marks_remote_executor_contract() {
         let mut item = queue_prompt_item("task-remote-native-01", Some("remote-dev-env"));
-        item.execution_host = "remote-native".to_string();
+        item.execution_host = "remote-native".into();
 
         let instruction = queue_remote_native_task_instruction(&item);
 
@@ -162,13 +162,13 @@ mod queue_prompt_tests {
             slug: slug.to_string(),
             repo_root: Some("/workspace/repo".to_string()),
             repo_name: Some("repo".to_string()),
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: remote_launcher.map(str::to_string),
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: None,
-            status: "pending".to_string(),
+            status: "pending".into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,
