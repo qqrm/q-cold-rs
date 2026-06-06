@@ -1,3 +1,15 @@
+include!("../../../src/webapp_assets/app_js_assets.rs");
+
+macro_rules! webapp_app_js_asset_path_array {
+    ($($asset:literal),+ $(,)?) => {
+        &[$(concat!("src/webapp_assets/app/", $asset)),+]
+    };
+}
+
+fn webapp_app_js_asset_paths() -> &'static [&'static str] {
+    qcold_app_js_assets!(webapp_app_js_asset_path_array)
+}
+
 fn verify_command(args: &[OsString]) -> Result<u8> {
     if !args.is_empty() {
         println!("verify-profile\t{}", display_args(args));
@@ -111,14 +123,7 @@ fn run_preflight(profile: PreflightProfile) -> Result<()> {
 fn run_web_asset_syntax_check() -> Result<()> {
     let repo = repo_root()?;
     let mut script = String::new();
-    for asset in [
-        "src/webapp_assets/app/init_parse.js",
-        "src/webapp_assets/app/queue.js",
-        "src/webapp_assets/app/terminal.js",
-        "src/webapp_assets/app/queue_transcript_lookup.js",
-        "src/webapp_assets/app/events.js",
-        "src/webapp_assets/app/events_bootstrap.js",
-    ] {
+    for &asset in webapp_app_js_asset_paths() {
         script.push_str(
             &fs::read_to_string(repo.join(asset))
                 .with_context(|| format!("failed to read {asset}"))?,
@@ -140,6 +145,31 @@ fn run_web_asset_syntax_check() -> Result<()> {
     );
     fs::remove_file(&temp_path).ok();
     result
+}
+
+#[cfg(test)]
+mod web_asset_tests {
+    use super::*;
+
+    const EXPECTED_WEBAPP_APP_JS_ASSETS: &[&str] = &[
+        "src/webapp_assets/app/init_parse.js",
+        "src/webapp_assets/app/queue.js",
+        "src/webapp_assets/app/terminal.js",
+        "src/webapp_assets/app/events.js",
+        "src/webapp_assets/app/queue_scroll.js",
+        "src/webapp_assets/app/queue_transcript_lookup.js",
+        "src/webapp_assets/app/events_bootstrap.js",
+    ];
+
+    #[test]
+    fn web_asset_syntax_check_uses_production_asset_order() {
+        assert_eq!(webapp_app_js_asset_paths(), EXPECTED_WEBAPP_APP_JS_ASSETS);
+    }
+
+    #[test]
+    fn web_asset_syntax_check_includes_queue_scroll_asset() {
+        assert!(webapp_app_js_asset_paths().contains(&"src/webapp_assets/app/queue_scroll.js"));
+    }
 }
 
 fn install_command(args: &[OsString]) -> Result<u8> {

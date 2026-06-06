@@ -847,15 +847,27 @@ struct TaskChatResponse {
 const INDEX_HTML: &str = include_str!("../webapp_assets/index.html");
 const APP_CSS: &str = include_str!("../webapp_assets/app.css");
 const QUEUE_CSS: &str = include_str!("../webapp_assets/queue.css");
-const APP_JS: &str = concat!(
-    include_str!("../webapp_assets/app/init_parse.js"),
-    include_str!("../webapp_assets/app/queue.js"),
-    include_str!("../webapp_assets/app/terminal.js"),
-    include_str!("../webapp_assets/app/events.js"),
-    include_str!("../webapp_assets/app/queue_scroll.js"),
-    include_str!("../webapp_assets/app/queue_transcript_lookup.js"),
-    include_str!("../webapp_assets/app/events_bootstrap.js"),
-);
+include!("../webapp_assets/app_js_assets.rs");
+
+macro_rules! concat_app_js_assets {
+    ($($asset:literal),+ $(,)?) => {
+        concat!($(include_str!(concat!("../webapp_assets/app/", $asset)),)+)
+    };
+}
+
+const APP_JS: &str = qcold_app_js_assets!(concat_app_js_assets);
+
+#[cfg(test)]
+macro_rules! app_js_asset_path_array {
+    ($($asset:literal),+ $(,)?) => {
+        &[$(concat!("src/webapp_assets/app/", $asset)),+]
+    };
+}
+
+#[cfg(test)]
+fn app_js_asset_paths() -> &'static [&'static str] {
+    qcold_app_js_assets!(app_js_asset_path_array)
+}
 const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <rect width="64" height="64" rx="14" fill="#101820"/>
   <path d="M16 18h18c8.8 0 16 7.2 16 16 0 3.2-.9 6.2-2.6 8.7L54 49.3

@@ -4,6 +4,30 @@ mod asset_tests {
 
     use super::*;
 
+    const EXPECTED_APP_JS_ASSETS: &[&str] = &[
+        "src/webapp_assets/app/init_parse.js",
+        "src/webapp_assets/app/queue.js",
+        "src/webapp_assets/app/terminal.js",
+        "src/webapp_assets/app/events.js",
+        "src/webapp_assets/app/queue_scroll.js",
+        "src/webapp_assets/app/queue_transcript_lookup.js",
+        "src/webapp_assets/app/events_bootstrap.js",
+    ];
+
+    #[test]
+    fn app_js_bundle_matches_declared_asset_order() {
+        assert_eq!(app_js_asset_paths(), EXPECTED_APP_JS_ASSETS);
+        assert!(app_js_asset_paths().contains(&"src/webapp_assets/app/queue_scroll.js"));
+
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut expected = String::new();
+        for &asset in app_js_asset_paths() {
+            expected.push_str(&std::fs::read_to_string(repo.join(asset)).unwrap());
+        }
+
+        assert_eq!(APP_JS, expected);
+    }
+
     #[test]
     fn web_terminal_slash_menu_uses_codex_command_prefixes() {
         assert!(APP_JS.contains("['model', 'choose what model and reasoning effort to use']"));

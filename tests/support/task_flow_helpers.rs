@@ -92,6 +92,9 @@ fn required_control_plane_file_content(path: &str) -> &'static str {
         path if path.starts_with("tests/") && path.ends_with(".rs") => "#[test]\nfn fixture_test() {}\n",
         "xtask/src/main.rs" => "fn main() {}\n",
         "xtask/src/ci.rs" | "xtask/src/verify/gates.rs" | "xtask/src/verify/preflight.rs" => "",
+        "src/webapp_assets/app_js_assets.rs" => {
+            include_str!("../../src/webapp_assets/app_js_assets.rs")
+        }
         path if path.ends_with(".json") => "{}\n",
         path if path.ends_with(".sh") => "#!/usr/bin/env sh\nexit 0\n",
         _ => "placeholder\n",
@@ -123,6 +126,11 @@ pub(crate) fn xtask_process_manifest() -> PathBuf {
             &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("xtask/src"),
             &fixture_root.join("xtask/src"),
         );
+        let app_js_assets_source =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/webapp_assets/app_js_assets.rs");
+        let app_js_assets_dest = fixture_root.join("src/webapp_assets/app_js_assets.rs");
+        fs::create_dir_all(app_js_assets_dest.parent().unwrap()).unwrap();
+        fs::copy(app_js_assets_source, app_js_assets_dest).unwrap();
         let rollout_source = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/rollout.rs");
         let rollout_dest = fixture_root.join("src/rollout.rs");
         fs::create_dir_all(rollout_dest.parent().unwrap()).unwrap();
@@ -295,8 +303,10 @@ fn required_control_plane_files() -> Vec<&'static str> {
         "src/webapp_assets/app/events_bootstrap.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
+        "src/webapp_assets/app/queue_scroll.js",
         "src/webapp_assets/app/queue_transcript_lookup.js",
         "src/webapp_assets/app/terminal.js",
+        "src/webapp_assets/app_js_assets.rs",
         "tests/agent_repo_context.rs",
         "tests/command_version.rs",
         "tests/task_flow_record_sync.rs",
