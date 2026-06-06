@@ -211,8 +211,8 @@ fn queue_snapshot() -> QueueSnapshot {
         Ok((run, records)) => QueueSnapshot {
             count: records.len(),
             running: run.as_ref().is_some_and(|run| run.status.is_active()),
-            run,
-            records,
+            run: run.as_ref().map(WebQueueRun::from_row),
+            records: records.iter().map(WebQueueItem::from_row).collect(),
             tabs,
             active_tab_id,
             error: None,
@@ -229,7 +229,7 @@ fn queue_snapshot() -> QueueSnapshot {
     }
 }
 
-fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
+fn queue_tab_snapshot() -> Vec<WebQueueTab> {
     let runs = state::load_web_queue_runs().unwrap_or_default();
     let runs = runs
         .into_iter()
@@ -248,12 +248,14 @@ fn queue_tab_snapshot() -> Vec<QueueTabSnapshot> {
                 run_entry.map_or_else(|| "draft".to_string(), |(run, _)| run.status.to_string());
             let running = run_entry
                 .is_some_and(|(run, items)| queue_run_has_live_work_with_agents(run, items, &running_agents));
-            Some(QueueTabSnapshot {
+            Some(WebQueueTab {
                 id: tab.id,
                 label: tab.label,
                 run_id: tab.run_id,
-                run: run_entry.map(|(run, _)| run.clone()),
-                records: run_entry.map_or_else(Vec::new, |(_, items)| items.clone()),
+                run: run_entry.map(|(run, _)| WebQueueRun::from_row(run)),
+                records: run_entry.map_or_else(Vec::new, |(_, items)| {
+                    items.iter().map(WebQueueItem::from_row).collect()
+                }),
                 is_default: tab.is_default,
                 active: tab.active,
                 running,

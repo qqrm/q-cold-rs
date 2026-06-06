@@ -65,7 +65,7 @@ pub struct TerminalMetadataRow {
     pub updated_at: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct QueueRunRow {
     pub id: String,
     pub status: QueueRunStatus,
@@ -85,18 +85,19 @@ pub struct QueueRunRow {
     pub updated_at: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct QueueTabRow {
     pub id: String,
     pub label: String,
     pub run_id: Option<String>,
     pub is_default: bool,
     pub active: bool,
+    #[allow(dead_code, reason = "retained as storage metadata; current web DTOs do not expose it")]
     pub created_at: u64,
     pub updated_at: u64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug)]
 pub struct QueueItemRow {
     pub id: String,
     pub run_id: String,

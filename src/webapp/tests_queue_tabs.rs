@@ -223,6 +223,137 @@ mod queue_tabs_tests {
     }
 
     #[test]
+    fn queue_snapshot_serializes_stable_web_queue_dto_contract() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("dto-run", "running", 3);
+        run.execution_mode = state::QueueExecutionMode::Graph;
+        run.execution_host = state::QueueExecutionHost::RemoteNative;
+        run.remote_launcher = Some("remote-dev-env".to_string());
+        run.remote_agent_local_proxy = Some("19101".to_string());
+        run.remote_agent_remote_proxy = Some("18101".to_string());
+        run.selected_repo_root = Some("/workspace/repo".to_string());
+        run.selected_repo_name = Some("Repo".to_string());
+        run.stop_requested = true;
+        run.message = "active".to_string();
+        run.created_at = 10;
+        run.updated_at = 20;
+        let mut item = queue_item_fixture("dto-run", "dto-item", 4, "blocked", Some("qa-dto"));
+        item.depends_on = vec!["bootstrap".to_string()];
+        item.repo_root = Some("/workspace/repo".to_string());
+        item.repo_name = Some("Repo".to_string());
+        item.execution_host = state::QueueExecutionHost::RemoteNative;
+        item.remote_launcher = Some("remote-dev-env".to_string());
+        item.remote_agent_local_proxy = Some("19102".to_string());
+        item.remote_agent_remote_proxy = Some("18102".to_string());
+        item.message = "blocked".to_string();
+        item.attempts = 2;
+        item.recovery_attempts = 1;
+        item.next_attempt_at = Some(30);
+        item.started_at = 11;
+        item.updated_at = 21;
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let value = serde_json::to_value(queue_snapshot()).unwrap();
+        let run = &value["run"];
+        let item = &value["records"][0];
+        let tab = &value["tabs"][0];
+
+        assert_json_object_keys(
+            run,
+            &[
+                "created_at",
+                "current_index",
+                "execution_host",
+                "execution_mode",
+                "id",
+                "message",
+                "remote_agent_local_proxy",
+                "remote_agent_remote_proxy",
+                "remote_launcher",
+                "selected_agent_command",
+                "selected_repo_name",
+                "selected_repo_root",
+                "status",
+                "stop_requested",
+                "track",
+                "updated_at",
+            ],
+        );
+        assert_eq!(run["id"].as_str(), Some("dto-run"));
+        assert_eq!(run["status"].as_str(), Some("running"));
+        assert_eq!(run["execution_mode"].as_str(), Some("graph"));
+        assert_eq!(run["execution_host"].as_str(), Some("remote-native"));
+        assert_eq!(run["remote_launcher"].as_str(), Some("remote-dev-env"));
+        assert_eq!(run["selected_repo_root"].as_str(), Some("/workspace/repo"));
+        assert_eq!(run["selected_repo_name"].as_str(), Some("Repo"));
+        assert_eq!(run["current_index"].as_i64(), Some(3));
+        assert_eq!(run["stop_requested"].as_bool(), Some(true));
+        assert_eq!(run["created_at"].as_u64(), Some(10));
+        assert_eq!(run["updated_at"].as_u64(), Some(20));
+
+        assert_json_object_keys(
+            item,
+            &[
+                "agent_command",
+                "agent_id",
+                "attempts",
+                "depends_on",
+                "execution_host",
+                "id",
+                "message",
+                "next_attempt_at",
+                "position",
+                "prompt",
+                "recovery_attempts",
+                "remote_agent_local_proxy",
+                "remote_agent_remote_proxy",
+                "remote_launcher",
+                "repo_name",
+                "repo_root",
+                "run_id",
+                "slug",
+                "started_at",
+                "status",
+                "updated_at",
+            ],
+        );
+        assert_eq!(item["id"].as_str(), Some("dto-item"));
+        assert_eq!(item["run_id"].as_str(), Some("dto-run"));
+        assert_eq!(item["status"].as_str(), Some("blocked"));
+        assert_eq!(item["execution_host"].as_str(), Some("remote-native"));
+        assert_eq!(item["depends_on"][0].as_str(), Some("bootstrap"));
+        assert_eq!(item["agent_id"].as_str(), Some("qa-dto"));
+        assert_eq!(item["attempts"].as_i64(), Some(2));
+        assert_eq!(item["recovery_attempts"].as_i64(), Some(1));
+        assert_eq!(item["next_attempt_at"].as_u64(), Some(30));
+
+        assert_json_object_keys(
+            tab,
+            &[
+                "active",
+                "count",
+                "id",
+                "is_default",
+                "label",
+                "message",
+                "records",
+                "run",
+                "run_id",
+                "running",
+                "status",
+                "updated_at",
+            ],
+        );
+        assert_eq!(tab["run"]["id"].as_str(), Some("dto-run"));
+        assert_eq!(tab["records"][0]["id"].as_str(), Some("dto-item"));
+        assert_eq!(tab["status"].as_str(), Some("running"));
+        assert_eq!(tab["message"].as_str(), Some("active"));
+        assert_eq!(tab["count"].as_u64(), Some(1));
+    }
+
+    #[test]
     fn duplicate_queue_run_tab_reference_is_repaired() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
@@ -412,6 +543,17 @@ mod queue_tabs_tests {
         assert_eq!(snapshot.records[0].id, "remote-item");
         assert!(snapshot.error.is_none());
         assert_eq!(snapshot.tabs[0].count, 1);
+    }
+
+    fn assert_json_object_keys(value: &serde_json::Value, expected: &[&str]) {
+        let mut actual = value
+            .as_object()
+            .expect("expected JSON object")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        actual.sort_unstable();
+        assert_eq!(actual, expected);
     }
 
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {

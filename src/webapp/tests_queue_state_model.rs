@@ -236,7 +236,7 @@ mod queue_state_model_tests {
     #[test]
     fn runtime_graph_ready_items_characterize_current_unadmitted_fanout() {
         let mut run = queue_run_fixture("graph-unadmitted", "running", -1);
-        run.execution_mode = "graph".to_string();
+        run.execution_mode = "graph".into();
         let mut bootstrap = queue_item_fixture(&run.id, "bootstrap", 0, "success", None);
         bootstrap.agent_id = Some("qa-bootstrap".to_string());
         let mut fanout_a = queue_item_fixture(&run.id, "fanout-a", 1, "pending", None);
@@ -268,10 +268,10 @@ mod queue_state_model_tests {
         let run = run.unwrap();
         let item = &items[0];
         QueueProjection {
-            run_status: run.status,
+            run_status: run.status.to_string(),
             run_current_index: run.current_index,
             run_message: run.message,
-            item_status: item.status.clone(),
+            item_status: item.status.to_string(),
             item_agent_id: item.agent_id.clone(),
             item_attempts: item.attempts,
             item_recovery_attempts: item.recovery_attempts,
@@ -281,9 +281,9 @@ mod queue_state_model_tests {
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),
-            status: status.to_string(),
-            execution_mode: "sequence".to_string(),
-            execution_host: "local".to_string(),
+            status: status.into(),
+            execution_mode: "sequence".into(),
+            execution_host: "local".into(),
             selected_agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
@@ -315,13 +315,13 @@ mod queue_state_model_tests {
             slug: format!("task-{id}"),
             repo_root: None,
             repo_name: None,
-            execution_host: "local".to_string(),
+            execution_host: "local".into(),
             agent_command: "c1".to_string(),
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
             agent_id: agent_id.map(str::to_string),
-            status: status.to_string(),
+            status: status.into(),
             message: String::new(),
             attempts: 0,
             recovery_attempts: 0,

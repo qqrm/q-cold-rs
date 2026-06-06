@@ -25,20 +25,116 @@ struct EventSnapshot {
 pub(crate) struct QueueSnapshot {
     pub(crate) count: usize,
     pub(crate) running: bool,
-    pub(crate) run: Option<state::QueueRunRow>,
-    pub(crate) records: Vec<state::QueueItemRow>,
-    pub(crate) tabs: Vec<QueueTabSnapshot>,
+    pub(crate) run: Option<WebQueueRun>,
+    pub(crate) records: Vec<WebQueueItem>,
+    pub(crate) tabs: Vec<WebQueueTab>,
     pub(crate) active_tab_id: String,
     pub(crate) error: Option<String>,
 }
 
 #[derive(Clone, Serialize)]
-pub(crate) struct QueueTabSnapshot {
+pub(crate) struct WebQueueRun {
+    pub(crate) id: String,
+    pub(crate) status: String,
+    pub(crate) execution_mode: String,
+    pub(crate) execution_host: String,
+    pub(crate) selected_agent_command: String,
+    pub(crate) remote_launcher: Option<String>,
+    pub(crate) remote_agent_local_proxy: Option<String>,
+    pub(crate) remote_agent_remote_proxy: Option<String>,
+    pub(crate) selected_repo_root: Option<String>,
+    pub(crate) selected_repo_name: Option<String>,
+    pub(crate) track: String,
+    pub(crate) current_index: i64,
+    pub(crate) stop_requested: bool,
+    pub(crate) message: String,
+    pub(crate) created_at: u64,
+    pub(crate) updated_at: u64,
+}
+
+impl WebQueueRun {
+    fn from_row(row: &state::QueueRunRow) -> Self {
+        Self {
+            id: row.id.clone(),
+            status: row.status.as_str().to_string(),
+            execution_mode: row.execution_mode.as_str().to_string(),
+            execution_host: row.execution_host.as_str().to_string(),
+            selected_agent_command: row.selected_agent_command.clone(),
+            remote_launcher: row.remote_launcher.clone(),
+            remote_agent_local_proxy: row.remote_agent_local_proxy.clone(),
+            remote_agent_remote_proxy: row.remote_agent_remote_proxy.clone(),
+            selected_repo_root: row.selected_repo_root.clone(),
+            selected_repo_name: row.selected_repo_name.clone(),
+            track: row.track.clone(),
+            current_index: row.current_index,
+            stop_requested: row.stop_requested,
+            message: row.message.clone(),
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct WebQueueItem {
+    pub(crate) id: String,
+    pub(crate) run_id: String,
+    pub(crate) position: i64,
+    pub(crate) depends_on: Vec<String>,
+    pub(crate) prompt: String,
+    pub(crate) slug: String,
+    pub(crate) repo_root: Option<String>,
+    pub(crate) repo_name: Option<String>,
+    pub(crate) execution_host: String,
+    pub(crate) agent_command: String,
+    pub(crate) remote_launcher: Option<String>,
+    pub(crate) remote_agent_local_proxy: Option<String>,
+    pub(crate) remote_agent_remote_proxy: Option<String>,
+    pub(crate) agent_id: Option<String>,
+    pub(crate) status: String,
+    pub(crate) message: String,
+    pub(crate) attempts: i64,
+    pub(crate) recovery_attempts: i64,
+    pub(crate) next_attempt_at: Option<u64>,
+    pub(crate) started_at: u64,
+    pub(crate) updated_at: u64,
+}
+
+impl WebQueueItem {
+    fn from_row(row: &state::QueueItemRow) -> Self {
+        Self {
+            id: row.id.clone(),
+            run_id: row.run_id.clone(),
+            position: row.position,
+            depends_on: row.depends_on.clone(),
+            prompt: row.prompt.clone(),
+            slug: row.slug.clone(),
+            repo_root: row.repo_root.clone(),
+            repo_name: row.repo_name.clone(),
+            execution_host: row.execution_host.as_str().to_string(),
+            agent_command: row.agent_command.clone(),
+            remote_launcher: row.remote_launcher.clone(),
+            remote_agent_local_proxy: row.remote_agent_local_proxy.clone(),
+            remote_agent_remote_proxy: row.remote_agent_remote_proxy.clone(),
+            agent_id: row.agent_id.clone(),
+            status: row.status.as_str().to_string(),
+            message: row.message.clone(),
+            attempts: row.attempts,
+            recovery_attempts: row.recovery_attempts,
+            next_attempt_at: row.next_attempt_at,
+            started_at: row.started_at,
+            updated_at: row.updated_at,
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+pub(crate) struct WebQueueTab {
     pub(crate) id: String,
     pub(crate) label: String,
     pub(crate) run_id: Option<String>,
-    pub(crate) run: Option<state::QueueRunRow>,
-    pub(crate) records: Vec<state::QueueItemRow>,
+    pub(crate) run: Option<WebQueueRun>,
+    pub(crate) records: Vec<WebQueueItem>,
     pub(crate) is_default: bool,
     pub(crate) active: bool,
     pub(crate) running: bool,
