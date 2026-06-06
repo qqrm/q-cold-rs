@@ -1,14 +1,3 @@
-        if (shouldFollowTail) {
-          scrollTerminalToTail(output);
-        } else {
-          output.scrollTop = Math.min(previousScrollTop, output.scrollHeight);
-        }
-        terminalOutputCache.set(terminal.target, nextOutput);
-      }
-      const input = node.querySelector('.terminal-input');
-      if (input) input.placeholder = `send to ${terminalLabel(terminal)}`;
-    }
-
     function isTerminalAtTail(output) {
       return output.scrollHeight - output.scrollTop - output.clientHeight <= 24;
     }

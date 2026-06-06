@@ -1,3 +1,6 @@
+    async function sendTranscriptMessage() {
+      const text = transcriptInput.value.trimEnd();
+      if (!text.trim() || !transcriptContext.chatAvailable) return;
       transcriptInput.value = '';
       const payload = await postTaskChatMessage(transcriptContext.taskId, transcriptContext.terminalTarget, text);
       if (!payload.ok) {
@@ -639,3 +642,13 @@
         const shouldFollowTail = terminalShouldFollowTail(terminal.target, output);
         const previousScrollTop = output.scrollTop;
         renderAnsi(output, nextOutput);
+        if (shouldFollowTail) {
+          scrollTerminalToTail(output);
+        } else {
+          output.scrollTop = Math.min(previousScrollTop, output.scrollHeight);
+        }
+        terminalOutputCache.set(terminal.target, nextOutput);
+      }
+      const input = node.querySelector('.terminal-input');
+      if (input) input.placeholder = `send to ${terminalLabel(terminal)}`;
+    }

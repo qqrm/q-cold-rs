@@ -124,8 +124,16 @@ fn run_web_asset_syntax_check() -> Result<()> {
     let repo = repo_root()?;
     let mut script = String::new();
     for &asset in webapp_app_js_asset_paths() {
+        let asset_path = repo.join(asset);
+        run_required(
+            "node",
+            ["--check", path_arg(&asset_path)]
+                .map(OsString::from)
+                .to_vec(),
+        )
+        .with_context(|| format!("failed web asset syntax check for {asset}"))?;
         script.push_str(
-            &fs::read_to_string(repo.join(asset))
+            &fs::read_to_string(&asset_path)
                 .with_context(|| format!("failed to read {asset}"))?,
         );
         script.push('\n');

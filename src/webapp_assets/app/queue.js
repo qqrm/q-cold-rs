@@ -1,22 +1,3 @@
-        title.textContent = `#${index + 1}`;
-        const statusNode = badge(queueStatusText(item));
-        const message = document.createElement('span');
-        message.className = 'queue-step-message';
-        const main = document.createElement('span');
-        main.textContent = view.message;
-        message.appendChild(main);
-        if (view.detail) {
-          const detail = document.createElement('small');
-          detail.textContent = view.detail;
-          message.appendChild(detail);
-        }
-        const controls = queueItemControls(index);
-        node.append(title, statusNode, message, controls);
-        return node;
-      }));
-      stopButton.classList.toggle('visible', queueRun.running || queueRun.stopped);
-    }
-
     function renderQueueGraph() {
       queueWaves = normalizeQueueWaves(queueWaves, queueItems, { pruneBackendEmpty: true });
       if (queueGraphLayoutEditable()) syncQueueWaveDependencies();
@@ -986,7 +967,3 @@
       transcriptSend.disabled = !enabled;
       transcriptInput.placeholder = enabled ? 'Message this task agent' : 'No active task terminal';
     }
-
-    async function sendTranscriptMessage() {
-      const text = transcriptInput.value.trimEnd();
-      if (!text.trim() || !transcriptContext.chatAvailable) return;

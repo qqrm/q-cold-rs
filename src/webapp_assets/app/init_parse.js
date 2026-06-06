@@ -929,3 +929,21 @@ const tg = window.Telegram && window.Telegram.WebApp;
         const node = document.createElement('div');
         node.className = `queue-step ${view.status}`;
         const title = document.createElement('strong');
+        title.textContent = `#${index + 1}`;
+        const statusNode = badge(queueStatusText(item));
+        const message = document.createElement('span');
+        message.className = 'queue-step-message';
+        const main = document.createElement('span');
+        main.textContent = view.message;
+        message.appendChild(main);
+        if (view.detail) {
+          const detail = document.createElement('small');
+          detail.textContent = view.detail;
+          message.appendChild(detail);
+        }
+        const controls = queueItemControls(index);
+        node.append(title, statusNode, message, controls);
+        return node;
+      }));
+      stopButton.classList.toggle('visible', queueRun.running || queueRun.stopped);
+    }
