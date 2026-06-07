@@ -104,8 +104,20 @@ fn send_task_chat_text(target: &str, text: &str) -> Result<()> {
 
 fn ensure_task_chat_target(task_id: &str) -> Result<(String, String)> {
     crate::sync_codex_task_records().ok();
+    let queue_item = queue_item_for_task_id(task_id)?;
+    if let Some((target, agent_id)) = queue_item
+        .as_ref()
+        .and_then(active_queue_item_terminal_target)
+    {
+        return Ok((target, agent_id));
+    }
+    if state::get_task_record(task_id)?.is_none() {
+        if let Some(item) = queue_item.as_ref() {
+            request_queue_item_reconcile_from_task_chat(item);
+            bail!("{}", queue_item_without_task_record_message(item));
+        }
+    }
     let mut record = task_record_by_id(task_id)?;
-    let queue_item = queue_item_for_task_id(&record.id)?;
     if let Some(agent_id) = record
         .agent_id
         .clone()
@@ -181,6 +193,48 @@ fn active_terminal_target_for_agent(agent_id: &str) -> Option<String> {
         .into_iter()
         .find(|context| context.id == agent_id)
         .map(|context| context.target)
+}
+
+fn active_queue_item_terminal_target(item: &state::QueueItemRow) -> Option<(String, String)> {
+    let agent_id = item.agent_id.as_deref()?.trim();
+    if agent_id.is_empty() {
+        return None;
+    }
+    active_terminal_target_for_agent(agent_id).map(|target| (target, agent_id.to_string()))
+}
+
+fn request_queue_item_reconcile_from_task_chat(item: &state::QueueItemRow) {
+    if !queue_item_accepts_task_chat_reconcile(item) {
+        return;
+    }
+    let Ok((Some(run), _)) = state::load_web_queue_run(&item.run_id) else {
+        return;
+    };
+    if queue_run_accepts_task_chat_reconcile(&run) {
+        spawn_web_queue_worker(item.run_id.clone());
+    }
+}
+
+fn queue_item_accepts_task_chat_reconcile(item: &state::QueueItemRow) -> bool {
+    item.status.is_pending_or_waiting() || item.status.is_starting_or_running()
+}
+
+fn queue_run_accepts_task_chat_reconcile(run: &state::QueueRunRow) -> bool {
+    !run.stop_requested && matches!(run.status.as_str(), "starting" | "running" | "waiting")
+}
+
+fn queue_item_without_task_record_message(item: &state::QueueItemRow) -> String {
+    let mut message = format!(
+        "queued task has not opened a task record yet: status={}",
+        item.status
+    );
+    if !item.message.trim().is_empty() {
+        let _ = write!(message, "; {}", item.message.trim());
+    }
+    if let Some(retry_at) = item.next_attempt_at {
+        let _ = write!(message, "; retry_at={retry_at}");
+    }
+    message
 }
 
 fn task_chat_agent_id(task_id: &str) -> String {
@@ -312,141 +366,6 @@ fn clean_terminal_metadata_value(value: Option<&str>) -> Option<String> {
         return None;
     }
     Some(truncate_chars(compact, 80))
-}
-
-fn task_transcript_response(task_id: &str) -> TaskTranscriptResponse {
-    match task_transcript_result(task_id) {
-        Ok(response) => response,
-        Err(err) => TaskTranscriptResponse {
-            ok: false,
-            task_id: task_id.to_string(),
-            title: String::new(),
-            status: String::new(),
-            session_path: None,
-            transcript_path: None,
-            chat_available: false,
-            messages: Vec::new(),
-            output: format!("{err:#}"),
-        },
-    }
-}
-
-fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
-    let task_id = task_id.trim();
-    if task_id.is_empty() || task_id.chars().any(char::is_control) {
-        bail!("invalid task id");
-    }
-    let record = task_record_for_transcript(task_id)?;
-    if live_web_queue_task_without_closed_status(&record) {
-        if let Some(response) = task_agent_execution_log_response(&record)? {
-            return Ok(response);
-        }
-        bail!("live queue tasks are available through their executor terminal only");
-    }
-    if let Some(session_path) = codex_session_path_from_metadata(record.metadata_json.as_deref()) {
-        let path = PathBuf::from(&session_path);
-        if !is_codex_session_path(&path) {
-            bail!("refusing to read non-Codex session path: {}", path.display());
-        }
-        let messages = codex_transcript_messages(&path)?;
-        let chat_available = task_record_chat_available(&record);
-        return Ok(TaskTranscriptResponse {
-            ok: true,
-            task_id: record.id,
-            title: record.title,
-            chat_available,
-            status: record.status,
-            session_path: Some(session_path),
-            transcript_path: None,
-            messages,
-            output: String::new(),
-        });
-    }
-    task_agent_execution_log_response(&record)?
-        .context("task record has no Codex session transcript or task execution log")
-}
-
-fn task_record_for_transcript(task_id: &str) -> Result<state::TaskRecordRow> {
-    if let Some(record) = state::get_task_record(task_id)? {
-        return Ok(record);
-    }
-    crate::sync_codex_task_records().ok();
-    state::get_task_record(task_id)?.with_context(|| format!("unknown task record: {task_id}"))
-}
-
-fn task_agent_execution_log_response(record: &state::TaskRecordRow) -> Result<Option<TaskTranscriptResponse>> {
-    let Some(path) = task_agent_execution_log_path(record) else {
-        return Ok(None);
-    };
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read task execution log {}", path.display()))?;
-    let messages = transcript_message(String::new(), "assistant", &text).into_iter().collect();
-    Ok(Some(TaskTranscriptResponse {
-        ok: true,
-        task_id: record.id.clone(),
-        title: record.title.clone(),
-        chat_available: task_record_chat_available(record),
-        status: record.status.clone(),
-        session_path: None,
-        transcript_path: Some(path.display().to_string()),
-        messages,
-        output: String::new(),
-    }))
-}
-
-fn task_agent_execution_log_path(record: &state::TaskRecordRow) -> Option<PathBuf> {
-    let worktree = task_metadata_string(record.metadata_json.as_deref(), "task_worktree")
-        .or_else(|| record.cwd.clone())
-        .map(PathBuf::from)?;
-    if !worktree.is_absolute() {
-        return None;
-    }
-    let logs_dir = worktree.join(".task/logs");
-    let path = logs_dir.join("agent-execution.md");
-    if !path.is_file() || !task_log_path_is_inside_worktree(&worktree, &logs_dir, &path) {
-        return None;
-    }
-    Some(path)
-}
-
-fn task_log_path_is_inside_worktree(worktree: &Path, logs_dir: &Path, path: &Path) -> bool {
-    let (Ok(worktree), Ok(logs_dir), Ok(path)) =
-        (worktree.canonicalize(), logs_dir.canonicalize(), path.canonicalize())
-    else {
-        return false;
-    };
-    logs_dir.starts_with(&worktree) && path.starts_with(&logs_dir)
-}
-
-fn task_record_chat_available(record: &state::TaskRecordRow) -> bool {
-    matches!(record.status.as_str(), "closed:blocked" | "paused")
-        && codex_resume_session_id(record).is_some()
-}
-
-fn live_web_queue_task_without_closed_status(record: &state::TaskRecordRow) -> bool {
-    !record.status.starts_with("closed:")
-        && task_metadata_string(record.metadata_json.as_deref(), "opened_by")
-            .is_some_and(|value| value == "web-queue")
-}
-
-fn codex_session_path_from_metadata(metadata_json: Option<&str>) -> Option<String> {
-    task_metadata_string(metadata_json, "session_path")
-}
-
-fn task_metadata_string(metadata_json: Option<&str>, key: &str) -> Option<String> {
-    let metadata = serde_json::from_str::<Value>(metadata_json?).ok()?;
-    metadata
-        .get(key)
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-}
-
-fn codex_command_from_metadata(metadata_json: Option<&str>) -> Option<String> {
-    let metadata = serde_json::from_str::<Value>(metadata_json?).ok()?;
-    metadata
-        .get("command")
-        .and_then(Value::as_str)
-        .and_then(|command| shell_words(command).into_iter().next())
 }
 
 fn codex_resume_session_id(record: &state::TaskRecordRow) -> Option<String> {

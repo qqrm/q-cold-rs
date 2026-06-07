@@ -668,6 +668,7 @@ include!("webapp/queue_worker_taskflow.rs");
 include!("webapp/queue_worker_status.rs");
 include!("webapp/queue_worker_record_status.rs");
 include!("webapp/terminal_chat.rs");
+include!("webapp/terminal_chat_transcript.rs");
 include!("webapp/remote_native_terminal.rs");
 include!("webapp/queue_worker_terminal.rs");
 include!("webapp/queue_worker_cleanup.rs");

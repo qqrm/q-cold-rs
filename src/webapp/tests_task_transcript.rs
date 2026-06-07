@@ -88,4 +88,147 @@ mod task_transcript_tests {
         assert_eq!(response.messages.len(), 1);
         assert!(response.messages[0].text.contains("reason=no_matching_rollouts"));
     }
+
+    #[test]
+    fn task_transcript_for_queued_item_without_record_reports_queue_state_and_spawns_worker() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("run-frontend-freshness");
+        let mut item = queue_item_fixture(&run.id, "frontend-freshness");
+        item.status = "waiting".into();
+        item.message = "admission waiting: available memory is below requested reservation".into();
+        item.next_attempt_at = Some(123);
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let response = task_transcript_response("task/frontend-freshness");
+
+        assert!(response.ok, "{}", response.output);
+        assert_eq!(response.task_id, "task/frontend-freshness");
+        assert_eq!(response.title, "frontend-freshness");
+        assert_eq!(response.status, "waiting");
+        assert_eq!(response.session_path, None);
+        assert_eq!(response.transcript_path, None);
+        assert!(!response.chat_available);
+        assert!(response
+            .output
+            .contains("queued task has not opened a task record yet"));
+        assert!(response.output.contains("admission waiting"));
+        assert!(response.output.contains("retry_at=123"));
+        assert_eq!(response.messages.len(), 1);
+        assert!(response.messages[0].text.contains("admission waiting"));
+        assert!(test_web_queue_worker_spawned(&run.id));
+    }
+
+    #[test]
+    fn task_chat_target_for_queued_item_without_record_spawns_worker_instead_of_unknown_record() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("run-chat-frontend-freshness");
+        let mut item = queue_item_fixture(&run.id, "frontend-freshness");
+        item.status = "waiting".into();
+        item.message = "admission waiting: available memory is below requested reservation".into();
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let err = ensure_task_chat_target("task/frontend-freshness").unwrap_err();
+        let output = format!("{err:#}");
+
+        assert!(
+            output.contains("queued task has not opened a task record yet"),
+            "{output}"
+        );
+        assert!(!output.contains("unknown task record"));
+        assert!(test_web_queue_worker_spawned(&run.id));
+    }
+
+    #[test]
+    fn task_transcript_for_stopped_queued_item_without_record_does_not_spawn_worker() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let mut run = queue_run_fixture("run-stopped-frontend-freshness");
+        run.status = "stopped".into();
+        let mut item = queue_item_fixture(&run.id, "stopped-frontend-freshness");
+        item.status = "stopped".into();
+        item.message = "stopped by operator; press Continue to resume".into();
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let response = task_transcript_response("task/stopped-frontend-freshness");
+
+        assert!(response.ok, "{}", response.output);
+        assert_eq!(response.status, "stopped");
+        assert!(response.output.contains("stopped by operator"));
+        assert!(!test_web_queue_worker_spawned(&run.id));
+    }
+
+    #[test]
+    fn task_chat_target_for_paused_queued_item_without_record_does_not_spawn_worker() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("run-paused-frontend-freshness");
+        let mut item = queue_item_fixture(&run.id, "paused-frontend-freshness");
+        item.status = "paused".into();
+        item.message = "paused by task record status".into();
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let err = ensure_task_chat_target("task/paused-frontend-freshness").unwrap_err();
+        let output = format!("{err:#}");
+
+        assert!(
+            output.contains("queued task has not opened a task record yet"),
+            "{output}"
+        );
+        assert!(output.contains("paused by task record status"));
+        assert!(!test_web_queue_worker_spawned(&run.id));
+    }
+
+    fn queue_run_fixture(id: &str) -> state::QueueRunRow {
+        state::QueueRunRow {
+            id: id.to_string(),
+            status: "running".into(),
+            execution_mode: "graph".into(),
+            execution_host: "local".into(),
+            selected_agent_command: "c1".to_string(),
+            remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
+            selected_repo_root: None,
+            selected_repo_name: None,
+            track: id.to_string(),
+            current_index: -1,
+            stop_requested: false,
+            message: "running".to_string(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    fn queue_item_fixture(run_id: &str, slug: &str) -> state::QueueItemRow {
+        state::QueueItemRow {
+            id: slug.to_string(),
+            run_id: run_id.to_string(),
+            position: 0,
+            depends_on: Vec::new(),
+            prompt: format!("prompt {slug}"),
+            slug: slug.to_string(),
+            repo_root: None,
+            repo_name: Some("qcold".to_string()),
+            execution_host: "local".into(),
+            agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
+            remote_launcher: None,
+            remote_agent_local_proxy: None,
+            remote_agent_remote_proxy: None,
+            agent_id: None,
+            status: "pending".into(),
+            message: String::new(),
+            attempts: 0,
+            recovery_attempts: 0,
+            next_attempt_at: None,
+            started_at: 0,
+            updated_at: 0,
+        }
+    }
 }
