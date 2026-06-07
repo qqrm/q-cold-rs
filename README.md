@@ -170,6 +170,10 @@ page reloads. The browser also keeps a bounded `/api/state` watcher active and
 refreshes immediately when the page regains focus or network connectivity, so a
 stale tab does not need an F5 reload to catch up.
 
+Local dashboard startup does not require access to the Telegram CDN. The
+browser only loads the Telegram WebApp SDK asynchronously when Telegram launch
+parameters are present, or uses an already-present `window.Telegram.WebApp`.
+
 Dashboard writes can require an operator token:
 
 ```bash

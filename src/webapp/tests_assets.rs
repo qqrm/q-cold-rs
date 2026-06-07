@@ -7,6 +7,7 @@ mod asset_tests {
     const EXPECTED_APP_JS_ASSETS: &[&str] = &[
         "src/webapp_assets/app/api.js",
         "src/webapp_assets/app/queue_status.js",
+        "src/webapp_assets/app/telegram.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
         "src/webapp_assets/app/terminal.js",
@@ -85,6 +86,20 @@ mod asset_tests {
                 assert!(!source.contains(pattern), "{asset} still contains {pattern}");
             }
         }
+    }
+
+    #[test]
+    fn telegram_sdk_loading_is_optional_for_local_dashboard() {
+        assert!(!INDEX_HTML.contains("telegram.org/js/telegram-web-app.js"));
+        assert!(APP_JS.contains("const QcoldTelegram ="));
+        assert!(APP_JS.contains("window.Telegram?.WebApp || null"));
+        assert!(APP_JS.contains("tgWebApp(?:Data|Version|Platform|ThemeParams|StartParam)="));
+        assert!(APP_JS.contains("script.async = true;"));
+        assert!(APP_JS.contains("script.onerror = () => {"));
+        assert!(APP_JS.contains("const tg = typeof QcoldTelegram === 'undefined' ? null : QcoldTelegram;"));
+        assert!(APP_JS.contains("if (tg) tg.readyAndExpand();"));
+        assert!(APP_JS.contains("if (tg) tg.applyTheme(value);"));
+        assert!(APP_JS.contains("safeCall(app, 'showAlert', message);"));
     }
 
     #[test]

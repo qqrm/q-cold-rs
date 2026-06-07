@@ -301,6 +301,7 @@ fn required_control_plane_files() -> Vec<&'static str> {
         "src/service/rust_service_ffi.h",
         "src/webapp_assets/app/api.js",
         "src/webapp_assets/app/queue_status.js",
+        "src/webapp_assets/app/telegram.js",
         "src/webapp_assets/app/events.js",
         "src/webapp_assets/app/events_bootstrap.js",
         "src/webapp_assets/app/init_parse.js",

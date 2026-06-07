@@ -1,5 +1,5 @@
-const tg = window.Telegram && window.Telegram.WebApp;
-    if (tg) { tg.ready(); tg.expand(); }
+const tg = typeof QcoldTelegram === 'undefined' ? null : QcoldTelegram;
+    if (tg) tg.readyAndExpand();
 
     const appBuildId = String(window.__QCOLD_APP_BUILD_ID__ || '');
     let appBuildMismatchNotified = false;
@@ -81,10 +81,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         button.classList.toggle('active', button.dataset.themeChoice === value);
       });
       localStorage.setItem('qcold-theme', value);
-      if (tg) {
-        tg.setHeaderColor(value === 'dark' ? '#101114' : 'secondary_bg_color');
-        tg.setBackgroundColor(value === 'dark' ? '#101114' : 'bg_color');
-      }
+      if (tg) tg.applyTheme(value);
     }
 
     function renderWriteTokenControl() {
