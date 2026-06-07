@@ -800,11 +800,12 @@ fn agent_account_key(command: &str) -> String {
 }
 
 fn status_probe_command(command: &str) -> String {
-    match command {
+    let probe_command = match command {
         "cc1" => "c1".to_string(),
         "cc2" => "c2".to_string(),
         _ => command.to_string(),
-    }
+    };
+    format!("{probe_command} --version")
 }
 
 fn managed_task_root_for(cwd: &Path) -> Option<PathBuf> {

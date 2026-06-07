@@ -25,10 +25,25 @@ mod available_commands_tests {
 
         let commands = available_agent_commands_from(Some(path_env.as_os_str()), &home)
             .into_iter()
-            .map(|agent| agent.command)
+            .map(|agent| (agent.command, agent.status_command))
             .collect::<Vec<_>>();
 
-        assert_eq!(commands, vec!["c1", "c2", "codex4"]);
+        assert_eq!(
+            commands,
+            vec![
+                ("c1".to_string(), "c1 --version".to_string()),
+                ("c2".to_string(), "c2 --version".to_string()),
+                ("codex4".to_string(), "codex4 --version".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn status_probe_command_uses_noninteractive_version_probe() {
+        assert_eq!(status_probe_command("c1"), "c1 --version");
+        assert_eq!(status_probe_command("cc1"), "c1 --version");
+        assert_eq!(status_probe_command("c2"), "c2 --version");
+        assert_eq!(status_probe_command("cc2"), "c2 --version");
     }
 
     fn write_auth_file(home: &Path, account: &str) {

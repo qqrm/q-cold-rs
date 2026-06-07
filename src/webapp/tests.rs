@@ -284,6 +284,23 @@ mod tests {
     }
 
     #[test]
+    fn agent_status_parser_accepts_version_probe_as_ready() {
+        let agent = agent_command_fixture("c1");
+        let record = classify_agent_status_text(
+            &agent,
+            1,
+            1_780_000_000,
+            true,
+            Some(0),
+            "codex-cli 0.137.0",
+        );
+
+        assert_eq!(record.state, "ok");
+        assert_eq!(record.capacity_score, 100);
+        assert_eq!(record.summary, "readiness probe completed");
+    }
+
+    #[test]
     fn queue_agent_selector_chooses_highest_usable_capacity() {
         let now = 1_780_000_000;
         let c1 = agent_limit_fixture("c1", "ok", 35, None, now);

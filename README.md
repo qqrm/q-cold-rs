@@ -88,7 +88,7 @@ qcold queue clear --run-id <run-id>
 ```
 
 Local queue launches that use `c1` or `c2` select between those two commands at
-agent startup from the daemon's cached `/status` probes. Probes refresh in the
+agent startup from the daemon's cached readiness probes. Probes refresh in the
 background about every 30 minutes; when both eligible agents are limited, the
 item remains waiting with the next retry time from the status cache.
 

@@ -168,7 +168,7 @@ fn run_agent_status_probe(command: &str) -> io::Result<std::process::Output> {
         .arg("script")
         .arg("-q")
         .arg("-c")
-        .arg(format!("{} /status", queue_shell_quote(command)))
+        .arg(command)
         .arg("/dev/null")
         .env("QCOLD_AGENT_MANAGED_WORKTREE", "0")
         .stdin(Stdio::null())
