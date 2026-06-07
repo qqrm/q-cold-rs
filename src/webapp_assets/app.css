@@ -143,6 +143,10 @@
       border: 1px solid var(--line);
     }
     .header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+    .write-token-control { display: grid; grid-template-columns: auto minmax(110px, 160px) auto auto; }
+    .write-token-control { align-items: center; gap: 6px; }
+    .write-token-control input { min-width: 0; padding: 7px 8px; }
+    .write-token-control button { padding: 7px 9px; font-size: 12px; }
     .theme-control {
       display: inline-grid;
       grid-template-columns: repeat(3, minmax(48px, 1fr));
@@ -979,11 +983,10 @@
       .agent-limit-status span:last-child { white-space: normal; }
       .terminal-head, .terminal-compose, .terminal-meta-form { grid-template-columns: 1fr; }
       .transcript-compose { grid-template-columns: 1fr; }
-      #send-transcript {
-        width: 100%;
-        min-width: 0;
-      }
+      #send-transcript { width: 100%; min-width: 0; }
       .header-actions { width: 100%; justify-content: space-between; }
+      .write-token-control { grid-template-columns: 1fr 1fr; width: 100%; }
+      .write-token-control input { grid-column: 1 / -1; }
       .system-strip {
         left: 10px;
         right: 10px;

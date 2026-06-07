@@ -22,6 +22,18 @@
         </div>
       </div>
       <div class="header-actions">
+        <form class="write-token-control" id="write-token-form" aria-label="Dashboard write token">
+          <span class="badge" id="write-token-state">token unset</span>
+          <input
+            id="write-token-input"
+            type="password"
+            autocomplete="off"
+            placeholder="Write token"
+            aria-label="Dashboard write token"
+          >
+          <button class="secondary" id="write-token-set" type="submit">Set</button>
+          <button class="secondary" id="write-token-clear" type="button">Clear</button>
+        </form>
         <div class="theme-control" aria-label="Theme">
           <button data-theme-choice="auto" class="active">Auto</button>
           <button data-theme-choice="dark">Dark</button>

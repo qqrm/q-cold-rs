@@ -25,26 +25,13 @@
     }
 
     async function postTaskChatMessage(taskId, target, text) {
-      const response = await fetch('/api/task-chat/send', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ task_id: taskId, target, text }),
-      });
-      return response.json().catch(() => ({
-        ok: false,
-        output: response.ok ? 'invalid task chat response' : `HTTP ${response.status}`,
-      }));
+      return QcoldApi.sendTaskChat(taskId, target, text);
     }
 
     async function ensureTaskChatTarget(taskId) {
       try {
-        const response = await fetch('/api/task-chat/target', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ task_id: taskId }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) return;
+        const payload = await QcoldApi.ensureTaskChatTarget(taskId);
+        if (payload.ok === false) return;
         if (transcriptContext.taskId !== taskId) return;
         if (payload.target) transcriptContext.terminalTarget = payload.target;
         transcriptContext.chatAvailable = true;

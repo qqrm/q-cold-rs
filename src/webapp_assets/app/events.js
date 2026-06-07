@@ -430,9 +430,7 @@
       if (snapshotRequestInFlight) return;
       snapshotRequestInFlight = true;
       try {
-        const response = await fetch('/api/state', { cache: 'no-store' });
-        if (!response.ok) throw new Error(`state refresh failed: ${response.status}`);
-        applySnapshot({ state: await response.json() });
+        applySnapshot({ state: await QcoldApi.getState() });
       } catch (err) {
         setLiveState('Offline', 'failed');
         if (!state) status.textContent = String(err);
@@ -491,16 +489,7 @@
 
     async function postTerminalText(target, text, options = {}) {
       try {
-        const response = await fetch('/api/terminal/send', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ target, text, ...options }),
-        });
-        const payload = await response.json();
-        if (!response.ok && payload.ok !== false) payload.ok = false;
-        return payload;
+        return await QcoldApi.sendTerminal(target, text, options);
       } catch (err) {
         return { ok: false, output: String(err) };
       }
@@ -560,15 +549,8 @@
     async function saveTerminalMetadata(target, name, scope) {
       if (!target) return;
       try {
-        const response = await fetch('/api/terminal/metadata', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify({ target, name, scope }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.saveTerminalMetadata(target, name, scope);
+        if (payload.ok === false) {
           appendLocalMessage('error', payload.output || 'Failed to save terminal metadata');
           return;
         }
@@ -702,29 +684,24 @@
       saveQueueStorage();
       renderQueue();
       try {
-        const response = await fetch('/api/queue/run', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            run_id: queueRun.runId,
-            tab_id: activeQueueTabId,
-            execution_mode: queueGraphMode ? 'graph' : 'sequence',
-            selected_agent_command: selectedAgent.command,
-            selected_repo_root: selectedRepo.root || '',
-            selected_repo_name: selectedRepo.name || '',
-            items: queueItems.map((item) => ({
-              id: item.id,
-              prompt: item.prompt,
-              slug: item.slug,
-              depends_on: queueGraphMode ? (item.dependsOn || []) : [],
-              repo_root: item.repoRoot,
-              repo_name: item.repoName,
-              agent_command: item.agentCommand || selectedAgent.command,
-            })),
-          }),
+        const payload = await QcoldApi.runQueue({
+          run_id: queueRun.runId,
+          tab_id: activeQueueTabId,
+          execution_mode: queueGraphMode ? 'graph' : 'sequence',
+          selected_agent_command: selectedAgent.command,
+          selected_repo_root: selectedRepo.root || '',
+          selected_repo_name: selectedRepo.name || '',
+          items: queueItems.map((item) => ({
+            id: item.id,
+            prompt: item.prompt,
+            slug: item.slug,
+            depends_on: queueGraphMode ? (item.dependsOn || []) : [],
+            repo_root: item.repoRoot,
+            repo_name: item.repoName,
+            agent_command: item.agentCommand || selectedAgent.command,
+          })),
         });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        if (payload.ok === false) {
           queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
           queueItems[0].status = 'failed';
           queueItems[0].message = payload.output || 'failed to start backend queue';
@@ -753,13 +730,8 @@
       if (!queueHasBackendRun()) saveQueueStorage();
       appendLocalMessage('status', 'Creating queue');
       try {
-        const response = await fetch('/api/queue/tab/create', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ label: `Queue ${queueTabsModel.length + 1}` }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.createQueueTab(`Queue ${queueTabsModel.length + 1}`);
+        if (payload.ok === false) {
           appendLocalMessage('error', payload.output || 'failed to create queue');
           return;
         }
@@ -804,13 +776,8 @@
       syncQueueFromSnapshot();
       renderQueue();
       try {
-        const response = await fetch('/api/queue/tab/delete', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ tab_id: tabId }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.deleteQueueTab(tabId);
+        if (payload.ok === false) {
           forgetQueueTabDeletion(tabId);
           appendLocalMessage('error', payload.output || 'failed to delete queue');
           await loadSnapshot();
@@ -854,13 +821,8 @@
       queueRun.stop = true;
       appendLocalMessage('status', 'Stop requested');
       try {
-        const response = await fetch('/api/queue/stop', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ run_id: runId }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.stopQueue(runId);
+        if (payload.ok === false) {
           appendLocalMessage('error', payload.output || 'failed to stop queue');
           return;
         }
@@ -892,13 +854,8 @@
       saveQueueStorage();
       renderQueue();
       try {
-        const response = await fetch('/api/queue/continue', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ run_id: runId }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.continueQueue(runId);
+        if (payload.ok === false) {
           appendLocalMessage('error', payload.output || 'failed to continue queue');
           queueRun = previousQueueRun;
           queueItems = previousQueueItems;
@@ -946,8 +903,7 @@
       renderAgents();
       renderQueue();
       try {
-        const response = await fetch(`/api/agent-limits${refresh ? '?refresh=true' : ''}`, { cache: 'no-store' });
-        agentLimits = await response.json();
+        agentLimits = await QcoldApi.getAgentLimits(refresh);
       } catch (err) {
         agentLimits = {
           cached: false,

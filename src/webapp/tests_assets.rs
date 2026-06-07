@@ -5,6 +5,7 @@ mod asset_tests {
     use super::*;
 
     const EXPECTED_APP_JS_ASSETS: &[&str] = &[
+        "src/webapp_assets/app/api.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
         "src/webapp_assets/app/terminal.js",
@@ -29,6 +30,26 @@ mod asset_tests {
     }
 
     #[test]
+    fn frontend_api_calls_use_shared_client() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        for &asset in app_js_asset_paths() {
+            let source = std::fs::read_to_string(repo.join(asset)).unwrap();
+            if asset.ends_with("/api.js") {
+                assert!(source.contains("fetch(path, requestOptions)"));
+            } else {
+                assert!(!source.contains("fetch("), "{asset} still calls fetch directly");
+            }
+        }
+
+        assert!(APP_JS.find("const QcoldApi =").unwrap() < APP_JS.find("async function loadSnapshot").unwrap());
+        assert!(APP_JS.contains("headers['x-qcold-write-token'] = token;"));
+        assert!(APP_JS.contains("sessionStorage.setItem(writeTokenStorageKey, value);"));
+        assert!(APP_JS.contains("Dashboard write token required; enter it in the header."));
+        assert!(INDEX_HTML.contains("id=\"write-token-input\""));
+        assert!(!APP_JS.contains("QCOLD_WEBAPP_WRITE_TOKEN"));
+    }
+
+    #[test]
     fn web_terminal_slash_menu_uses_codex_command_prefixes() {
         assert!(APP_JS.contains("['model', 'choose what model and reasoning effort to use']"));
         assert!(APP_JS.contains(
@@ -47,7 +68,7 @@ mod asset_tests {
     fn graph_queue_active_run_keeps_wave_append_controls() {
         assert!(APP_JS.contains("addWaveButton.disabled = !queueGraphAppendable();"));
         assert!(APP_JS.contains("function queueBackendRunAppendable()"));
-        assert!(APP_JS.contains("items: [{ id: item.id, prompt, depends_on: dependsOn }]"));
+        assert!(APP_JS.contains("QcoldApi.appendQueue(runId, [{ id: item.id, prompt, depends_on: dependsOn }])"));
         assert!(APP_JS.contains(
             "queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });"
         ));
@@ -266,6 +287,6 @@ mod asset_tests {
         assert!(APP_JS.contains("/api/queue/tab/create"));
         assert!(!APP_JS.contains("/api/queue/tab/switch"));
         assert!(APP_JS.contains("tab_id: activeQueueTabId"));
-        assert!(APP_JS.contains("body: JSON.stringify({ run_id: runId })"));
+        assert!(APP_JS.contains("QcoldApi.clearQueue(runId)"));
     }
 }

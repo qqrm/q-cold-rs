@@ -472,16 +472,8 @@
       const dependsOn = queueGraphMode ? queueDependenciesForWave(item.waveId) : [];
       appendLocalMessage('status', 'Adding queue item to backend');
       try {
-        const response = await fetch('/api/queue/append', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            run_id: runId,
-            items: [{ id: item.id, prompt, depends_on: dependsOn }],
-          }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.appendQueue(runId, [{ id: item.id, prompt, depends_on: dependsOn }]);
+        if (payload.ok === false) {
           appendLocalMessage('error', payload.output || 'failed to append queue item');
           return;
         }
@@ -702,24 +694,19 @@
         .filter(({ item }) => queueItemEditable(item));
       if (!items.length) return;
       try {
-        const response = await fetch('/api/queue/update', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            run_id: runId,
-            items: items.map(({ item, index }) => ({
-              id: item.id,
-              prompt: item.prompt,
-              position: index,
-              depends_on: queueGraphMode ? (item.dependsOn || []) : [],
-              repo_root: item.repoRoot,
-              repo_name: item.repoName,
-              agent_command: item.agentCommand,
-            })),
-          }),
-        });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.updateQueue(
+          runId,
+          items.map(({ item, index }) => ({
+            id: item.id,
+            prompt: item.prompt,
+            position: index,
+            depends_on: queueGraphMode ? (item.dependsOn || []) : [],
+            repo_root: item.repoRoot,
+            repo_name: item.repoName,
+            agent_command: item.agentCommand,
+          })),
+        );
+        if (payload.ok === false) {
           appendLocalMessage('error', payload.output || 'failed to update queue plan');
           await loadSnapshot();
           return;
@@ -736,18 +723,13 @@
       appendLocalMessage('status', 'Removing queue item');
       removeQueueItemLocally(index, item);
       try {
-        const response = await fetch('/api/queue/remove', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            run_id: item.runId,
-            item_id: item.id,
-            task_id: task?.id || (item.slug ? `task/${item.slug}` : ''),
-            agent_id: queueItemAgentId(item, task),
-          }),
+        const payload = await QcoldApi.removeQueueItem({
+          run_id: item.runId,
+          item_id: item.id,
+          task_id: task?.id || (item.slug ? `task/${item.slug}` : ''),
+          agent_id: queueItemAgentId(item, task),
         });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        if (payload.ok === false) {
           forgetQueueItemRemoval(item);
           appendLocalMessage('error', payload.output || 'failed to remove queue item');
           await loadSnapshot();
@@ -769,13 +751,8 @@
       if (runId) {
         appendLocalMessage('status', 'Clearing queue');
         try {
-          const response = await fetch('/api/queue/clear', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ run_id: runId }),
-          });
-          const payload = await response.json().catch(() => ({}));
-          if (!response.ok || payload.ok === false) {
+          const payload = await QcoldApi.clearQueue(runId);
+          if (payload.ok === false) {
             appendLocalMessage('error', payload.output || 'failed to clear queue');
             return;
           }
@@ -876,9 +853,8 @@
       }));
       transcriptModal.hidden = false;
       try {
-        const response = await fetch(`/api/task-transcript?id=${encodeURIComponent(taskId)}`, { cache: 'no-store' });
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok || payload.ok === false) {
+        const payload = await QcoldApi.getTaskTranscript(taskId);
+        if (payload.ok === false) {
           renderTranscriptFallback(payload.output || 'Transcript is not available.');
           return;
         }

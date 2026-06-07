@@ -128,6 +128,18 @@ page reloads. The browser also keeps a bounded `/api/state` watcher active and
 refreshes immediately when the page regains focus or network connectivity, so a
 stale tab does not need an F5 reload to catch up.
 
+Dashboard writes can require an operator token:
+
+```bash
+QCOLD_WEBAPP_REQUIRE_WRITE_TOKEN=1 \
+QCOLD_WEBAPP_WRITE_TOKEN='<secret>' \
+qcold telegram serve --listen 127.0.0.1:8787 --daemon
+```
+
+The daemon checks `X-QCOLD-Write-Token` on mutating dashboard requests. It does
+not embed `QCOLD_WEBAPP_WRITE_TOKEN` in served HTML or JavaScript; enter the
+token in the dashboard header for the current browser session.
+
 After rebuilding or reinstalling Q-COLD, restart the daemon so the served binary
 and embedded web assets match:
 

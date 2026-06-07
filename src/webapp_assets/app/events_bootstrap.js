@@ -35,6 +35,19 @@
       localStorage.setItem(queueAgentStorageKey, selectedQueueAgent);
       renderQueue();
     });
+    writeTokenForm.addEventListener('submit', (event) => {
+      event.preventDefault();
+      QcoldApi.setWriteToken(writeTokenInput.value);
+      writeTokenInput.value = '';
+      renderWriteTokenControl();
+      appendLocalMessage('status', 'Dashboard write token saved for this session');
+    });
+    writeTokenClear.addEventListener('click', () => {
+      QcoldApi.clearWriteToken();
+      writeTokenInput.value = '';
+      renderWriteTokenControl();
+      appendLocalMessage('status', 'Dashboard write token cleared');
+    });
     themeButtons.forEach((button) => {
       button.addEventListener('click', () => applyTheme(button.dataset.themeChoice));
     });
@@ -44,6 +57,7 @@
       });
     });
     applyTheme();
+    renderWriteTokenControl();
     setActiveView(preferredView(), false);
     startStateWatcher();
     connectEvents();

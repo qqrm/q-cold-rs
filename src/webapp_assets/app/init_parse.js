@@ -31,6 +31,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
     const transcriptSend = document.getElementById('send-transcript');
     const themeButtons = Array.from(document.querySelectorAll('[data-theme-choice]'));
     const liveState = document.getElementById('live-state');
+    const writeTokenForm = document.getElementById('write-token-form');
+    const writeTokenInput = document.getElementById('write-token-input');
+    const writeTokenState = document.getElementById('write-token-state');
+    const writeTokenClear = document.getElementById('write-token-clear');
     const dashboardStateWatchPollMs = 2000;
     let stateWatchTimer = null;
     let snapshotRequestInFlight = false;
@@ -81,6 +85,14 @@ const tg = window.Telegram && window.Telegram.WebApp;
         tg.setHeaderColor(value === 'dark' ? '#101114' : 'secondary_bg_color');
         tg.setBackgroundColor(value === 'dark' ? '#101114' : 'bg_color');
       }
+    }
+
+    function renderWriteTokenControl() {
+      const configured = QcoldApi.writeTokenConfigured();
+      writeTokenState.textContent = configured ? 'token set' : 'token unset';
+      writeTokenState.className = `badge ${configured ? 'ready' : 'warn'}`;
+      writeTokenClear.disabled = !configured;
+      writeTokenInput.placeholder = configured ? 'Replace token' : 'Write token';
     }
 
     function parseKeyValues(parts) {
