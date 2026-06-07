@@ -4,6 +4,7 @@ const REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE: &str =
     "remote-native task is open but remote-agent session is missing; relaunching item";
 const LOCAL_OPEN_RECORD_STOPPED_MESSAGE: &str =
     "local task is open but agent session is missing; press Continue to resume";
+const QUEUE_CONTINUE_PENDING_MESSAGE: &str = "pending after queue continue";
 
 fn reconcile_queue_task_record_status(
     run: &state::QueueRunRow,
@@ -109,10 +110,15 @@ fn local_open_record_without_live_agent(item: &state::QueueItemRow, status: &str
         && !queue_item_remote_native(item)
         && !item.status.is_success()
         && !item.status.is_stopped_or_paused()
+        && !local_open_record_waiting_for_continue_launch(item)
         && item
             .agent_id
             .as_deref()
             .is_none_or(|agent_id| !agent_running(agent_id))
+}
+
+fn local_open_record_waiting_for_continue_launch(item: &state::QueueItemRow) -> bool {
+    item.status == "pending" && item.message == QUEUE_CONTINUE_PENDING_MESSAGE
 }
 
 fn reconcile_remote_native_open_record(
