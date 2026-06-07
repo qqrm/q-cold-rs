@@ -497,7 +497,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                             Some(record.expires_at_unix),
                         )?;
                         let delay = record.expires_at_unix.saturating_sub(unix_now()).max(1);
-                        if !sleep_queue_retry(run_id, delay)? {
+                        if !sleep_queue_retry(run_id, &item.id, delay)? {
                             pause_web_queue_item(run_id, &item, None, retries)?;
                             return Ok(QueueItemOutcome::Stopped);
                         }
@@ -518,7 +518,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                         Some(next_retry_at),
                     )?;
                     let delay = next_retry_at.saturating_sub(unix_now()).max(1);
-                    if !sleep_queue_retry(run_id, delay)? {
+                        if !sleep_queue_retry(run_id, &item.id, delay)? {
                         pause_web_queue_item(run_id, &item, None, retries)?;
                         return Ok(QueueItemOutcome::Stopped);
                     }
@@ -819,6 +819,10 @@ fn continue_resolved_failed_queue_run(run_id: &str) -> Result<bool> {
         return Ok(false);
     };
     if run.status.is_active() || run.status.is_success() {
+        if run.status.is_active() {
+            state::wake_web_queue_retry_items(run_id)?;
+            spawn_web_queue_worker(run_id.to_string());
+        }
         return Ok(true);
     }
     if !run.status.is_failed() {

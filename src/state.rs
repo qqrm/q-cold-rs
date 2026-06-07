@@ -583,6 +583,50 @@ pub fn continue_web_queue_run(run_id: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn wake_web_queue_retry_items(run_id: &str) -> Result<usize> {
+    let connection = open_db()?;
+    let updated = connection
+        .execute(
+            "update web_queue_items
+             set next_attempt_at_unix = null, message = 'retry awakened by queue continue',
+                 updated_at_unix = ?2
+             where run_id = ?1 and status = 'waiting' and next_attempt_at_unix is not null
+               and exists (
+                   select 1 from web_queue_runs
+                   where id = ?1 and status in ('running', 'waiting', 'starting')
+               )",
+            params![run_id, unix_now()],
+        )
+        .context("failed to wake web queue retry items")?;
+    if updated > 0 {
+        connection
+            .execute(
+                "update web_queue_runs
+                 set stop_requested = 0, status = 'running', message = 'continued',
+                     updated_at_unix = ?2
+                 where id = ?1 and status in ('running', 'waiting', 'starting')",
+                params![run_id, unix_now()],
+            )
+            .context("failed to wake web queue run")?;
+    }
+    Ok(updated)
+}
+
+pub fn web_queue_item_retry_awakened(run_id: &str, item_id: &str) -> Result<bool> {
+    let connection = open_db()?;
+    connection
+        .query_row(
+            "select 1 from web_queue_items
+             where run_id = ?1 and id = ?2 and status = 'waiting'
+               and next_attempt_at_unix is null",
+            params![run_id, item_id],
+            |_| Ok(true),
+        )
+        .optional()
+        .context("failed to query web queue retry wake state")
+        .map(|value| value.unwrap_or(false))
+}
+
 pub fn web_queue_stop_requested(run_id: &str) -> Result<bool> {
     let connection = open_db()?;
     let requested = connection

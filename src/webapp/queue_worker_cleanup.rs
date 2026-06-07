@@ -268,7 +268,7 @@ fn handle_queue_launch_outcome(
                 *retries,
                 Some(next_attempt_at),
             )?;
-            if sleep_queue_retry(run_id, delay)? {
+            if sleep_queue_retry(run_id, &item.id, delay)? {
                 Ok(None)
             } else {
                 Ok(Some(QueueItemOutcome::Stopped))

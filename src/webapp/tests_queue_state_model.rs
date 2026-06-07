@@ -5,6 +5,7 @@ mod queue_state_model_tests {
     use crate::{state, test_support};
 
     use super::*;
+    use std::time::{Duration, Instant};
     use tempfile::tempdir;
 
     const TARGET_SEMANTIC_ITERATIONS_PER_ITEM: i64 = 3;
@@ -189,6 +190,48 @@ mod queue_state_model_tests {
         assert_eq!(stored.attempts, 1);
         assert_eq!(stored.recovery_attempts, 1);
         assert!(stored.next_attempt_at.is_none());
+    }
+
+    #[test]
+    fn runtime_continue_wakes_delayed_retry_item() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("wake-delayed-retry", "running", 0);
+        let mut item = queue_item_fixture(&run.id, "first", 0, "waiting", Some("qa-first"));
+        item.message = "retry 3/3 in 600s".to_string();
+        item.next_attempt_at = Some(unix_now().saturating_add(600));
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let woke = state::wake_web_queue_retry_items(&run.id).unwrap();
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+        let ready = queue_ready_items(&stored_run, &stored_items)
+            .into_iter()
+            .map(|item| item.id)
+            .collect::<Vec<_>>();
+
+        assert_eq!(woke, 1);
+        assert_eq!(stored_run.status, "running");
+        assert_eq!(stored_run.message, "continued");
+        assert_eq!(stored_items[0].status, "waiting");
+        assert_eq!(stored_items[0].agent_id.as_deref(), Some("qa-first"));
+        assert!(stored_items[0].next_attempt_at.is_none());
+        assert_eq!(ready, vec!["first"]);
+    }
+
+    #[test]
+    fn runtime_retry_sleep_exits_when_item_retry_was_awakened() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("sleep-wake", "running", 0);
+        let item = queue_item_fixture(&run.id, "first", 0, "waiting", Some("qa-first"));
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let started = Instant::now();
+        assert!(sleep_queue_retry(&run.id, &item.id, 60).unwrap());
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

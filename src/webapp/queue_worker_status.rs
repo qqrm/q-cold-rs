@@ -280,11 +280,14 @@ fn wait_for_agent_terminal_target(agent_id: &str) -> Option<String> {
     None
 }
 
-fn sleep_queue_retry(run_id: &str, delay_seconds: u64) -> Result<bool> {
+fn sleep_queue_retry(run_id: &str, item_id: &str, delay_seconds: u64) -> Result<bool> {
     let mut slept = 0;
     while slept < delay_seconds {
         if state::web_queue_stop_requested(run_id)? {
             return Ok(false);
+        }
+        if state::web_queue_item_retry_awakened(run_id, item_id)? {
+            return Ok(true);
         }
         let step = (delay_seconds - slept).min(5);
         thread::sleep(Duration::from_secs(step));
