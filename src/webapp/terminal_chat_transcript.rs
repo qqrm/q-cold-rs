@@ -23,13 +23,25 @@ fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
     let Some(record) = task_record_for_transcript(task_id)? else {
         if let Some(item) = queue_item_for_task_id(task_id)? {
             request_queue_item_reconcile_from_task_chat(&item);
-            return Ok(queue_item_transcript_response(task_id, &item));
+            return Ok(queue_item_transcript_response(
+                task_id,
+                &item,
+                queue_item_without_task_record_message(&item),
+            ));
         }
         bail!("unknown task record: {task_id}");
     };
     if live_web_queue_task_without_closed_status(&record) {
         if let Some(response) = task_agent_execution_log_response(&record)? {
             return Ok(response);
+        }
+        if let Some(item) = queue_item_for_task_id(task_id)? {
+            request_queue_item_reconcile_from_task_chat(&item);
+            return Ok(queue_item_transcript_response(
+                task_id,
+                &item,
+                queue_item_without_transcript_message(&item),
+            ));
         }
         bail!("live queue tasks are available through their executor terminal only");
     }
@@ -52,8 +64,18 @@ fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
             output: String::new(),
         });
     }
-    task_agent_execution_log_response(&record)?
-        .context("task record has no Codex session transcript or task execution log")
+    if let Some(response) = task_agent_execution_log_response(&record)? {
+        return Ok(response);
+    }
+    if let Some(item) = queue_item_for_task_id(task_id)? {
+        request_queue_item_reconcile_from_task_chat(&item);
+        return Ok(queue_item_transcript_response(
+            task_id,
+            &item,
+            queue_item_without_transcript_message(&item),
+        ));
+    }
+    bail!("task record has no Codex session transcript or task execution log")
 }
 
 fn task_record_for_transcript(task_id: &str) -> Result<Option<state::TaskRecordRow>> {
@@ -67,8 +89,8 @@ fn task_record_for_transcript(task_id: &str) -> Result<Option<state::TaskRecordR
 fn queue_item_transcript_response(
     task_id: &str,
     item: &state::QueueItemRow,
+    message: String,
 ) -> TaskTranscriptResponse {
-    let message = queue_item_without_task_record_message(item);
     TaskTranscriptResponse {
         ok: true,
         task_id: task_id.to_string(),

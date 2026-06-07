@@ -128,6 +128,10 @@ fn ensure_task_chat_target(task_id: &str) -> Result<(String, String)> {
         }
     }
     if record.status != "closed:blocked" && record.status != "paused" {
+        if let Some(item) = queue_item.as_ref() {
+            request_queue_item_reconcile_from_task_chat(item);
+            bail!("{}", queue_item_without_live_chat_message(item));
+        }
         bail!("task has no live chat target");
     }
     let session_id =
@@ -224,14 +228,29 @@ fn queue_run_accepts_task_chat_reconcile(run: &state::QueueRunRow) -> bool {
 }
 
 fn queue_item_without_task_record_message(item: &state::QueueItemRow) -> String {
+    queue_item_status_message(item, "queued task has not opened a task record yet")
+}
+
+fn queue_item_without_live_chat_message(item: &state::QueueItemRow) -> String {
+    queue_item_status_message(item, "queued task has no live task chat target yet")
+}
+
+fn queue_item_without_transcript_message(item: &state::QueueItemRow) -> String {
+    queue_item_status_message(
+        item,
+        "queued task has no transcript or live task chat target yet",
+    )
+}
+
+fn queue_item_status_message(item: &state::QueueItemRow, prefix: &str) -> String {
     let mut message = format!(
-        "queued task has not opened a task record yet: status={}",
+        "{prefix}: status={}",
         item.status
     );
     if !item.message.trim().is_empty() {
         let _ = write!(message, "; {}", item.message.trim());
     }
-    if let Some(retry_at) = item.next_attempt_at {
+    if let Some(retry_at) = item.next_attempt_at.filter(|_| !message.contains("retry_at=")) {
         let _ = write!(message, "; retry_at={retry_at}");
     }
     message
@@ -402,7 +421,19 @@ fn queue_item_for_task_id(task_id: &str) -> Result<Option<state::QueueItemRow>> 
         return Ok(None);
     };
     let items = state::load_web_queue_items()?;
-    Ok(items.into_iter().find(|item| item.slug == slug))
+    Ok(items
+        .into_iter()
+        .filter(|item| item.slug == slug)
+        .max_by_key(queue_item_task_chat_rank))
+}
+
+fn queue_item_task_chat_rank(item: &state::QueueItemRow) -> (bool, bool, u64, u64) {
+    (
+        !item.status.is_terminal(),
+        item.status.is_active(),
+        item.updated_at,
+        item.started_at,
+    )
 }
 
 fn is_codex_session_path(path: &Path) -> bool {
