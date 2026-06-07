@@ -95,8 +95,9 @@ fn run_web_queue(run_id: &str) -> Result<()> {
             return Ok(());
         }
         if state::web_queue_stop_requested(run_id)? {
+            let activity = queue_activity_snapshot(run_id);
             for item in items.iter().filter(|item| !queue_item_terminal(&item.status)) {
-                if !queue_item_worker_active(run_id, &item.id) {
+                if !queue_item_worker_active_in_snapshot(&item.id, &activity) {
                     pause_web_queue_item(run_id, item, item.agent_id.as_deref(), item.attempts)?;
                 }
             }
@@ -104,15 +105,16 @@ fn run_web_queue(run_id: &str) -> Result<()> {
             return Ok(());
         }
 
+        let activity = queue_activity_snapshot(run_id);
         let QueueAdmissionPlan { admitted, waiting } =
-            apply_queue_admission(queue_ready_items(&run, &items))?;
+            apply_queue_admission(queue_ready_items_with_activity(&run, &items, &activity))?;
         let mut spawned = 0_usize;
         for item in admitted {
             if spawn_web_queue_item_worker(run_id.to_string(), item) {
                 spawned += 1;
             }
         }
-        let active = queue_active_item_count(run_id, &items);
+        let active = queue_active_item_count_with_activity(&items, &activity);
         let runnable = items
             .iter()
             .filter(|item| !queue_item_terminal(&item.status))
@@ -214,9 +216,19 @@ fn reconcile_queue_task_statuses(
     })
 }
 
+#[cfg(test)]
 fn queue_ready_items(
     run: &state::QueueRunRow,
     items: &[state::QueueItemRow],
+) -> Vec<state::QueueItemRow> {
+    let activity = queue_activity_snapshot(&run.id);
+    queue_ready_items_with_activity(run, items, &activity)
+}
+
+fn queue_ready_items_with_activity(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+    activity: &QueueActivitySnapshot,
 ) -> Vec<state::QueueItemRow> {
     if !run.execution_mode.is_graph() {
         let Some(item) = items
@@ -226,14 +238,14 @@ fn queue_ready_items(
         else {
             return Vec::new();
         };
-        if queue_item_is_ready_to_spawn(run, item, items) {
+        if queue_item_is_ready_to_spawn(item, items, activity) {
             return vec![item.clone()];
         }
         return Vec::new();
     }
     let mut candidates = items
         .iter()
-        .filter(|item| queue_item_is_ready_to_spawn(run, item, items))
+        .filter(|item| queue_item_is_ready_to_spawn(item, items, activity))
         .cloned()
         .collect::<Vec<_>>();
     candidates.sort_by_key(|item| (item.position, item.id.clone()));
@@ -241,9 +253,9 @@ fn queue_ready_items(
 }
 
 fn queue_item_is_ready_to_spawn(
-    run: &state::QueueRunRow,
     item: &state::QueueItemRow,
     items: &[state::QueueItemRow],
+    activity: &QueueActivitySnapshot,
 ) -> bool {
     if queue_item_remote_native(item)
         && item.status.is_starting_or_running()
@@ -255,7 +267,7 @@ fn queue_item_is_ready_to_spawn(
         return false;
     }
     !queue_item_terminal(&item.status)
-        && !queue_item_worker_active(&run.id, &item.id)
+        && !queue_item_worker_active_in_snapshot(&item.id, activity)
         && (!item.status.is_starting_or_running()
             || item
                 .agent_id
@@ -277,11 +289,14 @@ fn queue_dependencies_satisfied(
     })
 }
 
-fn queue_active_item_count(run_id: &str, items: &[state::QueueItemRow]) -> usize {
+fn queue_active_item_count_with_activity(
+    items: &[state::QueueItemRow],
+    activity: &QueueActivitySnapshot,
+) -> usize {
     items
         .iter()
         .filter(|item| {
-            queue_item_worker_active(run_id, &item.id)
+            queue_item_worker_active_in_snapshot(&item.id, activity)
                 || item.status.is_active()
         })
         .count()
@@ -292,12 +307,8 @@ fn queue_item_worker_key(run_id: &str, item_id: &str) -> String {
 }
 
 fn queue_item_worker_active(run_id: &str, item_id: &str) -> bool {
-    let key = queue_item_worker_key(run_id, item_id);
-    let local_active = WEB_QUEUE_ITEM_WORKERS
-        .get()
-        .and_then(|workers| workers.lock().ok())
-        .is_some_and(|active| active.contains(&key));
-    local_active || state::web_queue_item_worker_lease_active(run_id, item_id).unwrap_or(false)
+    let activity = queue_activity_snapshot(run_id);
+    queue_item_worker_active_in_snapshot(item_id, &activity)
 }
 
 fn spawn_web_queue_item_worker(run_id: String, item: state::QueueItemRow) -> bool {

@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
@@ -9,6 +11,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 const DEFAULT_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
+static INITIALIZED_REPOSITORY_DB_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 #[derive(Clone, Copy)]
 pub enum AdapterContext {
@@ -577,6 +580,7 @@ fn git_root() -> Result<PathBuf> {
 
 fn open_db() -> Result<Connection> {
     let path = db_path()?;
+    let existed_before_open = path.is_file();
     std::fs::create_dir_all(
         path.parent()
             .context("repository db path has no parent directory")?,
@@ -586,6 +590,26 @@ fn open_db() -> Result<Connection> {
     connection
         .busy_timeout(sqlite_busy_timeout())
         .context("failed to set repository database busy timeout")?;
+    initialize_repository_database_once(&connection, &path, existed_before_open)?;
+    Ok(connection)
+}
+
+fn initialize_repository_database_once(
+    connection: &Connection,
+    path: &Path,
+    existed_before_open: bool,
+) -> Result<()> {
+    let initialized_paths =
+        INITIALIZED_REPOSITORY_DB_PATHS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut initialized_paths = initialized_paths
+        .lock()
+        .map_err(|_| anyhow::anyhow!("repository database initialization lock is poisoned"))?;
+    if !existed_before_open {
+        initialized_paths.remove(path);
+    }
+    if initialized_paths.contains(path) {
+        return Ok(());
+    }
     connection
         .execute_batch(
             "pragma journal_mode = wal;
@@ -604,7 +628,8 @@ fn open_db() -> Result<Connection> {
              );",
         )
         .context("failed to initialize repository registry")?;
-    Ok(connection)
+    initialized_paths.insert(path.to_path_buf());
+    Ok(())
 }
 
 fn db_path() -> Result<PathBuf> {

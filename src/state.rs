@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -999,11 +1000,46 @@ pub fn recover_stale_web_queue_item_worker_leases_at(run_id: &str, now: u64) -> 
     Ok(updated)
 }
 
+#[allow(
+    dead_code,
+    reason = "single-item lease inspection is useful for diagnostics"
+)]
 pub fn web_queue_item_worker_lease_active(run_id: &str, item_id: &str) -> Result<bool> {
     Ok(matches!(
         inspect_web_queue_item_worker_lease(run_id, item_id)?,
         QueueWorkerLeaseState::Active { .. }
     ))
+}
+
+pub fn active_web_queue_item_worker_lease_ids(run_id: &str) -> Result<HashSet<String>> {
+    active_web_queue_item_worker_lease_ids_at(run_id, unix_now())
+}
+
+pub fn active_web_queue_item_worker_lease_ids_at(
+    run_id: &str,
+    now: u64,
+) -> Result<HashSet<String>> {
+    let connection = open_db()?;
+    let mut statement = connection
+        .prepare(
+            "select leases.item_id
+             from web_queue_item_worker_leases leases
+             join web_queue_items items
+               on items.run_id = leases.run_id and items.id = leases.item_id
+             where leases.run_id = ?1
+               and leases.owner_id is not null
+               and leases.expires_at_unix is not null
+               and leases.expires_at_unix > ?2
+               and items.status not in ('success', 'failed', 'blocked')
+               and (items.next_attempt_at_unix is null or items.next_attempt_at_unix <= ?2)",
+        )
+        .context("failed to prepare active queue worker lease query")?;
+    let ids = statement
+        .query_map(params![run_id, now], |row| row.get::<_, String>(0))
+        .context("failed to query active queue worker leases")?
+        .collect::<Result<HashSet<_>, _>>()
+        .context("failed to decode active queue worker leases")?;
+    Ok(ids)
 }
 
 pub fn inspect_web_queue_item_worker_lease(

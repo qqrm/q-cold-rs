@@ -282,6 +282,9 @@ mod queue_state_model_tests {
                 expires_at: 130,
             }
         );
+        let active_ids = state::active_web_queue_item_worker_lease_ids_at(&run.id, 101).unwrap();
+        assert_eq!(active_ids.len(), 1);
+        assert!(active_ids.contains("first"));
     }
 
     #[test]

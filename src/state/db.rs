@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
@@ -17,6 +19,8 @@ struct SchemaMigration {
     id: &'static str,
     apply: fn(&Connection) -> Result<()>,
 }
+
+static INITIALIZED_STATE_DB_PATHS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
     SchemaMigration {
@@ -257,6 +261,7 @@ const INITIAL_STATE_SCHEMA_SQL: &str = "
 
 pub(super) fn open_db() -> Result<Connection> {
     let path = db_path()?;
+    let existed_before_open = path.is_file();
     fs::create_dir_all(
         path.parent()
             .context("state db path has no parent directory")?,
@@ -266,8 +271,31 @@ pub(super) fn open_db() -> Result<Connection> {
     connection
         .busy_timeout(sqlite_busy_timeout())
         .context("failed to set state database busy timeout")?;
-    initialize_state_database(&mut connection)?;
+    connection
+        .execute_batch("pragma foreign_keys = on;")
+        .context("failed to initialize state database connection pragmas")?;
+    initialize_state_database_once(&mut connection, &path, existed_before_open)?;
     Ok(connection)
+}
+
+fn initialize_state_database_once(
+    connection: &mut Connection,
+    path: &Path,
+    existed_before_open: bool,
+) -> Result<()> {
+    let initialized_paths = INITIALIZED_STATE_DB_PATHS.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut initialized_paths = initialized_paths
+        .lock()
+        .map_err(|_| anyhow::anyhow!("state database initialization lock is poisoned"))?;
+    if !existed_before_open {
+        initialized_paths.remove(path);
+    }
+    if initialized_paths.contains(path) {
+        return Ok(());
+    }
+    initialize_state_database(connection)?;
+    initialized_paths.insert(path.to_path_buf());
+    Ok(())
 }
 
 fn initialize_state_database(connection: &mut Connection) -> Result<()> {
