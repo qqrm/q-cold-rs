@@ -9,6 +9,9 @@ fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
         if !required_remote_native_sync && local_status.supersedes_optional_remote_sync() {
             return Ok(local_status.status);
         }
+        if !required_remote_native_sync && optional_remote_sync_unneeded(item, &local_status) {
+            return Ok(local_status.status);
+        }
         let sync_result = sync_remote_queue_task_records(item, required_remote_native_sync);
         if let Err(err) = sync_result {
             if required_remote_native_sync {
@@ -61,6 +64,13 @@ impl QueueTaskLocalStatus {
     fn closed_success(&self) -> bool {
         self.status.as_deref() == Some("closed:success")
     }
+}
+
+fn optional_remote_sync_unneeded(
+    item: &state::QueueItemRow,
+    local_status: &QueueTaskLocalStatus,
+) -> bool {
+    item.status.is_pending_or_waiting() && item.agent_id.is_none() && local_status.status.is_none()
 }
 
 fn queue_task_status_from_local_records(

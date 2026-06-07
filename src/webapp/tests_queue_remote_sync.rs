@@ -84,6 +84,27 @@ mod queue_remote_sync_tests {
     }
 
     #[test]
+    fn pending_remote_native_without_record_skips_optional_remote_sync() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_item("task-remote-native-future", &repo);
+        item.execution_host = "remote-native".into();
+        item.status = "pending".into();
+
+        assert!(optional_remote_sync_unneeded(
+            &item,
+            &QueueTaskLocalStatus::none()
+        ));
+
+        item.status = "running".into();
+        assert!(!optional_remote_sync_unneeded(
+            &item,
+            &QueueTaskLocalStatus::none()
+        ));
+    }
+
+    #[test]
     fn open_remote_native_record_without_session_relaunches_item() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
