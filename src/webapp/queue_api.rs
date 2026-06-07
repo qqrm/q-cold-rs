@@ -340,12 +340,20 @@ fn handle_queue_continue_result(
     let run_id = clean_queue_run_id(&payload.run_id);
     if let Err(err) = state::continue_web_queue_run(&run_id) {
         if continue_resolved_failed_queue_run(&run_id)? {
+            if queue_run_active(&run_id)? {
+                spawn_web_queue_worker(run_id);
+            }
             return Ok(());
         }
         return Err(err);
     }
     spawn_web_queue_worker(run_id);
     Ok(())
+}
+
+fn queue_run_active(run_id: &str) -> Result<bool> {
+    let (run, _) = state::load_web_queue_run(run_id)?;
+    Ok(run.is_some_and(|run| run.status.is_active()))
 }
 
 fn handle_queue_tab_create(

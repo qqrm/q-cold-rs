@@ -287,6 +287,7 @@ mod queue_reconcile_tests {
         let (stored_run, _) = state::load_web_queue_run(&run.id).unwrap();
 
         assert_eq!(stored_run.unwrap().status, "running");
+        assert!(test_web_queue_worker_spawned(&run.id));
     }
 
     #[test]

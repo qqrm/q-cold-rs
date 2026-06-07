@@ -13,7 +13,20 @@ fn cleanup_existing_task_agent_artifacts(
 }
 
 #[cfg(test)]
-fn spawn_web_queue_worker(_run_id: String) {}
+fn spawn_web_queue_worker(run_id: String) {
+    let spawns = TEST_WEB_QUEUE_WORKER_SPAWNS.get_or_init(|| Mutex::new(Vec::new()));
+    if let Ok(mut spawns) = spawns.lock() {
+        spawns.push(run_id);
+    }
+}
+
+#[cfg(test)]
+fn test_web_queue_worker_spawned(run_id: &str) -> bool {
+    TEST_WEB_QUEUE_WORKER_SPAWNS
+        .get()
+        .and_then(|spawns| spawns.lock().ok())
+        .is_some_and(|spawns| spawns.iter().any(|spawn| spawn == run_id))
+}
 
 #[cfg(not(test))]
 fn spawn_web_queue_worker(run_id: String) {

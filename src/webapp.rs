@@ -49,6 +49,8 @@ static DASHBOARD_STATE_CACHE: OnceLock<Mutex<Option<DashboardStateCache>>> = Onc
 static DASHBOARD_STATE_REFRESHING: OnceLock<Mutex<bool>> = OnceLock::new();
 static DASHBOARD_STATE_REFRESHER: OnceLock<()> = OnceLock::new();
 static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+#[cfg(test)]
+static TEST_WEB_QUEUE_WORKER_SPAWNS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static WEB_QUEUE_ITEM_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WEB_QUEUE_RECONCILE_WORKER: OnceLock<Mutex<bool>> = OnceLock::new();
 static WEB_QUEUE_REMOTE_SYNC_AT: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
