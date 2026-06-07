@@ -344,6 +344,7 @@ fn router() -> Router {
         .route("/assets/queue.css", get(queue_css))
         .route("/assets/app.js", get(app_js))
         .route("/api/state", get(api_state))
+        .route("/api/node/snapshot", get(api_node_snapshot))
         .route("/api/agent-limits", get(api_agent_limits))
         .route("/api/task-transcript", get(api_task_transcript))
         .route("/api/task-chat/target", post(api_task_chat_target))
@@ -397,6 +398,10 @@ async fn api_state() -> impl IntoResponse {
         [(CONTENT_TYPE, "application/json; charset=utf-8")],
         cached_dashboard_state_json(),
     ))
+}
+
+async fn api_node_snapshot() -> impl IntoResponse {
+    no_store(Json(crate::node_agent::collect_snapshot()))
 }
 
 async fn api_agent_limits(Query(query): Query<AgentLimitQuery>) -> impl IntoResponse {

@@ -5,6 +5,7 @@ pub(crate) struct DashboardState {
     pub(crate) daemon_cwd: String,
     pub(crate) repository: RepositoryContext,
     pub(crate) repositories: Vec<RepositoryContext>,
+    pub(crate) node: crate::node_agent::NodeSnapshot,
     pub(crate) status: SnapshotBlock,
     pub(crate) agents: SnapshotBlock,
     pub(crate) task_records: TaskRecordSnapshot,

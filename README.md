@@ -115,6 +115,27 @@ Queue rows with a live executor terminal open the task chat modal with the
 latest bounded terminal tail, including remote-native tmux panes captured
 through the configured remote launcher.
 
+## Node Snapshot
+
+Collect a typed monitoring snapshot for the current node:
+
+```bash
+qcold node snapshot --pretty
+```
+
+Fetch the same protocol from a running dashboard node:
+
+```bash
+qcold node snapshot --endpoint http://127.0.0.1:8787 --pretty
+```
+
+The dashboard also serves the typed payload at `/api/node/snapshot` and embeds
+it in `/api/state` as `node`. The snapshot includes managed agents, terminal
+sessions, queue visibility, proxy and port-forward state, heartbeat metadata,
+and basic CPU, load, memory, swap, disk, pid, IO, and network counters. Blocks
+carry `fresh`, `stale`, `partial`, or `unavailable` status so missing host data
+is visible to clients.
+
 ## Dashboard
 
 Start the local dashboard:

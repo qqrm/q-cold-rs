@@ -90,6 +90,7 @@ repo-local code owns it.
 - `qcold queue create [<label>]`
 - `qcold queue switch <queue-tab-id>`
 - `qcold queue delete <queue-tab-id>`
+- `qcold node snapshot [--endpoint <url>] [--pretty]`
 - `qcold agent list`
 - `qcold agent attach <agent-id|terminal-target|session|name>`
 - `qcold agent start [--name <zellij-pane-name>] --track <track> -- <command>...`

@@ -39,6 +39,26 @@ mod queue_taskflow_tests {
     }
 
     #[test]
+    fn queue_task_open_skips_cargo_test_harness_executable() {
+        let temp = tempfile::tempdir().unwrap();
+        let deps = temp.path().join("debug").join("deps");
+        fs::create_dir_all(&deps).unwrap();
+        let harness = deps.join(format!("qcold-deadbeef{}", env::consts::EXE_SUFFIX));
+        fs::write(&harness, "").unwrap();
+        make_executable(&harness);
+        let installed = temp
+            .path()
+            .join("debug")
+            .join(format!("qcold{}", env::consts::EXE_SUFFIX));
+        fs::write(&installed, "").unwrap();
+        make_executable(&installed);
+
+        let resolved = queue_qcold_executable_from(&harness, None).unwrap();
+
+        assert_eq!(resolved, installed);
+    }
+
+    #[test]
     fn queue_task_env_value_accepts_shell_quotes() {
         assert_eq!(shell_env_value("'task-run-01'"), "task-run-01");
         assert_eq!(shell_env_value("'task-'\\''run'"), "task-'run");

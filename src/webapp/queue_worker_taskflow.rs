@@ -297,8 +297,12 @@ fn queue_qcold_executable() -> Result<PathBuf> {
 }
 
 fn queue_qcold_executable_from(current: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf> {
-    if executable_file(current) {
+    let current_is_test_harness = cargo_test_harness_executable(current);
+    if !current_is_test_harness && executable_file(current) {
         return Ok(current.to_path_buf());
+    }
+    if let Some(sibling) = sibling_qcold_executable(current) {
+        return Ok(sibling);
     }
     if let Some(installed) = qcold_executable_from_path(path) {
         return Ok(installed);
@@ -308,6 +312,24 @@ fn queue_qcold_executable_from(current: &Path, path: Option<&std::ffi::OsStr>) -
          qcold was not found on PATH",
         current.display()
     );
+}
+
+fn cargo_test_harness_executable(path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    parent.file_name().is_some_and(|name| name == "deps")
+}
+
+fn sibling_qcold_executable(current: &Path) -> Option<PathBuf> {
+    if !cargo_test_harness_executable(current) {
+        return None;
+    }
+    let debug_dir = current.parent()?.parent()?;
+    ["qcold", "cargo-qcold"].into_iter().find_map(|binary| {
+        let candidate = debug_dir.join(format!("{binary}{}", env::consts::EXE_SUFFIX));
+        executable_file(&candidate).then_some(candidate)
+    })
 }
 
 fn qcold_executable_from_path(path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {

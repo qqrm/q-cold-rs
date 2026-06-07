@@ -1,5 +1,6 @@
 mod adapter;
 mod agents;
+mod node_agent;
 mod output_guard;
 mod prompt;
 mod queue;
@@ -53,6 +54,7 @@ const QCOLD_AFTER_HELP: &str = concat!(
     "  qcold status\n",
     "  qcold repo list\n",
     "  qcold queue list\n",
+    "  qcold node snapshot --pretty\n",
     "  qcold queue run --from queue.json --agent c1 --repo-root /path/to/repo\n",
     "  qcold task open my-task\n",
     "  qcold task enter\n",
@@ -89,6 +91,7 @@ fn run() -> Result<u8> {
             Ok(0)
         }
         TopLevel::Queue(args) => queue::run(args),
+        TopLevel::Node(args) => node_agent::run(args),
         TopLevel::Bundle => repo_bundle::run(),
         TopLevel::Status => status::run(),
         TopLevel::Repo(args) => repository::run(args),
@@ -147,6 +150,8 @@ enum TopLevel {
     QHelp,
     #[command(about = "Submit and inspect Q-COLD dashboard queue runs from the CLI")]
     Queue(queue::QueueArgs),
+    #[command(about = "Collect or fetch typed remote-node monitoring snapshots")]
+    Node(node_agent::NodeArgs),
     #[command(hide = true, about = "Write one source ZIP archive for the current repository into ./bundles")]
     Bundle,
     #[command(about = "Summarize primary-checkout, worktree, and drift state")]

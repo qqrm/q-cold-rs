@@ -132,6 +132,7 @@ fn dashboard_state() -> DashboardState {
             .map_or_else(|_| "unknown".to_string(), |path| path.display().to_string()),
         repository,
         repositories,
+        node: crate::node_agent::collect_snapshot(),
         status: SnapshotBlock::capture("task-flow status", || {
             status::snapshot_for(&PathBuf::from(&root))
         }),
