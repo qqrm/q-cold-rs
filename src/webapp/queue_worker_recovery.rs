@@ -1,8 +1,22 @@
 const WEB_QUEUE_SEMANTIC_ITERATIONS_PER_ITEM: i64 = 3;
 const WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS: i64 = WEB_QUEUE_SEMANTIC_ITERATIONS_PER_ITEM - 1;
 
+const QUEUE_AGENT_EXITED_BEFORE_CLOSEOUT: &str = "agent exited before task closeout";
+const QUEUE_AGENT_EXITED_BEFORE_TASK_RECORD: &str = "agent exited before opening task record";
+const QUEUE_AGENT_FAILED_QCOLD_CLOSEOUT: &str =
+    "agent reached idle prompt after failed Q-COLD closeout";
+
 fn queue_status_auto_recoverable(status: &str) -> bool {
-    status == "closed:failed"
+    status == "closed:failed" || status == "failed-closeout"
+}
+
+fn queue_failure_message_auto_recoverable(message: &str) -> bool {
+    matches!(
+        message,
+        QUEUE_AGENT_EXITED_BEFORE_CLOSEOUT
+            | QUEUE_AGENT_EXITED_BEFORE_TASK_RECORD
+            | QUEUE_AGENT_FAILED_QCOLD_CLOSEOUT
+    )
 }
 
 fn queue_task_status_terminal(status: &str) -> bool {

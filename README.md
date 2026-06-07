@@ -107,7 +107,9 @@ intentional recovery.
 Each queue item keeps a durable semantic attempt ledger. Q-COLD uses it to cap
 semantic work at three total iterations per item: the original attempt plus two
 auto-recovery attempts. Launch retries for agent startup remain separate from
-that semantic cap.
+that semantic cap. Failed task closeout, `closed:failed`, and local executor
+exit before closeout all route through that bounded recovery path with a fresh
+executor and prior-failure context.
 Queue run, append, and update dashboard API responses preserve the existing
 `ok`/`output` fields and may include `queue_graph` diagnostics with canonical
 dependency normalization, wave indexes, and display-safe validation messages.

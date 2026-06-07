@@ -317,7 +317,7 @@ fn queue_item_status_closeout_outcome(
         return fail_or_schedule_queue_item_recovery(
             run_id,
             item,
-            "agent reached idle prompt after failed Q-COLD closeout",
+            QUEUE_AGENT_FAILED_QCOLD_CLOSEOUT,
             Some(agent_id),
             attempts,
         )

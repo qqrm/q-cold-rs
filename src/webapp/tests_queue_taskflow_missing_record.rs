@@ -117,6 +117,43 @@ mod queue_taskflow_missing_record_tests {
     }
 
     #[test]
+    fn local_missing_task_record_after_agent_exit_schedules_auto_recovery() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut run = queue_run_fixture("local-missing-record", &repo);
+        run.execution_host = "local".into();
+        let mut item = queue_taskflow_item("task-local-missing-record", &repo, None);
+        item.run_id = run.id.clone();
+        item.status = "running".into();
+        let agent_id = queue_agent_id(&item);
+        item.agent_id = Some(agent_id.clone());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let outcome =
+            missing_queue_task_record_outcome(&run.id, &item, &agent_id, item.attempts).unwrap();
+
+        assert!(matches!(outcome, Some(QueueItemOutcome::RecoveryScheduled)));
+        let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+        let recovered = &items[0];
+        assert_eq!(recovered.status, "pending");
+        assert_eq!(recovered.agent_id.as_deref(), None);
+        assert_eq!(recovered.recovery_attempts, 1);
+        assert!(recovered.message.contains("auto-recovery scheduled"));
+        assert!(recovered.message.contains("agent exited before opening task record"));
+        let attempts = state::load_web_queue_item_attempts(&run.id, &recovered.id).unwrap();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].status, "failed");
+        assert_eq!(
+            attempts[0].failure_message.as_deref(),
+            Some("agent exited before opening task record")
+        );
+        assert_eq!(attempts[1].status, "pending");
+    }
+
+    #[test]
     #[cfg(unix)]
     fn remote_native_missing_task_record_with_live_session_keeps_waiting() {
         let _guard = test_support::env_guard();

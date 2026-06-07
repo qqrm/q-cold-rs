@@ -155,6 +155,13 @@ fn reconcile_queue_task_statuses(
             changed = true;
             continue;
         }
+        if item.status.is_failed_or_blocked()
+            && queue_failure_message_auto_recoverable(&item.message)
+            && schedule_queue_item_auto_recovery(&run.id, item, &item.message)?
+        {
+            changed = true;
+            continue;
+        }
         if let Some(agent_id) = item.agent_id.as_deref() {
             if let Some(message) = queue_agent_failure_message(item, agent_id) {
                 if schedule_queue_item_auto_recovery(&run.id, item, message)? {
@@ -411,22 +418,20 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             }
             if agent_running(agent_id) {
                 if agent_terminal_closeout_failed(agent_id) {
-                    let message = "agent reached idle prompt after failed Q-COLD closeout";
                     return fail_or_schedule_queue_item_recovery(
                         run_id,
                         &item,
-                        message,
+                        QUEUE_AGENT_FAILED_QCOLD_CLOSEOUT,
                         Some(agent_id),
                         item.attempts,
                     );
                 }
                 return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts);
             }
-            let message = "agent exited before task closeout";
             return fail_or_schedule_queue_item_recovery(
                 run_id,
                 &item,
-                message,
+                QUEUE_AGENT_EXITED_BEFORE_CLOSEOUT,
                 Some(agent_id),
                 item.attempts,
             );
@@ -735,17 +740,8 @@ fn missing_queue_task_record_outcome(
         let _ = submit_agent_terminal_pending_paste(agent_id);
         return Ok(None);
     }
-    let message = "agent exited before opening task record".to_string();
-    state::update_web_queue_item(
-        run_id,
-        &item.id,
-        "failed",
-        &message,
-        Some(agent_id),
-        attempts,
-        None,
-    )?;
-    Ok(Some(QueueItemOutcome::retryable_failure(message)))
+    let message = QUEUE_AGENT_EXITED_BEFORE_TASK_RECORD;
+    fail_or_schedule_queue_item_recovery(run_id, item, message, Some(agent_id), attempts).map(Some)
 }
 
 fn update_remote_native_missing_record_wait(

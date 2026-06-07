@@ -59,6 +59,11 @@ fn failed_queue_run_may_be_resolved(
         if queue_item_recovery_waiting_on_current_attempt(item) {
             return Ok(true);
         }
+        if queue_failure_message_auto_recoverable(&item.message)
+            && item.recovery_attempts < WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS
+        {
+            return Ok(true);
+        }
         if remote_native_retry_session_running(item) {
             return Ok(true);
         }
@@ -83,10 +88,10 @@ fn queue_agent_failure_message(item: &state::QueueItemRow, agent_id: &str) -> Op
         return None;
     }
     if !agent_running(agent_id) {
-        return Some("agent exited before task closeout");
+        return Some(QUEUE_AGENT_EXITED_BEFORE_CLOSEOUT);
     }
     if agent_terminal_closeout_failed(agent_id) {
-        return Some("agent reached idle prompt after failed Q-COLD closeout");
+        return Some(QUEUE_AGENT_FAILED_QCOLD_CLOSEOUT);
     }
     None
 }

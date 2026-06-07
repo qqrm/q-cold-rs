@@ -962,7 +962,7 @@ mod tests {
         let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
         let stored_run = stored_run.unwrap();
 
-        assert_eq!(stored_run.status, "failed");
+        assert_eq!(stored_run.status, "running");
         assert_eq!(
             stored_items
                 .iter()
@@ -974,7 +974,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 ("first", "success", 0),
-                ("second", "failed", 0),
+                ("second", "pending", 1),
                 ("third", "pending", 1)
             ]
         );
