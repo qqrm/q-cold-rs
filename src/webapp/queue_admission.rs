@@ -4,6 +4,8 @@ const QUEUE_ADMISSION_DEFAULT_SOFT_TASKS: usize = 8;
 const QUEUE_ADMISSION_DEFAULT_HARD_TASKS: usize = 12;
 const QUEUE_ADMISSION_DEFAULT_HEAVY_TASKS: usize = 2;
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
+const MIN_MEMORY_SAFETY_FLOOR_GIB: u64 = 2;
+const MAX_MEMORY_SAFETY_FLOOR_GIB: u64 = 8;
 
 #[derive(Clone, Copy, Debug)]
 struct QueueAdmissionPolicy {
@@ -328,9 +330,12 @@ fn recent_resource_pressure(context: &QueueAdmissionContext) -> bool {
 }
 
 fn memory_safety_floor(host: QueueAdmissionHostResources) -> u64 {
-    host.memory_total_bytes
-        .map_or(8 * BYTES_PER_GIB, |total| total / 8)
-        .max(8 * BYTES_PER_GIB)
+    host.memory_total_bytes.map_or(MAX_MEMORY_SAFETY_FLOOR_GIB * BYTES_PER_GIB, |total| {
+        (total / 8).clamp(
+            MIN_MEMORY_SAFETY_FLOOR_GIB * BYTES_PER_GIB,
+            MAX_MEMORY_SAFETY_FLOOR_GIB * BYTES_PER_GIB,
+        )
+    })
 }
 
 #[allow(
@@ -473,7 +478,7 @@ mod queue_admission_tests {
     fn admission_memory_limit_includes_live_reservations() {
         let reservations = QueueResourceReservation {
             tasks: 1,
-            memory_bytes: 112 * BYTES_PER_GIB,
+            memory_bytes: 120 * BYTES_PER_GIB,
             ..QueueResourceReservation::default()
         };
         let context = admission_context(reservations, healthy_host(), default_history());
@@ -489,6 +494,57 @@ mod queue_admission_tests {
         );
     }
 
+    #[test]
+    fn admission_mid_task_can_run_on_16g_host_with_real_headroom() {
+        let context = admission_context(
+            QueueResourceReservation::default(),
+            host_with_memory(16, 11),
+            default_history(),
+        );
+        let plan = select_queue_admission(mid_items(1), context);
+
+        assert_eq!(plan.admitted.len(), 1);
+        assert!(plan.waiting.is_empty());
+    }
+
+    #[test]
+    fn admission_mid_fanout_on_16g_host_keeps_next_item_waiting() {
+        let context = admission_context(
+            QueueResourceReservation::default(),
+            host_with_memory(16, 11),
+            default_history(),
+        );
+        let plan = select_queue_admission(mid_items(2), context);
+
+        assert_eq!(plan.admitted.len(), 1);
+        assert_eq!(plan.waiting.len(), 1);
+        assert!(
+            plan.waiting[0]
+                .1
+                .reason
+                .contains("available memory is below requested reservation")
+        );
+    }
+
+    #[test]
+    fn admission_large_host_keeps_8g_safety_floor() {
+        assert_eq!(
+            memory_safety_floor(host_with_memory(128, 96)),
+            8 * BYTES_PER_GIB
+        );
+    }
+
+    #[test]
+    fn admission_unknown_memory_total_uses_8g_safety_floor() {
+        assert_eq!(
+            memory_safety_floor(QueueAdmissionHostResources {
+                memory_total_bytes: None,
+                ..host_with_memory(16, 11)
+            }),
+            8 * BYTES_PER_GIB
+        );
+    }
+
     fn admission_context(
         reservations: QueueResourceReservation,
         host: QueueAdmissionHostResources,
@@ -500,6 +556,15 @@ mod queue_admission_tests {
             reservations,
             host,
             history,
+        }
+    }
+
+    fn host_with_memory(total_gib: u64, available_gib: u64) -> QueueAdmissionHostResources {
+        QueueAdmissionHostResources {
+            logical_cpus: 8,
+            load_one: Some(2.0),
+            memory_total_bytes: Some(total_gib * BYTES_PER_GIB),
+            memory_available_bytes: Some(available_gib * BYTES_PER_GIB),
         }
     }
 
