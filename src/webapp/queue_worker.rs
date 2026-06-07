@@ -461,7 +461,6 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             }
         }
     }
-
     let mut retries = item.attempts.max(0);
     loop {
         if state::web_queue_stop_requested(run_id)? {
