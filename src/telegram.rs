@@ -19,7 +19,10 @@ pub struct TelegramArgs {
 
 #[derive(Subcommand)]
 enum TelegramCommand {
-    #[command(hide = true, about = "Poll and acknowledge Telegram updates without routing inbound commands")]
+    #[command(
+        hide = true,
+        about = "Poll and acknowledge Telegram updates without routing inbound commands"
+    )]
     Poll(PollArgs),
     #[command(about = "Serve the local web dashboard over HTTP")]
     Serve(webapp::ServeArgs),
@@ -200,12 +203,9 @@ impl Router {
         }
         if let Some(request) = command_payload(text, "task") {
             if !Self::is_task_creation_context(message)? {
-                return Ok(Some(TelegramAction::Send(
-                    message.reply(
-                        "/task can only be created from the operator chat general context."
-                            .to_string(),
-                    ),
-                )));
+                return Ok(Some(TelegramAction::Send(message.reply(
+                    "/task can only be created from the operator chat general context.".to_string(),
+                ))));
             }
             let task_request =
                 TaskRequest::new(message, request, self.config.task_id_override.as_deref())?;
@@ -648,7 +648,11 @@ struct TaskRequest {
 }
 
 impl TaskRequest {
-    fn new(message: &TelegramMessage, description: &str, id_override: Option<&str>) -> Result<Self> {
+    fn new(
+        message: &TelegramMessage,
+        description: &str,
+        id_override: Option<&str>,
+    ) -> Result<Self> {
         let description = description.trim();
         if description.is_empty() {
             bail!("usage: /task <description>");

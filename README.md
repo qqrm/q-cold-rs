@@ -251,3 +251,6 @@ cargo test --locked
 language policy, delegation, validation, and repository ownership. Keep README
 operator-facing and concise; put workflow rules in `AGENTS.md` and executable
 behavior claims in tests.
+
+The current Rust include-boundary inventory is tracked in
+`docs/include-boundaries.md`.

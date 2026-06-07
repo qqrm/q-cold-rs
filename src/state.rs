@@ -1,18 +1,35 @@
-use std::env;
-use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
 
+mod agent_records;
+mod db;
+mod queue_tabs;
 mod queue_types;
 
-pub use queue_types::{
+pub(crate) use agent_records::{delete_agent_record, insert_agent, load_agents};
+pub(crate) use db::state_dir;
+use db::{
+    active_web_queue_run_id, advance_task_sequence_counter, assign_web_queue_run_to_active_tab,
+    backfill_task_events, backfill_task_topics, ensure_default_web_queue_tab, open_db,
+    queue_depends_on_json, queue_item_from_row, queue_run_from_row, task_record_from_row,
+    task_record_sequence_for_upsert, task_topic_from_row, unix_now,
+};
+pub(crate) use queue_tabs::{
+    activate_web_queue_tab, create_and_activate_web_queue_tab, delete_web_queue_item_if_exists,
+    delete_web_queue_run_items, delete_web_queue_tab, load_web_queue_tab, load_web_queue_tabs,
+};
+use queue_tabs::{
+    assign_web_queue_run_to_tab_in_connection, delete_unreferenced_web_queue_run,
+    delete_unreferenced_web_queue_runs, web_queue_tab_run_id,
+};
+#[cfg(test)]
+pub(crate) use queue_tabs::{create_web_queue_tab, delete_web_queue_item};
+pub(crate) use queue_types::{
     QueueExecutionHost, QueueExecutionMode, QueueItemStatus, QueueRunStatus,
 };
 
@@ -92,7 +109,10 @@ pub struct QueueTabRow {
     pub run_id: Option<String>,
     pub is_default: bool,
     pub active: bool,
-    #[allow(dead_code, reason = "retained as storage metadata; current web DTOs do not expose it")]
+    #[allow(
+        dead_code,
+        reason = "retained as storage metadata; current web DTOs do not expose it"
+    )]
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -141,8 +161,6 @@ pub struct QueueItemAttemptRow {
     pub updated_at: u64,
 }
 
-include!("state/agent_records.rs");
-
 pub fn load_terminal_metadata() -> Result<Vec<TerminalMetadataRow>> {
     let connection = open_db()?;
     let mut statement = connection
@@ -166,8 +184,6 @@ pub fn load_terminal_metadata() -> Result<Vec<TerminalMetadataRow>> {
         .context("failed to decode terminal metadata rows")?;
     Ok(rows)
 }
-
-include!("state/queue_tabs.rs");
 
 pub fn replace_web_queue(run: &QueueRunRow, items: &[QueueItemRow]) -> Result<()> {
     replace_web_queue_with_assignment(run, items, None)
@@ -195,8 +211,11 @@ fn replace_web_queue_with_assignment(
         Some(tab_id) => web_queue_tab_run_id(&tx, tab_id)?,
         None => active_web_queue_run_id(&tx)?,
     };
-    tx.execute("delete from web_queue_items where run_id = ?1", [run.id.as_str()])
-        .context("failed to clear web queue items")?;
+    tx.execute(
+        "delete from web_queue_items where run_id = ?1",
+        [run.id.as_str()],
+    )
+    .context("failed to clear web queue items")?;
     tx.execute(
         "insert into web_queue_runs
              (id, status, execution_mode, execution_host, selected_agent_command, remote_launcher,
@@ -395,10 +414,15 @@ pub fn update_web_queue_item_plans(run_id: &str, items: &[QueueItemRow]) -> Resu
         "update web_queue_runs
          set message = ?2, updated_at_unix = ?3
          where id = ?1",
-        params![run_id, format!("updated {} queue item(s)", items.len()), now],
+        params![
+            run_id,
+            format!("updated {} queue item(s)", items.len()),
+            now
+        ],
     )
     .context("failed to update web queue run after item plan update")?;
-    tx.commit().context("failed to commit web queue update transaction")?;
+    tx.commit()
+        .context("failed to commit web queue update transaction")?;
     Ok(())
 }
 
@@ -782,7 +806,11 @@ pub fn set_web_queue_item_agent_command(
     Ok(())
 }
 
-pub fn set_web_queue_item_remote_proxy(run_id: &str, item_id: &str, remote_proxy: &str) -> Result<()> {
+pub fn set_web_queue_item_remote_proxy(
+    run_id: &str,
+    item_id: &str,
+    remote_proxy: &str,
+) -> Result<()> {
     let connection = open_db()?;
     connection
         .execute(
@@ -807,7 +835,13 @@ pub fn set_web_queue_item_attempt_terminal(
             "update web_queue_item_attempts
              set terminal_target = ?4, updated_at_unix = ?5
              where run_id = ?1 and item_id = ?2 and semantic_iteration = ?3",
-            params![run_id, item_id, semantic_iteration, terminal_target, unix_now()],
+            params![
+                run_id,
+                item_id,
+                semantic_iteration,
+                terminal_target,
+                unix_now()
+            ],
         )
         .context("failed to update web queue item attempt terminal")?;
     Ok(())
@@ -840,8 +874,8 @@ pub fn web_queue_item_semantic_iterations_started(item: &QueueItemRow) -> Result
     let connection = open_db()?;
     sync_web_queue_item_attempt_projection(&connection, item)?;
     drop(connection);
-    let ledger_count =
-        i64::try_from(load_web_queue_item_attempts(&item.run_id, &item.id)?.len()).unwrap_or(i64::MAX);
+    let ledger_count = i64::try_from(load_web_queue_item_attempts(&item.run_id, &item.id)?.len())
+        .unwrap_or(i64::MAX);
     Ok(ledger_count.max(queue_item_semantic_iteration(item)))
 }
 
@@ -948,8 +982,13 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
         (record.repo_root.as_deref(), existing_repo_root.as_deref()),
         (Some(new), Some(old)) if new != old
     );
-    let sequence =
-        task_record_sequence_for_upsert(&tx, record, existing.as_ref(), repo_root.as_deref(), repo_root_changed)?;
+    let sequence = task_record_sequence_for_upsert(
+        &tx,
+        record,
+        existing.as_ref(),
+        repo_root.as_deref(),
+        repo_root_changed,
+    )?;
     advance_task_sequence_counter_for_record(&tx, repo_root.as_deref(), sequence)?;
     let created_at = existing
         .as_ref()
@@ -968,7 +1007,7 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
         .or_else(|| existing.as_ref().and_then(|row| row.metadata_json.clone()));
 
     tx.execute(
-            "insert into tasks
+        "insert into tasks
                  (id, source, title, description, status, created_at_unix, updated_at_unix,
                   repo_root, cwd, agent_id, metadata_json, sequence)
              values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
@@ -983,22 +1022,22 @@ pub fn upsert_task_record(record: &TaskRecordRow) -> Result<TaskRecordRow> {
                  agent_id = coalesce(excluded.agent_id, tasks.agent_id),
                  metadata_json = coalesce(excluded.metadata_json, tasks.metadata_json),
                  sequence = excluded.sequence",
-            params![
-                record.id,
-                record.source,
-                record.title,
-                record.description,
-                record.status,
-                created_at,
-                record.updated_at,
-                repo_root,
-                cwd,
-                agent_id,
-                metadata_json,
-                sequence,
-            ],
-        )
-        .context("failed to upsert task record")?;
+        params![
+            record.id,
+            record.source,
+            record.title,
+            record.description,
+            record.status,
+            created_at,
+            record.updated_at,
+            repo_root,
+            cwd,
+            agent_id,
+            metadata_json,
+            sequence,
+        ],
+    )
+    .context("failed to upsert task record")?;
     let stored = tx
         .query_row(
             "select id, source, sequence, title, description, status, created_at_unix, updated_at_unix,
@@ -1317,7 +1356,8 @@ fn sync_web_queue_item_attempt_projection(
 ) -> Result<()> {
     let semantic_iteration = queue_item_semantic_iteration(item);
     let task_record_id = queue_item_task_record_id(item);
-    let (stdout_log_path, stderr_log_path) = queue_item_agent_logs(connection, item.agent_id.as_deref())?;
+    let (stdout_log_path, stderr_log_path) =
+        queue_item_agent_logs(connection, item.agent_id.as_deref())?;
     let bundle_path = task_record_bundle_path(connection, &task_record_id)?;
     let status = item.status.as_str();
     let terminal = item.status.is_terminal();
@@ -1443,7 +1483,10 @@ fn queue_item_agent_logs(
         .map(|value| value.unwrap_or((None, None)))
 }
 
-fn task_record_bundle_path(connection: &Connection, task_record_id: &str) -> Result<Option<String>> {
+fn task_record_bundle_path(
+    connection: &Connection,
+    task_record_id: &str,
+) -> Result<Option<String>> {
     let metadata_json = connection
         .query_row(
             "select metadata_json from tasks where id = ?1",
@@ -1468,6 +1511,3 @@ fn task_record_bundle_path(connection: &Connection, task_record_id: &str) -> Res
         .filter(|value| !value.trim().is_empty());
     Ok(bundle_path)
 }
-
-
-include!("state/db.rs");

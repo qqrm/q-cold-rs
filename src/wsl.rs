@@ -45,13 +45,19 @@ struct AutostartInstallArgs {
     listen: String,
     #[arg(long, default_value = DEFAULT_SERVICE_NAME)]
     service_name: String,
-    #[arg(long, help = "Repository root used as the dashboard daemon working directory")]
+    #[arg(
+        long,
+        help = "Repository root used as the dashboard daemon working directory"
+    )]
     repo_root: Option<PathBuf>,
     #[arg(long, help = "Q-COLD executable path written into the systemd unit")]
     qcold_bin: Option<PathBuf>,
     #[arg(long, help = "Enable the systemd unit without starting it immediately")]
     no_start: bool,
-    #[arg(long, help = "Write the user service even when this process is not running inside WSL")]
+    #[arg(
+        long,
+        help = "Write the user service even when this process is not running inside WSL"
+    )]
     force: bool,
 }
 
@@ -86,7 +92,9 @@ fn autostart(args: AutostartArgs) -> Result<u8> {
 
 fn install_autostart(args: AutostartInstallArgs) -> Result<u8> {
     if !args.force && !is_wsl() {
-        bail!("WSL autostart install must run inside WSL; pass --force to write the user unit anyway");
+        bail!(
+            "WSL autostart install must run inside WSL; pass --force to write the user unit anyway"
+        );
     }
     let systemd_state = require_user_systemd()?;
     let unit_name = normalize_service_name(&args.service_name)?;
@@ -325,7 +333,10 @@ fn render_unit(spec: &UnitSpec) -> String {
         ),
     ];
     if let Some(path) = spec.path.as_deref() {
-        lines.push(format!("Environment={}", systemd_quote(&format!("PATH={path}"))));
+        lines.push(format!(
+            "Environment={}",
+            systemd_quote(&format!("PATH={path}"))
+        ));
     }
     if let Some(state_dir) = spec.state_dir.as_deref() {
         lines.push(format!(
@@ -445,7 +456,9 @@ mod tests {
     #[test]
     fn wsl_detection_accepts_microsoft_kernel_markers() {
         assert!(looks_like_wsl("6.6.114.1-microsoft-standard-WSL2"));
-        assert!(looks_like_wsl("Linux version 5.15.90.1-microsoft-standard-WSL2"));
+        assert!(looks_like_wsl(
+            "Linux version 5.15.90.1-microsoft-standard-WSL2"
+        ));
         assert!(!looks_like_wsl("6.8.0-31-generic"));
     }
 
@@ -465,12 +478,10 @@ mod tests {
         assert!(unit.contains("WorkingDirectory=/home/me/repos/qcold"));
         assert!(unit.contains("Environment=\"PATH=/home/me/.cargo/bin:/usr/bin\""));
         assert!(unit.contains("Environment=\"QCOLD_STATE_DIR=/home/me/.local/state/qcold\""));
-        assert!(
-            unit.contains(
-                "ExecStart=\"/home/me/.cargo/bin/qcold\" \"telegram\" \"serve\" \
+        assert!(unit.contains(
+            "ExecStart=\"/home/me/.cargo/bin/qcold\" \"telegram\" \"serve\" \
                  \"--listen\" \"127.0.0.1:8787\""
-            )
-        );
+        ));
         assert!(!unit.contains("--daemon"));
         assert!(unit.contains("Restart=on-failure"));
         assert!(unit.contains("WantedBy=default.target"));
@@ -478,7 +489,10 @@ mod tests {
 
     #[test]
     fn systemd_quote_escapes_unit_special_characters() {
-        assert_eq!(systemd_quote(r#"/tmp/a "b" 100%\x"#), r#""/tmp/a \"b\" 100%%\\x""#);
+        assert_eq!(
+            systemd_quote(r#"/tmp/a "b" 100%\x"#),
+            r#""/tmp/a \"b\" 100%%\\x""#
+        );
     }
 
     #[test]

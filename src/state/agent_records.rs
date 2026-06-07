@@ -1,6 +1,13 @@
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use rusqlite::params;
+
+use super::{db, AgentRow};
+
 pub fn load_agents(legacy_path: &Path) -> Result<Vec<AgentRow>> {
-    let connection = open_db()?;
-    backfill_agents(&connection, legacy_path)?;
+    let connection = db::open_db()?;
+    db::backfill_agents(&connection, legacy_path)?;
     let mut statement = connection
         .prepare(
             "select id, track, pid, started_at_unix, command_json, cwd, stdout_log_path, stderr_log_path
@@ -36,7 +43,7 @@ pub fn load_agents(legacy_path: &Path) -> Result<Vec<AgentRow>> {
 }
 
 pub fn insert_agent(agent: &AgentRow) -> Result<()> {
-    let connection = open_db()?;
+    let connection = db::open_db()?;
     connection
         .execute(
             "insert into agents
@@ -58,7 +65,7 @@ pub fn insert_agent(agent: &AgentRow) -> Result<()> {
 }
 
 pub fn delete_agent_record(id: &str) -> Result<bool> {
-    let connection = open_db()?;
+    let connection = db::open_db()?;
     let deleted = connection
         .execute("delete from agents where id = ?1", [id])
         .context("failed to delete agent record")?;

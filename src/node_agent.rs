@@ -20,7 +20,10 @@ enum NodeCommand {
 
 #[derive(Args)]
 struct NodeSnapshotArgs {
-    #[arg(long, help = "Fetch a snapshot from a dashboard base URL or /api/node/snapshot URL")]
+    #[arg(
+        long,
+        help = "Fetch a snapshot from a dashboard base URL or /api/node/snapshot URL"
+    )]
     endpoint: Option<String>,
     #[arg(long, help = "Pretty-print JSON output")]
     pretty: bool,
@@ -62,7 +65,8 @@ fn fetch_remote_snapshot(endpoint: &str) -> Result<NodeSnapshot> {
     let body = response
         .into_string()
         .with_context(|| format!("failed to read node snapshot response from {url}"))?;
-    serde_json::from_str(&body).with_context(|| format!("failed to decode node snapshot from {url}"))
+    serde_json::from_str(&body)
+        .with_context(|| format!("failed to decode node snapshot from {url}"))
 }
 
 fn node_snapshot_url(endpoint: &str) -> String {

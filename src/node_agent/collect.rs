@@ -51,7 +51,8 @@ pub(super) fn collect_snapshot() -> NodeSnapshot {
 }
 
 fn collect_heartbeat(sampled_at_unix: u64) -> NodeHeartbeat {
-    let hostname = read_trimmed("/proc/sys/kernel/hostname").or_else(|| read_trimmed("/etc/hostname"));
+    let hostname =
+        read_trimmed("/proc/sys/kernel/hostname").or_else(|| read_trimmed("/etc/hostname"));
     let boot_id = read_trimmed("/proc/sys/kernel/random/boot_id");
     let monotonic_sample_ms = read_trimmed("/proc/uptime").and_then(|raw| parse_uptime_ms(&raw));
     let status = if hostname.is_some() && boot_id.is_some() && monotonic_sample_ms.is_some() {
@@ -73,10 +74,18 @@ fn collect_heartbeat(sampled_at_unix: u64) -> NodeHeartbeat {
 fn heartbeat_issues(heartbeat: &NodeHeartbeat) -> Vec<NodeSnapshotIssue> {
     let mut issues = Vec::new();
     if heartbeat.hostname.is_none() {
-        issues.push(issue("heartbeat", NodeDataStatus::Partial, "hostname unavailable"));
+        issues.push(issue(
+            "heartbeat",
+            NodeDataStatus::Partial,
+            "hostname unavailable",
+        ));
     }
     if heartbeat.boot_id.is_none() {
-        issues.push(issue("heartbeat", NodeDataStatus::Partial, "boot id unavailable"));
+        issues.push(issue(
+            "heartbeat",
+            NodeDataStatus::Partial,
+            "boot id unavailable",
+        ));
     }
     if heartbeat.monotonic_sample_ms.is_none() {
         issues.push(issue(
@@ -112,7 +121,10 @@ fn collect_managed_snapshot() -> NodeManagedSnapshot {
             Vec::new()
         }
     };
-    let stale_agents = agents.iter().filter(|agent: &&NodeManagedAgent| agent.stale).count();
+    let stale_agents = agents
+        .iter()
+        .filter(|agent: &&NodeManagedAgent| agent.stale)
+        .count();
     if stale_agents > 0 {
         issues.push(issue(
             "managed",
@@ -120,7 +132,10 @@ fn collect_managed_snapshot() -> NodeManagedSnapshot {
             format!("stale managed agent rows present: {stale_agents}"),
         ));
     }
-    let status = if issues.iter().any(|issue| issue.status == NodeDataStatus::Partial) {
+    let status = if issues
+        .iter()
+        .any(|issue| issue.status == NodeDataStatus::Partial)
+    {
         NodeDataStatus::Partial
     } else if stale_agents > 0 {
         NodeDataStatus::Stale
@@ -232,8 +247,8 @@ fn queue_tabs(now: u64, issues: &mut Vec<NodeSnapshotIssue>) -> Vec<NodeQueueTab
                 if run_entry.is_none() && !tab.active {
                     return None;
                 }
-                let status =
-                    run_entry.map_or_else(|| "draft".to_string(), |(run, _)| run.status.to_string());
+                let status = run_entry
+                    .map_or_else(|| "draft".to_string(), |(run, _)| run.status.to_string());
                 let running = run_entry.is_some_and(|(run, _)| run.status.is_active());
                 let stale = run_entry.is_some_and(|(run, _)| queue_run_stale(run, now));
                 Some(NodeQueueTab {
@@ -477,7 +492,10 @@ fn disk_usage(path: &str) -> std::result::Result<NodeDiskUsage, String> {
     // SAFETY: path_c is a valid nul-terminated string and stats points to writable memory.
     let result = unsafe { libc::statvfs(path_c.as_ptr(), stats.as_mut_ptr()) };
     if result != 0 {
-        return Err(format!("statvfs({path}) failed: {}", std::io::Error::last_os_error()));
+        return Err(format!(
+            "statvfs({path}) failed: {}",
+            std::io::Error::last_os_error()
+        ));
     }
     // SAFETY: statvfs returned success and initialized the stats structure.
     let stats = unsafe { stats.assume_init() };
@@ -513,8 +531,12 @@ fn collect_io() -> std::result::Result<Option<NodeIoSnapshot>, String> {
             snapshot.read_ios = snapshot.read_ios.saturating_add(device.read_ios);
             snapshot.write_ios = snapshot.write_ios.saturating_add(device.write_ios);
             snapshot.sectors_read = snapshot.sectors_read.saturating_add(device.sectors_read);
-            snapshot.sectors_written = snapshot.sectors_written.saturating_add(device.sectors_written);
-            snapshot.io_in_progress = snapshot.io_in_progress.saturating_add(device.io_in_progress);
+            snapshot.sectors_written = snapshot
+                .sectors_written
+                .saturating_add(device.sectors_written);
+            snapshot.io_in_progress = snapshot
+                .io_in_progress
+                .saturating_add(device.io_in_progress);
         }
     }
     Ok(Some(snapshot))
@@ -549,7 +571,11 @@ fn ignored_disk_device(name: &str) -> bool {
 
 fn collect_network() -> std::result::Result<Option<NodeNetworkSnapshot>, String> {
     let raw = read_required("/proc/net/dev")?;
-    let interfaces = raw.lines().skip(2).filter_map(parse_netdev_line).collect::<Vec<_>>();
+    let interfaces = raw
+        .lines()
+        .skip(2)
+        .filter_map(parse_netdev_line)
+        .collect::<Vec<_>>();
     let mut snapshot = NodeNetworkSnapshot {
         interface_count: interfaces.len(),
         rx_bytes: 0,
@@ -594,7 +620,10 @@ fn parse_netdev_line(line: &str) -> Option<NodeNetworkInterface> {
 }
 
 fn parse_field(fields: &[&str], index: usize) -> u64 {
-    fields.get(index).and_then(|value| value.parse().ok()).unwrap_or(0)
+    fields
+        .get(index)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
 }
 
 fn collect_proxy_snapshot(queue: &NodeQueueVisibility) -> NodeProxySnapshot {
@@ -646,7 +675,10 @@ fn proxy_env() -> Vec<NodeProxyEnv> {
     .collect()
 }
 
-fn queue_port_forwards(queue: &NodeQueueVisibility, listeners: &BTreeSet<u16>) -> Vec<NodePortForward> {
+fn queue_port_forwards(
+    queue: &NodeQueueVisibility,
+    listeners: &BTreeSet<u16>,
+) -> Vec<NodePortForward> {
     let mut records = BTreeMap::new();
     if let Some(run) = &queue.active_run {
         push_proxy(
@@ -815,7 +847,9 @@ fn parse_uptime_ms(raw: &str) -> Option<u64> {
 }
 
 fn parse_f64(value: &str, label: &str) -> std::result::Result<f64, String> {
-    value.parse().map_err(|err| format!("invalid {label}: {err}"))
+    value
+        .parse()
+        .map_err(|err| format!("invalid {label}: {err}"))
 }
 
 fn kb_to_bytes(value: u64) -> u64 {
@@ -855,7 +889,10 @@ mod tests {
             redact_proxy_value("http://user:secret@127.0.0.1:3128"),
             "http://[redacted]@127.0.0.1:3128"
         );
-        assert_eq!(redact_proxy_value("http://127.0.0.1:3128"), "http://127.0.0.1:3128");
+        assert_eq!(
+            redact_proxy_value("http://127.0.0.1:3128"),
+            "http://127.0.0.1:3128"
+        );
     }
 
     #[test]

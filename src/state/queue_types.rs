@@ -50,7 +50,10 @@ impl QueueRunStatus {
     }
 
     pub fn is_appendable(&self) -> bool {
-        matches!(self, Self::Running | Self::Waiting | Self::Starting | Self::Stopped)
+        matches!(
+            self,
+            Self::Running | Self::Waiting | Self::Starting | Self::Stopped
+        )
     }
 
     pub fn is_editable(&self) -> bool {
@@ -184,7 +187,10 @@ impl QueueItemStatus {
     }
 
     pub fn is_active(&self) -> bool {
-        matches!(self, Self::Starting | Self::Running | Self::Waiting | Self::Stopping)
+        matches!(
+            self,
+            Self::Starting | Self::Running | Self::Waiting | Self::Stopping
+        )
     }
 
     pub fn is_starting_or_running(&self) -> bool {
@@ -478,9 +484,7 @@ impl PartialEq<QueueExecutionHost> for &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        QueueExecutionHost, QueueExecutionMode, QueueItemStatus, QueueRunStatus,
-    };
+    use super::{QueueExecutionHost, QueueExecutionMode, QueueItemStatus, QueueRunStatus};
 
     #[test]
     fn queue_statuses_serialize_as_existing_strings() {

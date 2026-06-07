@@ -12,12 +12,12 @@ use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
 use serde::Serialize;
 
-use crate::output_guard::{prepare_output_guard_launch, OutputGuardLaunch};
 #[cfg(test)]
 use crate::output_guard::{
     output_guard_commands, parse_output_guard_commands, prepare_output_guard_launch_with_paths,
     write_output_guard_wrapper, GuardedCommand,
 };
+use crate::output_guard::{prepare_output_guard_launch, OutputGuardLaunch};
 use crate::state;
 
 const AGENT_DISPLAY_NAMES: &[&str] = &[
@@ -116,7 +116,10 @@ enum AgentCommand {
     List,
     #[command(hide = true, about = "Inspect or drop named Codex sessions")]
     NamedSessions(NamedSessionsArgs),
-    #[command(hide = true, about = "Prune stale terminal agents and ad-hoc task records")]
+    #[command(
+        hide = true,
+        about = "Prune stale terminal agents and ad-hoc task records"
+    )]
     PruneStale(PruneStaleArgs),
 }
 
@@ -146,9 +149,15 @@ struct StartArgs {
 
 #[derive(Args)]
 struct PruneStaleArgs {
-    #[arg(long, help = "Age threshold in hours; defaults to QCOLD_AGENT_STALE_TTL_HOURS or 2")]
+    #[arg(
+        long,
+        help = "Age threshold in hours; defaults to QCOLD_AGENT_STALE_TTL_HOURS or 2"
+    )]
     max_age_hours: Option<u64>,
-    #[arg(long, help = "Also terminate terminal agents that still have attached clients")]
+    #[arg(
+        long,
+        help = "Also terminate terminal agents that still have attached clients"
+    )]
     include_attached: bool,
     #[arg(long, help = "Show what would be pruned without mutating state")]
     dry_run: bool,
@@ -224,7 +233,10 @@ pub fn available_agent_commands() -> Vec<AvailableAgentCommand> {
     available_agent_commands_from(path_env.as_deref(), &home)
 }
 
-fn available_agent_commands_from(path_env: Option<&OsStr>, home: &Path) -> Vec<AvailableAgentCommand> {
+fn available_agent_commands_from(
+    path_env: Option<&OsStr>,
+    home: &Path,
+) -> Vec<AvailableAgentCommand> {
     let mut commands = Vec::new();
     let mut seen = HashSet::new();
     for (command, label, invocation) in KNOWN_AGENT_COMMANDS {
@@ -336,7 +348,11 @@ pub fn terminal_contexts() -> Result<Vec<TerminalAgentContext>> {
 }
 
 pub fn terminate_agent(id: &str) -> Result<bool> {
-    let Some(record) = AgentState::load()?.records.into_iter().find(|record| record.id == id) else {
+    let Some(record) = AgentState::load()?
+        .records
+        .into_iter()
+        .find(|record| record.id == id)
+    else {
         return Ok(false);
     };
     if let Some(target) = terminal_target(&record) {
@@ -356,12 +372,7 @@ pub fn start_shell_agent(track: &str, command: &str) -> Result<AgentRecord> {
     }
     let cwd = None;
     let command = vec!["sh".to_string(), "-c".to_string(), command.to_string()];
-    start_agent(
-        None,
-        track,
-        &command,
-        cwd,
-    )
+    start_agent(None, track, &command, cwd)
 }
 
 pub fn start_terminal_shell_agent_with_id(
@@ -696,15 +707,16 @@ fn should_open_managed_worktree(codex_like: bool, cwd: &Path) -> bool {
 }
 
 fn agent_managed_worktree_enabled() -> bool {
-    env::var("QCOLD_AGENT_MANAGED_WORKTREE")
-        .map_or(true, |value| !matches!(value.as_str(), "0" | "false" | "no" | "off"))
+    env::var("QCOLD_AGENT_MANAGED_WORKTREE").map_or(true, |value| {
+        !matches!(value.as_str(), "0" | "false" | "no" | "off")
+    })
 }
 
 fn is_codex_agent_command(name: &str) -> bool {
     matches!(name, "c1" | "cc1" | "c2" | "cc2" | "codex")
-        || name
-            .strip_prefix("codex")
-            .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
+        || name.strip_prefix("codex").is_some_and(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+        })
 }
 
 fn command_path_in_paths(command: &str, path_env: Option<&OsStr>) -> Option<PathBuf> {
@@ -748,10 +760,9 @@ fn discover_numbered_codex_commands_in_paths(path_env: Option<&OsStr>) -> Vec<St
                 let Some(name) = entry.file_name().to_str().map(ToString::to_string) else {
                     continue;
                 };
-                if name
-                    .strip_prefix("codex")
-                    .is_some_and(|suffix| !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit()))
-                    && executable_file(&entry.path())
+                if name.strip_prefix("codex").is_some_and(|suffix| {
+                    !suffix.is_empty() && suffix.chars().all(|ch| ch.is_ascii_digit())
+                }) && executable_file(&entry.path())
                 {
                     commands.insert(name);
                 }
@@ -823,9 +834,10 @@ fn git_root_for(cwd: &Path) -> Result<PathBuf> {
     if !output.status.success() {
         bail!("not a git worktree: {}", cwd.display());
     }
-    Ok(PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+    Ok(PathBuf::from(
+        String::from_utf8_lossy(&output.stdout).trim(),
+    ))
 }
-
 
 include!("agents/worktree_terminal.rs");
 include!("agents/render_state_tests.rs");

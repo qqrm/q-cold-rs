@@ -62,13 +62,15 @@ fn sync_clean_checkout_to_upstream(root: &Path) -> Result<()> {
             ),
         ],
     )?
-    .filter(|remote| !remote.is_empty())
-    else {
-        eprintln!("warning: source bundle branch has no configured upstream; archiving current HEAD");
+    .filter(|remote| !remote.is_empty()) else {
+        eprintln!(
+            "warning: source bundle branch has no configured upstream; archiving current HEAD"
+        );
         return Ok(());
     };
     if remote != "." {
-        run_git(root, &["fetch", remote.as_str()]).context("source bundle preflight fetch failed")?;
+        run_git(root, &["fetch", remote.as_str()])
+            .context("source bundle preflight fetch failed")?;
     }
     run_git(root, &["merge", "--ff-only", "@{upstream}"])
         .context("source bundle preflight fast-forward failed")?;

@@ -1,3 +1,18 @@
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use anyhow::{bail, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+
+use super::queue_tabs::deduplicate_web_queue_tab_runs;
+use super::{
+    source_uses_task_sequence, AgentRow, QueueExecutionHost, QueueExecutionMode, QueueItemRow,
+    QueueItemStatus, QueueRunRow, QueueRunStatus, QueueTabRow, TaskRecordRow, TaskTopicRow,
+    DEFAULT_SQLITE_BUSY_TIMEOUT_MS,
+};
+
 struct SchemaMigration {
     id: &'static str,
     apply: fn(&Connection) -> Result<()>,
@@ -222,7 +237,7 @@ const INITIAL_STATE_SCHEMA_SQL: &str = "
     pragma user_version = 1;
 ";
 
-fn open_db() -> Result<Connection> {
+pub(super) fn open_db() -> Result<Connection> {
     let path = db_path()?;
     fs::create_dir_all(
         path.parent()
@@ -261,15 +276,13 @@ fn apply_ordered_schema_migrations(connection: &mut Connection) -> Result<()> {
         let tx = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .with_context(|| format!("failed to begin schema migration {}", migration.id))?;
-        (migration.apply)(&tx).with_context(|| format!("failed to apply schema migration {}", migration.id))?;
+        (migration.apply)(&tx)
+            .with_context(|| format!("failed to apply schema migration {}", migration.id))?;
         tx.execute(
             "insert into schema_migrations (name, applied_at_unix)
              values (?1, ?2)
              on conflict(name) do nothing",
-            params![
-                migration.id,
-                i64::try_from(unix_now()).unwrap_or(i64::MAX)
-            ],
+            params![migration.id, i64::try_from(unix_now()).unwrap_or(i64::MAX)],
         )
         .with_context(|| format!("failed to record schema migration {}", migration.id))?;
         tx.commit()
@@ -313,8 +326,18 @@ fn apply_web_queue_execution_metadata_schema(connection: &Connection) -> Result<
         "text not null default 'local'",
     )?;
     ensure_column(connection, "web_queue_runs", "remote_launcher", "text")?;
-    ensure_column(connection, "web_queue_runs", "remote_agent_local_proxy", "text")?;
-    ensure_column(connection, "web_queue_runs", "remote_agent_remote_proxy", "text")?;
+    ensure_column(
+        connection,
+        "web_queue_runs",
+        "remote_agent_local_proxy",
+        "text",
+    )?;
+    ensure_column(
+        connection,
+        "web_queue_runs",
+        "remote_agent_remote_proxy",
+        "text",
+    )?;
     ensure_column(
         connection,
         "web_queue_items",
@@ -328,8 +351,18 @@ fn apply_web_queue_execution_metadata_schema(connection: &Connection) -> Result<
         "text not null default 'local'",
     )?;
     ensure_column(connection, "web_queue_items", "remote_launcher", "text")?;
-    ensure_column(connection, "web_queue_items", "remote_agent_local_proxy", "text")?;
-    ensure_column(connection, "web_queue_items", "remote_agent_remote_proxy", "text")?;
+    ensure_column(
+        connection,
+        "web_queue_items",
+        "remote_agent_local_proxy",
+        "text",
+    )?;
+    ensure_column(
+        connection,
+        "web_queue_items",
+        "remote_agent_remote_proxy",
+        "text",
+    )?;
     ensure_column(
         connection,
         "web_queue_items",
@@ -495,7 +528,7 @@ fn backfill_web_queue_item_attempts(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn ensure_default_web_queue_tab(connection: &Connection) -> Result<()> {
+pub(super) fn ensure_default_web_queue_tab(connection: &Connection) -> Result<()> {
     let default_exists = connection
         .query_row(
             "select 1 from web_queue_tabs where is_default = 1 limit 1",
@@ -550,7 +583,7 @@ fn latest_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
         .context("failed to query latest web queue run")
 }
 
-fn active_fallback_queue_tab_id(connection: &Connection) -> Result<String> {
+pub(super) fn active_fallback_queue_tab_id(connection: &Connection) -> Result<String> {
     connection
         .query_row(
             "select id
@@ -568,7 +601,7 @@ fn active_fallback_queue_tab_id(connection: &Connection) -> Result<String> {
         .context("missing fallback queue tab")
 }
 
-fn active_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
+pub(super) fn active_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
     ensure_default_web_queue_tab(connection)?;
     connection
         .query_row(
@@ -581,7 +614,10 @@ fn active_web_queue_run_id(connection: &Connection) -> Result<Option<String>> {
         .map(Option::flatten)
 }
 
-fn assign_web_queue_run_to_active_tab(connection: &Connection, run_id: &str) -> Result<()> {
+pub(super) fn assign_web_queue_run_to_active_tab(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<()> {
     ensure_default_web_queue_tab(connection)?;
     connection
         .execute(
@@ -657,7 +693,7 @@ fn allocate_task_sequence(connection: &Connection, repo_root: &str) -> Result<u6
     u64::try_from(next).context("task sequence overflow")
 }
 
-fn task_record_sequence_for_upsert(
+pub(super) fn task_record_sequence_for_upsert(
     connection: &Connection,
     record: &TaskRecordRow,
     existing: Option<&TaskRecordRow>,
@@ -678,7 +714,7 @@ fn task_record_sequence_for_upsert(
     }
 }
 
-fn advance_task_sequence_counter(
+pub(super) fn advance_task_sequence_counter(
     connection: &Connection,
     repo_root: &str,
     sequence: u64,
@@ -707,7 +743,9 @@ fn seed_task_sequence_counters(connection: &Connection) -> Result<()> {
         )
         .context("failed to prepare task sequence counter seed")?;
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
         .context("failed to query task sequence counter seed")?
         .collect::<Result<Vec<_>, _>>()
         .context("failed to decode task sequence counter seed")?;
@@ -831,7 +869,7 @@ fn backfill_task_sequences(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn backfill_agents(connection: &Connection, legacy_path: &Path) -> Result<()> {
+pub(super) fn backfill_agents(connection: &Connection, legacy_path: &Path) -> Result<()> {
     if table_count(connection, "agents")? > 0 || !legacy_path.is_file() {
         return Ok(());
     }
@@ -861,7 +899,7 @@ fn backfill_agents(connection: &Connection, legacy_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn backfill_task_topics(connection: &Connection, legacy_path: &Path) -> Result<()> {
+pub(super) fn backfill_task_topics(connection: &Connection, legacy_path: &Path) -> Result<()> {
     if table_count(connection, "tasks")? > 0 || !legacy_path.is_file() {
         return Ok(());
     }
@@ -898,7 +936,10 @@ fn backfill_task_topics(connection: &Connection, legacy_path: &Path) -> Result<(
     Ok(())
 }
 
-fn backfill_task_events(connection: &Connection, legacy_events_dir: &Path) -> Result<()> {
+pub(super) fn backfill_task_events(
+    connection: &Connection,
+    legacy_events_dir: &Path,
+) -> Result<()> {
     if table_count(connection, "events")? > 0 || !legacy_events_dir.is_dir() {
         return Ok(());
     }
@@ -928,7 +969,7 @@ fn backfill_task_events(connection: &Connection, legacy_events_dir: &Path) -> Re
     Ok(())
 }
 
-fn task_topic_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskTopicRow> {
+pub(super) fn task_topic_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskTopicRow> {
     Ok(TaskTopicRow {
         id: row.get(0)?,
         chat_id: row.get(1)?,
@@ -942,7 +983,7 @@ fn task_topic_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskTopicRow
     })
 }
 
-fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecordRow> {
+pub(super) fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecordRow> {
     Ok(TaskRecordRow {
         id: row.get(0)?,
         source: row.get(1)?,
@@ -959,7 +1000,7 @@ fn task_record_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskRecordR
     })
 }
 
-fn queue_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueRunRow> {
+pub(super) fn queue_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueRunRow> {
     Ok(QueueRunRow {
         id: row.get(0)?,
         status: QueueRunStatus::from_db_value(row.get::<_, String>(1)?),
@@ -980,7 +1021,7 @@ fn queue_run_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueRunRow> 
     })
 }
 
-fn queue_tab_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueTabRow> {
+pub(super) fn queue_tab_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueTabRow> {
     Ok(QueueTabRow {
         id: row.get(0)?,
         label: row.get(1)?,
@@ -992,14 +1033,10 @@ fn queue_tab_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueTabRow> 
     })
 }
 
-fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow> {
+pub(super) fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow> {
     let depends_on_json = row.get::<_, Option<String>>(20)?.unwrap_or_default();
     let depends_on = serde_json::from_str(&depends_on_json).map_err(|err| {
-        rusqlite::Error::FromSqlConversionFailure(
-            20,
-            rusqlite::types::Type::Text,
-            Box::new(err),
-        )
+        rusqlite::Error::FromSqlConversionFailure(20, rusqlite::types::Type::Text, Box::new(err))
     })?;
     Ok(QueueItemRow {
         id: row.get(0)?,
@@ -1026,7 +1063,7 @@ fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow
     })
 }
 
-fn remove_web_queue_dependency_references(
+pub(super) fn remove_web_queue_dependency_references(
     connection: &Connection,
     run_id: &str,
     deleted_item_id: &str,
@@ -1035,7 +1072,9 @@ fn remove_web_queue_dependency_references(
         .prepare("select id, depends_on_json from web_queue_items where run_id = ?1")
         .context("failed to prepare queue dependency cleanup query")?;
     let rows = statement
-        .query_map([run_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .query_map([run_id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .context("failed to query queue dependencies for cleanup")?;
     let mut updates = Vec::new();
     for row in rows {
@@ -1059,7 +1098,7 @@ fn remove_web_queue_dependency_references(
     Ok(())
 }
 
-fn queue_depends_on_json(depends_on: &[String]) -> Result<String> {
+pub(super) fn queue_depends_on_json(depends_on: &[String]) -> Result<String> {
     serde_json::to_string(depends_on).context("failed to encode queue dependencies")
 }
 
@@ -1137,7 +1176,7 @@ fn db_path() -> Result<PathBuf> {
     Ok(state_dir()?.join("qcold.sqlite3"))
 }
 
-pub fn state_dir() -> Result<PathBuf> {
+pub(crate) fn state_dir() -> Result<PathBuf> {
     if let Ok(path) = env::var("QCOLD_STATE_DIR") {
         if !path.trim().is_empty() {
             return Ok(PathBuf::from(path));
@@ -1157,7 +1196,7 @@ fn sqlite_busy_timeout() -> Duration {
     )
 }
 
-fn unix_now() -> u64 {
+pub(super) fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
@@ -1236,9 +1275,11 @@ mod tests {
         initialize_state_database(&mut connection).unwrap();
 
         let task_count: i64 = connection
-            .query_row("select count(*) from tasks where id = 'task/legacy'", [], |row| {
-                row.get(0)
-            })
+            .query_row(
+                "select count(*) from tasks where id = 'task/legacy'",
+                [],
+                |row| row.get(0),
+            )
             .unwrap();
         assert_eq!(task_count, 1);
 
@@ -1375,7 +1416,9 @@ mod tests {
 
     fn recorded_migration_count(connection: &Connection) -> usize {
         let count: i64 = connection
-            .query_row("select count(*) from schema_migrations", [], |row| row.get(0))
+            .query_row("select count(*) from schema_migrations", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         usize::try_from(count).unwrap()
     }

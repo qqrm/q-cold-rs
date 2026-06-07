@@ -1,4 +1,7 @@
-#![allow(clippy::unwrap_used, reason = "queue parser tests use compact fixtures")]
+#![allow(
+    clippy::unwrap_used,
+    reason = "queue parser tests use compact fixtures"
+)]
 
 use std::fs;
 
@@ -24,7 +27,9 @@ fn json_plan_applies_default_layers() {
     assert_eq!(package.execution_mode.as_deref(), Some("graph"));
     assert_eq!(package.items.len(), 2);
     assert_eq!(package.items[0].slug.as_deref(), Some("first"));
-    assert!(package.items[0].prompt.contains("[layer:policy]\nshared policy"));
+    assert!(package.items[0]
+        .prompt
+        .contains("[layer:policy]\nshared policy"));
     assert!(package.items[0].prompt.ends_with("do first"));
     assert_eq!(package.items[1].depends_on, vec!["first"]);
 }
@@ -47,10 +52,7 @@ fn json_plan_preserves_remote_launcher_hints() {
         package.selected_remote_launcher.as_deref(),
         Some("remote-dev-env")
     );
-    assert_eq!(
-        package.items[1].remote_launcher.as_deref(),
-        Some("local")
-    );
+    assert_eq!(package.items[1].remote_launcher.as_deref(), Some("local"));
 }
 
 #[test]

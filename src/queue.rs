@@ -251,7 +251,8 @@ pub(crate) fn help_text() -> &'static str {
 fn run_queue(args: QueueRunArgs) -> Result<u8> {
     let package = load_prompt_package(&args.source)?;
     let selected_repo_root = selected_repo_root(args.repo_root.as_deref(), &package)?;
-    let selected_repo_name = selected_repo_name(args.repo_name.as_deref(), &package, &selected_repo_root);
+    let selected_repo_name =
+        selected_repo_name(args.repo_name.as_deref(), &package, &selected_repo_root);
     let selected_agent_command = args
         .selected_agent_command
         .or(package.selected_agent_command)
@@ -268,7 +269,9 @@ fn run_queue(args: QueueRunArgs) -> Result<u8> {
             .selected_execution_host
             .or_else(queue_execution_host_from_env),
         selected_agent_command,
-        selected_remote_launcher: package.selected_remote_launcher.or_else(queue_remote_launcher_from_env),
+        selected_remote_launcher: package
+            .selected_remote_launcher
+            .or_else(queue_remote_launcher_from_env),
         selected_remote_agent_local_proxy: package
             .selected_remote_agent_local_proxy
             .or_else(queue_remote_agent_local_proxy_from_env),
@@ -277,9 +280,14 @@ fn run_queue(args: QueueRunArgs) -> Result<u8> {
             .or_else(queue_remote_agent_remote_proxy_from_env),
         selected_repo_root: Some(selected_repo_root.display().to_string()),
         selected_repo_name,
-        items: package.items.into_iter().map(QueueRunItemRequest::from).collect(),
+        items: package
+            .items
+            .into_iter()
+            .map(QueueRunItemRequest::from)
+            .collect(),
     };
-    let response = QueueHttpClient::from_args(&args.client).post_json("/api/queue/run", &request)?;
+    let response =
+        QueueHttpClient::from_args(&args.client).post_json("/api/queue/run", &request)?;
     print_queue_api_response(&response);
     Ok(0)
 }
@@ -610,7 +618,10 @@ impl QueueHttpClient {
             }
             thread::sleep(Duration::from_millis(250));
         }
-        bail!("Q-COLD dashboard daemon did not become reachable at {}", self.base_url());
+        bail!(
+            "Q-COLD dashboard daemon did not become reachable at {}",
+            self.base_url()
+        );
     }
 
     fn healthz(&self) -> bool {
@@ -716,7 +727,11 @@ fn load_zip_package(path: &Path) -> Result<QueuePackage> {
 
 fn package_from_single_prompt(prompt: String, slug: Option<String>) -> QueuePackage {
     QueuePackage {
-        items: vec![QueuePackageItem { prompt, slug, ..QueuePackageItem::default() }],
+        items: vec![QueuePackageItem {
+            prompt,
+            slug,
+            ..QueuePackageItem::default()
+        }],
         ..QueuePackage::default()
     }
 }
@@ -761,7 +776,10 @@ fn package_from_named_files(files: Vec<(String, String)>) -> Result<QueuePackage
     if items.is_empty() {
         bail!("queue package has no supported prompt files");
     }
-    Ok(QueuePackage { items, ..QueuePackage::default() })
+    Ok(QueuePackage {
+        items,
+        ..QueuePackage::default()
+    })
 }
 
 enum QueueFileRole {
@@ -834,7 +852,11 @@ fn package_from_json_value(value: Value) -> Result<QueuePackage> {
                 Some(Value::Array(values)) => json_items(values, &layers, &default_layers)?,
                 Some(_) => bail!("queue JSON `items` must be an array"),
                 None if object.get("prompt").is_some() => {
-                    vec![json_item(&Value::Object(object.clone()), &layers, &default_layers)?]
+                    vec![json_item(
+                        &Value::Object(object.clone()),
+                        &layers,
+                        &default_layers,
+                    )?]
                 }
                 None => bail!("queue JSON package must contain `items` or `prompt`"),
             };
@@ -891,7 +913,8 @@ fn json_item(
             ..QueuePackageItem::default()
         }),
         Value::Object(object) => {
-            let prompt = json_string_field(object, "prompt").context("queue item is missing prompt")?;
+            let prompt =
+                json_string_field(object, "prompt").context("queue item is missing prompt")?;
             let item_layers = object
                 .get("layers")
                 .map(json_string_array)
@@ -938,7 +961,10 @@ fn json_layers(value: Option<&Value>) -> Result<Vec<PromptLayer>> {
                         .with_context(|| format!("layer {name} is missing prompt"))?,
                     _ => bail!("layer {name} must be a string or object"),
                 };
-                Ok(PromptLayer { name: name.clone(), prompt })
+                Ok(PromptLayer {
+                    name: name.clone(),
+                    prompt,
+                })
             })
             .collect(),
         _ => bail!("queue JSON `layers` must be an array or object"),
@@ -952,7 +978,8 @@ fn json_layer(index: usize, value: &Value) -> Result<PromptLayer> {
             prompt: prompt.clone(),
         }),
         Value::Object(object) => Ok(PromptLayer {
-            name: json_string_field(object, "name").unwrap_or_else(|| format!("layer-{}", index + 1)),
+            name: json_string_field(object, "name")
+                .unwrap_or_else(|| format!("layer-{}", index + 1)),
             prompt: json_string_field(object, "prompt").context("layer is missing prompt")?,
         }),
         _ => bail!("queue JSON layer must be a string or object"),

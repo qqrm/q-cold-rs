@@ -475,12 +475,19 @@ mod tests {
         let managed = temp.path().join("WT").join("repo");
         write_task_env(&managed.join("001-open"), "open", "open");
         write_task_env(&managed.join("002-blocked"), "blocked", "closed:blocked");
-        write_task_env(&managed.join("003-failed-closeout"), "tail", "failed-closeout");
+        write_task_env(
+            &managed.join("003-failed-closeout"),
+            "tail",
+            "failed-closeout",
+        );
 
         let tasks = managed_tasks(&managed).unwrap();
 
         assert_eq!(
-            tasks.iter().map(|task| task.name.as_str()).collect::<Vec<_>>(),
+            tasks
+                .iter()
+                .map(|task| task.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["open", "tail"]
         );
     }

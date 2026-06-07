@@ -1,3 +1,9 @@
+#![allow(
+    missing_docs,
+    reason = "qcold is an incubating operator facade with an adapter-backed command surface"
+)]
+#![cfg_attr(test, allow(clippy::unwrap_used))]
+
 mod adapter;
 mod agents;
 mod node_agent;
@@ -69,7 +75,8 @@ const DEFAULT_CODEX_TELEMETRY_RETENTION_HOURS: u64 = 48;
 const LARGE_TOOL_OUTPUT_TOKEN_THRESHOLD: u64 = 5_000;
 const MAX_TOOL_OUTPUT_SAMPLES: usize = 5;
 
-fn main() -> ExitCode {
+#[must_use]
+pub fn run_cli() -> ExitCode {
     match run() {
         Ok(code) => ExitCode::from(code),
         Err(err) => {
@@ -146,13 +153,20 @@ enum TopLevel {
     Task(TaskArgs),
     #[command(hide = true, about = "Manage Q-COLD-owned task records in SQLite")]
     TaskRecord(TaskRecordArgs),
-    #[command(hide = true, name = "q-help", about = "Print agent-facing queue package guidance")]
+    #[command(
+        hide = true,
+        name = "q-help",
+        about = "Print agent-facing queue package guidance"
+    )]
     QHelp,
     #[command(about = "Submit and inspect Q-COLD dashboard queue runs from the CLI")]
     Queue(queue::QueueArgs),
     #[command(about = "Collect or fetch typed remote-node monitoring snapshots")]
     Node(node_agent::NodeArgs),
-    #[command(hide = true, about = "Write one source ZIP archive for the current repository into ./bundles")]
+    #[command(
+        hide = true,
+        about = "Write one source ZIP archive for the current repository into ./bundles"
+    )]
     Bundle,
     #[command(about = "Summarize primary-checkout, worktree, and drift state")]
     Status,
@@ -216,7 +230,10 @@ enum TaskRecordSubcommand {
     },
     #[command(about = "Show one Q-COLD-owned task record")]
     Show { id: String },
-    #[command(hide = true, about = "Audit task-record telemetry coverage and tool-output noise")]
+    #[command(
+        hide = true,
+        about = "Audit task-record telemetry coverage and tool-output noise"
+    )]
     Audit(TaskRecordAuditArgs),
     #[command(hide = true, about = "Export full task records as JSON lines")]
     Export {
@@ -225,11 +242,16 @@ enum TaskRecordSubcommand {
         #[arg(long, default_value_t = 200)]
         limit: usize,
     },
-    #[command(about = "Import remote repo-adapter task-flow records into the local task-record DB")]
+    #[command(
+        about = "Import remote repo-adapter task-flow records into the local task-record DB"
+    )]
     SyncRemote(TaskRecordRemoteSyncArgs),
     #[command(hide = true, about = "Create or update a Q-COLD-owned task record")]
     Create(TaskRecordCreateArgs),
-    #[command(hide = true, about = "Update title, description, or status for a task record")]
+    #[command(
+        hide = true,
+        about = "Update title, description, or status for a task record"
+    )]
     Update(TaskRecordUpdateArgs),
     #[command(hide = true, about = "Mark a task record closed")]
     Close {
@@ -449,9 +471,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         }
         TaskSubcommand::Closeout(args) => {
             let cwd = std::env::current_dir().ok();
-            let task_record_id = cwd
-                .as_deref()
-                .and_then(task_record_id_from_worktree);
+            let task_record_id = cwd.as_deref().and_then(task_record_id_from_worktree);
             if let Some(worktree) = cwd.as_deref() {
                 if let Err(err) = sync_task_flow_record_for_worktree(worktree, None) {
                     eprintln!("warning: failed to refresh Codex task token telemetry: {err:#}");
@@ -479,9 +499,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
             }
             Ok(code)
         }
-        TaskSubcommand::Finalize(args) => {
-            adapter_for_cwd_sensitive_repo()?.finalize(&args.message)
-        }
+        TaskSubcommand::Finalize(args) => adapter_for_cwd_sensitive_repo()?.finalize(&args.message),
         TaskSubcommand::Bundle { task_id } => {
             adapter_for_cwd_sensitive_repo()?.task_bundle(task_id.as_deref())
         }
@@ -530,7 +548,11 @@ fn task_record_command(args: TaskRecordArgs) -> Result<u8> {
         TaskRecordSubcommand::Audit(args) => {
             sync_codex_task_records_best_effort();
             let records = if let Some(repo_root) = args.repo_root {
-                state::load_task_records_for_repo(&repo_root.display().to_string(), None, args.record_limit)?
+                state::load_task_records_for_repo(
+                    &repo_root.display().to_string(),
+                    None,
+                    args.record_limit,
+                )?
             } else {
                 state::load_task_records(None, args.record_limit)?
             };
@@ -718,7 +740,6 @@ pub(crate) fn record_agent_task(record: &agents::AgentRecord) -> Result<()> {
     state::upsert_task_record(&record).map(|_| ())
 }
 
-
 include!("app/codex_metadata.rs");
 include!("app/task_flow_sync.rs");
 include!("app/tests_task_flow_sync.rs");
@@ -737,7 +758,12 @@ fn guard_command(args: &GuardArgs) -> Result<u8> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .with_context(|| format!("failed to run guarded command {}", program.to_string_lossy()))?;
+        .with_context(|| {
+            format!(
+                "failed to run guarded command {}",
+                program.to_string_lossy()
+            )
+        })?;
 
     let stdout = child
         .stdout
@@ -786,8 +812,7 @@ fn guard_command(args: &GuardArgs) -> Result<u8> {
             "qcold-guard\tstatus=blocked\tbytes={bytes}\tlines={lines}\tmax_bytes={}\
              \tmax_lines={}\tmessage=output too large; rerun with a narrower command or write raw \
              output to a task-local file and inspect a focused slice",
-            args.max_bytes,
-            args.max_lines,
+            args.max_bytes, args.max_lines,
         );
         return Ok(2);
     }

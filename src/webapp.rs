@@ -59,7 +59,10 @@ static WEB_QUEUE_REMOTE_SYNC_AT: OnceLock<Mutex<HashMap<String, u64>>> = OnceLoc
 pub struct ServeArgs {
     #[arg(long, default_value = "127.0.0.1:8787")]
     listen: String,
-    #[arg(long, help = "Run the local web dashboard as a persistent Q-COLD daemon")]
+    #[arg(
+        long,
+        help = "Run the local web dashboard as a persistent Q-COLD daemon"
+    )]
     daemon: bool,
     #[arg(long, hide = true)]
     daemon_child: bool,
@@ -179,11 +182,9 @@ fn read_pid_file(path: &Path) -> Result<Option<u32>> {
         fs::remove_file(path).ok();
         return Ok(None);
     }
-    Ok(Some(
-        value
-            .parse()
-            .with_context(|| format!("invalid Mini App daemon pid in {}", path.display()))?,
-    ))
+    Ok(Some(value.parse().with_context(|| {
+        format!("invalid Mini App daemon pid in {}", path.display())
+    })?))
 }
 
 fn process_is_webapp_daemon(pid: u32, listen: &str) -> bool {
@@ -198,7 +199,8 @@ fn process_is_webapp_daemon(pid: u32, listen: &str) -> bool {
     args.iter().any(|arg| arg == "telegram")
         && args.iter().any(|arg| arg == "serve")
         && args.iter().any(|arg| arg == "--daemon-child")
-        && args.windows(2)
+        && args
+            .windows(2)
             .any(|pair| pair[0] == "--listen" && pair[1] == listen)
 }
 
@@ -394,7 +396,10 @@ async fn app_js() -> impl IntoResponse {
 }
 
 async fn favicon_svg() -> impl IntoResponse {
-    no_store(([(CONTENT_TYPE, "image/svg+xml; charset=utf-8")], FAVICON_SVG))
+    no_store((
+        [(CONTENT_TYPE, "image/svg+xml; charset=utf-8")],
+        FAVICON_SVG,
+    ))
 }
 
 async fn api_state() -> impl IntoResponse {
@@ -423,7 +428,10 @@ async fn api_task_transcript(Query(query): Query<TaskTranscriptQuery>) -> impl I
     no_store((status, Json(response)))
 }
 
-async fn api_queue_run(headers: HeaderMap, Json(payload): Json<QueueRunRequest>) -> impl IntoResponse {
+async fn api_queue_run(
+    headers: HeaderMap,
+    Json(payload): Json<QueueRunRequest>,
+) -> impl IntoResponse {
     let response = handle_queue_run(&headers, payload);
     refresh_dashboard_state_after_mutation(response.ok);
     let status = if response.ok {

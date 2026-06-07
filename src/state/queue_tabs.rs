@@ -1,3 +1,14 @@
+use std::collections::HashSet;
+
+use anyhow::{bail, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+
+use super::db::{
+    active_fallback_queue_tab_id, ensure_default_web_queue_tab, open_db, queue_item_from_row,
+    queue_tab_from_row, remove_web_queue_dependency_references, unix_now,
+};
+use super::{QueueItemRow, QueueTabRow};
+
 pub fn load_web_queue_tabs() -> Result<Vec<QueueTabRow>> {
     let connection = open_db()?;
     ensure_default_web_queue_tab(&connection)?;
@@ -31,7 +42,7 @@ pub fn load_web_queue_tab(tab_id: &str) -> Result<Option<QueueTabRow>> {
         .context("failed to query web queue tab")
 }
 
-fn deduplicate_web_queue_tab_runs(connection: &Connection) -> Result<()> {
+pub(super) fn deduplicate_web_queue_tab_runs(connection: &Connection) -> Result<()> {
     let mut statement = connection
         .prepare(
             "select id, run_id
@@ -153,7 +164,10 @@ pub fn activate_web_queue_tab(tab_id: &str) -> Result<()> {
     Ok(())
 }
 
-fn web_queue_tab_run_id(connection: &Connection, tab_id: &str) -> Result<Option<String>> {
+pub(super) fn web_queue_tab_run_id(
+    connection: &Connection,
+    tab_id: &str,
+) -> Result<Option<String>> {
     ensure_default_web_queue_tab(connection)?;
     connection
         .query_row(
@@ -166,7 +180,7 @@ fn web_queue_tab_run_id(connection: &Connection, tab_id: &str) -> Result<Option<
         .with_context(|| format!("unknown queue tab: {tab_id}"))
 }
 
-fn assign_web_queue_run_to_tab_in_connection(
+pub(super) fn assign_web_queue_run_to_tab_in_connection(
     connection: &Connection,
     tab_id: &str,
     run_id: &str,
@@ -294,7 +308,8 @@ pub fn delete_web_queue_item_if_exists(
         .context("failed to query web queue item")?;
     let Some(item) = item else {
         delete_web_queue_run_if_empty(&tx, run_id)?;
-        tx.commit().context("failed to commit web queue item delete")?;
+        tx.commit()
+            .context("failed to commit web queue item delete")?;
         return Ok(None);
     };
     tx.execute(
@@ -304,7 +319,8 @@ pub fn delete_web_queue_item_if_exists(
     .context("failed to delete web queue item")?;
     remove_web_queue_dependency_references(&tx, run_id, item_id)?;
     delete_web_queue_run_if_empty(&tx, run_id)?;
-    tx.commit().context("failed to commit web queue item delete")?;
+    tx.commit()
+        .context("failed to commit web queue item delete")?;
     Ok(Some(item))
 }
 
@@ -324,7 +340,10 @@ fn delete_web_queue_run_if_empty(connection: &Connection, run_id: &str) -> Resul
     Ok(())
 }
 
-fn delete_unreferenced_web_queue_run(connection: &Connection, run_id: &str) -> Result<()> {
+pub(super) fn delete_unreferenced_web_queue_run(
+    connection: &Connection,
+    run_id: &str,
+) -> Result<()> {
     let references = connection
         .query_row(
             "select count(*) from web_queue_tabs where run_id = ?1",
@@ -338,7 +357,7 @@ fn delete_unreferenced_web_queue_run(connection: &Connection, run_id: &str) -> R
     Ok(())
 }
 
-fn delete_unreferenced_web_queue_runs(connection: &Connection) -> Result<()> {
+pub(super) fn delete_unreferenced_web_queue_runs(connection: &Connection) -> Result<()> {
     connection
         .execute(
             "delete from web_queue_items

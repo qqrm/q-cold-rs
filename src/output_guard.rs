@@ -6,8 +6,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-pub(crate) const DEFAULT_AGENT_OUTPUT_GUARD_COMMANDS: &str =
-    "rg,grep,find,cat,git,unzip,zcat,jq";
+pub(crate) const DEFAULT_AGENT_OUTPUT_GUARD_COMMANDS: &str = "rg,grep,find,cat,git,unzip,zcat,jq";
 
 const OUTPUT_GUARD_DISABLE_ENV: &str = "QCOLD_AGENT_OUTPUT_GUARD";
 const OUTPUT_GUARD_COMMANDS_ENV: &str = "QCOLD_AGENT_OUTPUT_GUARD_COMMANDS";
@@ -232,7 +231,10 @@ pub(crate) fn guarded_path_value(guard_bin: &Path, path: &str) -> String {
     }
 }
 
-pub(crate) fn path_without_output_guard_bin(path: &str, inherited_guard_bin: Option<&Path>) -> String {
+pub(crate) fn path_without_output_guard_bin(
+    path: &str,
+    inherited_guard_bin: Option<&Path>,
+) -> String {
     let Some(inherited_guard_bin) = inherited_guard_bin else {
         return path.to_string();
     };

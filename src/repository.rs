@@ -351,8 +351,11 @@ fn config_for_managed_worktree(root: &Path) -> Result<RepositoryConfig> {
         if let Some(mut repo) = registered_for_root(&primary)? {
             repo.id = format!("{}:worktree", repo.id);
             repo.root = root;
-            repo.xtask_manifest =
-                managed_worktree_xtask_manifest(&repo.root, &primary, repo.xtask_manifest.as_deref())?;
+            repo.xtask_manifest = managed_worktree_xtask_manifest(
+                &repo.root,
+                &primary,
+                repo.xtask_manifest.as_deref(),
+            )?;
             repo.active = true;
             return Ok(repo);
         }
@@ -659,7 +662,11 @@ mod tests {
         std::fs::create_dir_all(&primary).unwrap();
         std::fs::create_dir_all(worktree.join(".task")).unwrap();
         std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
-        std::fs::write(&manifest, "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n").unwrap();
+        std::fs::write(
+            &manifest,
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
         std::fs::write(
             worktree.join(".task/task.env"),
             format!("PRIMARY_REPO_PATH='{}'\n", primary.display()),
@@ -679,18 +686,27 @@ mod tests {
         let repo = config_for_managed_worktree(&worktree).unwrap();
         assert_eq!(repo.id, "primary:worktree");
         assert_eq!(repo.root, canonical_root(&worktree).unwrap());
-        assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
+        assert_eq!(
+            repo.xtask_manifest,
+            Some(canonical_existing(&manifest).unwrap())
+        );
         assert_eq!(repo.default_branch.as_deref(), Some("developer"));
         assert!(repo.active);
 
         env::set_var("QCOLD_REPO_ROOT", &worktree);
         let repo = for_adapter_context(AdapterContext::ActiveRepository).unwrap();
         assert_eq!(repo.root, canonical_root(&primary).unwrap());
-        assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
+        assert_eq!(
+            repo.xtask_manifest,
+            Some(canonical_existing(&manifest).unwrap())
+        );
 
         let repo = for_adapter_context(AdapterContext::CwdManagedWorktree).unwrap();
         assert_eq!(repo.root, canonical_root(&worktree).unwrap());
-        assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
+        assert_eq!(
+            repo.xtask_manifest,
+            Some(canonical_existing(&manifest).unwrap())
+        );
 
         env::remove_var("QCOLD_REPO_ROOT");
         env::remove_var("QCOLD_STATE_DIR");

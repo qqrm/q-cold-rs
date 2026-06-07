@@ -4,4 +4,8 @@
 )]
 #![cfg_attr(test, allow(clippy::unwrap_used))]
 
-include!("app.rs");
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    qcold::run_cli()
+}

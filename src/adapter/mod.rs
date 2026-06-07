@@ -369,9 +369,15 @@ fn apply_task_open_env_values(
     }
     if let Some(prompt) = task_prompt.map(str::trim).filter(|value| !value.is_empty()) {
         command.env("QCOLD_TASKFLOW_PROMPT", prompt);
-        command.env("QCOLD_TASK_PROMPT_SNIPPET", crate::prompt::prompt_snippet(prompt));
+        command.env(
+            "QCOLD_TASK_PROMPT_SNIPPET",
+            crate::prompt::prompt_snippet(prompt),
+        );
     }
-    if let Some(thread_id) = codex_thread_id.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(thread_id) = codex_thread_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
         command.env("CODEX_THREAD_ID", thread_id);
     }
     if let Some(path) = codex_rollout_path {

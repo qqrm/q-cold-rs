@@ -31,7 +31,10 @@ pub fn truncate_chars(text: &mut String, max_chars: usize) {
         *text = ".".repeat(max_chars);
         return;
     }
-    let mut truncated = text.chars().take(max_chars.saturating_sub(3)).collect::<String>();
+    let mut truncated = text
+        .chars()
+        .take(max_chars.saturating_sub(3))
+        .collect::<String>();
     truncated.push_str("...");
     *text = truncated;
 }
