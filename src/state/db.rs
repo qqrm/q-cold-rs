@@ -1,226 +1,305 @@
-#[allow(
-    clippy::too_many_lines,
-    reason = "schema bootstrap is kept inline so migrations remain ordered and auditable"
-)]
+struct SchemaMigration {
+    id: &'static str,
+    apply: fn(&Connection) -> Result<()>,
+}
+
+const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
+    SchemaMigration {
+        id: "001_initial_state_schema",
+        apply: apply_initial_state_schema,
+    },
+    SchemaMigration {
+        id: "002_task_record_repo_context",
+        apply: apply_task_record_repo_context_schema,
+    },
+    SchemaMigration {
+        id: "003_web_queue_tables",
+        apply: apply_web_queue_schema,
+    },
+    SchemaMigration {
+        id: "004_web_queue_execution_metadata",
+        apply: apply_web_queue_execution_metadata_schema,
+    },
+    SchemaMigration {
+        id: "005_task_sequence_counters",
+        apply: apply_task_sequence_counter_schema,
+    },
+    SchemaMigration {
+        id: "task_sequence_task_sources_only_v1",
+        apply: repair_legacy_task_sequence_pollution,
+    },
+];
+
+const INITIAL_STATE_SCHEMA_SQL: &str = "
+    create table if not exists agents (
+        id text primary key,
+        track text not null,
+        pid integer not null,
+        started_at_unix integer not null,
+        command_json text not null,
+        cwd text,
+        stdout_log_path text,
+        stderr_log_path text,
+        created_at_unix integer not null
+    );
+    create table if not exists runs (
+        id text primary key,
+        agent_id text references agents(id),
+        kind text not null,
+        status text not null,
+        pid integer,
+        command_json text,
+        cwd text,
+        started_at_unix integer,
+        finished_at_unix integer,
+        exit_code integer,
+        metadata_json text
+    );
+    create table if not exists tasks (
+        id text primary key,
+        source text not null,
+        title text not null,
+        description text not null,
+        status text not null,
+        created_at_unix integer not null,
+        updated_at_unix integer not null,
+        repo_root text,
+        cwd text,
+        agent_id text,
+        metadata_json text,
+        sequence integer
+    );
+    create table if not exists task_sequence_counters (
+        repo_root text primary key,
+        next_sequence integer not null
+    );
+    create table if not exists task_topics (
+        task_id text primary key references tasks(id),
+        chat_id text not null,
+        thread_id integer not null,
+        topic_name text not null,
+        source_message_id integer not null,
+        unique(chat_id, thread_id)
+    );
+    create table if not exists schema_migrations (
+        name text primary key,
+        applied_at_unix integer not null
+    );
+    create table if not exists history (
+        id integer primary key autoincrement,
+        timestamp_unix integer not null,
+        source text not null,
+        role text not null,
+        text text not null,
+        task_id text references tasks(id),
+        event_id integer references events(id)
+    );
+    create index if not exists history_timestamp on history(timestamp_unix);
+    create table if not exists events (
+        id integer primary key autoincrement,
+        timestamp_unix integer not null,
+        source text not null,
+        kind text not null,
+        task_id text references tasks(id),
+        agent_id text references agents(id),
+        run_id text references runs(id),
+        text text,
+        metadata_json text
+    );
+    create table if not exists terminal_metadata (
+        target text primary key,
+        name text,
+        scope text,
+        updated_at_unix integer not null
+    );
+    create table if not exists web_queue_runs (
+        id text primary key,
+        status text not null,
+        execution_mode text not null default 'sequence',
+        execution_host text not null default 'local',
+        selected_agent_command text not null,
+        remote_launcher text,
+        remote_agent_local_proxy text,
+        remote_agent_remote_proxy text,
+        selected_repo_root text,
+        selected_repo_name text,
+        track text not null,
+        current_index integer not null,
+        stop_requested integer not null default 0,
+        message text not null,
+        created_at_unix integer not null,
+        updated_at_unix integer not null
+    );
+    create table if not exists web_queue_tabs (
+        id text primary key,
+        label text not null,
+        run_id text references web_queue_runs(id) on delete set null,
+        is_default integer not null default 0,
+        active integer not null default 0,
+        created_at_unix integer not null,
+        updated_at_unix integer not null
+    );
+    create table if not exists web_queue_items (
+        id text primary key,
+        run_id text not null references web_queue_runs(id) on delete cascade,
+        position integer not null,
+        depends_on_json text not null default '[]',
+        prompt text not null,
+        slug text not null,
+        repo_root text,
+        repo_name text,
+        execution_host text not null default 'local',
+        agent_command text not null,
+        remote_launcher text,
+        remote_agent_local_proxy text,
+        remote_agent_remote_proxy text,
+        agent_id text,
+        status text not null,
+        message text not null,
+        attempts integer not null default 0,
+        recovery_attempts integer not null default 0,
+        next_attempt_at_unix integer,
+        started_at_unix integer not null,
+        updated_at_unix integer not null,
+        unique(run_id, position),
+        unique(run_id, slug)
+    );
+    create table if not exists web_queue_item_attempts (
+        run_id text not null,
+        item_id text not null references web_queue_items(id) on delete cascade,
+        semantic_iteration integer not null,
+        agent_command text not null,
+        agent_id text,
+        task_record_id text,
+        terminal_target text,
+        stdout_log_path text,
+        stderr_log_path text,
+        bundle_path text,
+        status text not null,
+        failure_message text,
+        started_at_unix integer not null,
+        finished_at_unix integer,
+        updated_at_unix integer not null,
+        primary key(run_id, item_id, semantic_iteration)
+    );
+    create unique index if not exists web_queue_tabs_default
+    on web_queue_tabs(is_default)
+    where is_default = 1;
+    create unique index if not exists web_queue_tabs_active
+    on web_queue_tabs(active)
+    where active = 1;
+    create table if not exists claims (
+        id text primary key,
+        task_id text references tasks(id),
+        owner text not null,
+        scope text not null,
+        status text not null,
+        claimed_at_unix integer not null,
+        expires_at_unix integer,
+        released_at_unix integer,
+        metadata_json text
+    );
+    create table if not exists budgets (
+        id text primary key,
+        subject_type text not null,
+        subject_id text not null,
+        kind text not null,
+        unit text not null,
+        limit_value real,
+        used_value real not null default 0,
+        metadata_json text
+    );
+    create table if not exists recipes (
+        id text primary key,
+        name text not null,
+        version text not null,
+        enabled integer not null default 1,
+        description text,
+        command_template text,
+        metadata_json text,
+        unique(name, version)
+    );
+    pragma user_version = 1;
+";
+
 fn open_db() -> Result<Connection> {
     let path = db_path()?;
     fs::create_dir_all(
         path.parent()
             .context("state db path has no parent directory")?,
     )?;
-    let connection =
+    let mut connection =
         Connection::open(&path).with_context(|| format!("failed to open {}", path.display()))?;
     connection
         .busy_timeout(sqlite_busy_timeout())
         .context("failed to set state database busy timeout")?;
-    connection
-        .execute_batch(
-            "pragma journal_mode = wal;
-             pragma foreign_keys = on;
-             create table if not exists agents (
-                 id text primary key,
-                 track text not null,
-                 pid integer not null,
-                 started_at_unix integer not null,
-                 command_json text not null,
-                 cwd text,
-                 stdout_log_path text,
-                 stderr_log_path text,
-                 created_at_unix integer not null
-             );
-             create table if not exists runs (
-                 id text primary key,
-                 agent_id text references agents(id),
-                 kind text not null,
-                 status text not null,
-                 pid integer,
-                 command_json text,
-                 cwd text,
-                 started_at_unix integer,
-                 finished_at_unix integer,
-                 exit_code integer,
-                 metadata_json text
-             );
-             create table if not exists tasks (
-                 id text primary key,
-                 source text not null,
-                 title text not null,
-                 description text not null,
-                 status text not null,
-                 created_at_unix integer not null,
-                 updated_at_unix integer not null,
-                 repo_root text,
-                 cwd text,
-                 agent_id text,
-                 metadata_json text,
-                 sequence integer
-             );
-             create table if not exists task_sequence_counters (
-                 repo_root text primary key,
-                 next_sequence integer not null
-             );
-             create table if not exists task_topics (
-                 task_id text primary key references tasks(id),
-                 chat_id text not null,
-                 thread_id integer not null,
-                 topic_name text not null,
-                 source_message_id integer not null,
-                 unique(chat_id, thread_id)
-             );
-             create table if not exists schema_migrations (
-                 name text primary key,
-                 applied_at_unix integer not null
-             );
-             create table if not exists history (
-                 id integer primary key autoincrement,
-                 timestamp_unix integer not null,
-                 source text not null,
-                 role text not null,
-                 text text not null,
-                 task_id text references tasks(id),
-                 event_id integer references events(id)
-             );
-             create index if not exists history_timestamp on history(timestamp_unix);
-             create table if not exists events (
-                 id integer primary key autoincrement,
-                 timestamp_unix integer not null,
-                 source text not null,
-                 kind text not null,
-                 task_id text references tasks(id),
-                 agent_id text references agents(id),
-                 run_id text references runs(id),
-                 text text,
-                 metadata_json text
-             );
-             create table if not exists terminal_metadata (
-                 target text primary key,
-                 name text,
-                 scope text,
-                 updated_at_unix integer not null
-             );
-             create table if not exists web_queue_runs (
-                 id text primary key,
-                 status text not null,
-                 execution_mode text not null default 'sequence',
-                 execution_host text not null default 'local',
-                 selected_agent_command text not null,
-                 remote_launcher text,
-                 remote_agent_local_proxy text,
-                 remote_agent_remote_proxy text,
-                 selected_repo_root text,
-                 selected_repo_name text,
-                 track text not null,
-                 current_index integer not null,
-                 stop_requested integer not null default 0,
-                 message text not null,
-                 created_at_unix integer not null,
-                 updated_at_unix integer not null
-             );
-             create table if not exists web_queue_tabs (
-                 id text primary key,
-                 label text not null,
-                 run_id text references web_queue_runs(id) on delete set null,
-                 is_default integer not null default 0,
-                 active integer not null default 0,
-                 created_at_unix integer not null,
-                 updated_at_unix integer not null
-             );
-             create table if not exists web_queue_items (
-                 id text primary key,
-                 run_id text not null references web_queue_runs(id) on delete cascade,
-                 position integer not null,
-                 depends_on_json text not null default '[]',
-                 prompt text not null,
-                 slug text not null,
-                 repo_root text,
-                 repo_name text,
-                 execution_host text not null default 'local',
-                 agent_command text not null,
-                 remote_launcher text,
-                 remote_agent_local_proxy text,
-                 remote_agent_remote_proxy text,
-                 agent_id text,
-                 status text not null,
-                 message text not null,
-                 attempts integer not null default 0,
-                 recovery_attempts integer not null default 0,
-                 next_attempt_at_unix integer,
-                 started_at_unix integer not null,
-                 updated_at_unix integer not null,
-                 unique(run_id, position),
-                 unique(run_id, slug)
-             );
-             create table if not exists web_queue_item_attempts (
-                 run_id text not null,
-                 item_id text not null references web_queue_items(id) on delete cascade,
-                 semantic_iteration integer not null,
-                 agent_command text not null,
-                 agent_id text,
-                 task_record_id text,
-                 terminal_target text,
-                 stdout_log_path text,
-                 stderr_log_path text,
-                 bundle_path text,
-                 status text not null,
-                 failure_message text,
-                 started_at_unix integer not null,
-                 finished_at_unix integer,
-                 updated_at_unix integer not null,
-                 primary key(run_id, item_id, semantic_iteration)
-             );
-             create unique index if not exists web_queue_tabs_default
-             on web_queue_tabs(is_default)
-             where is_default = 1;
-             create unique index if not exists web_queue_tabs_active
-             on web_queue_tabs(active)
-             where active = 1;
-             create table if not exists claims (
-                 id text primary key,
-                 task_id text references tasks(id),
-                 owner text not null,
-                 scope text not null,
-                 status text not null,
-                 claimed_at_unix integer not null,
-                 expires_at_unix integer,
-                 released_at_unix integer,
-                 metadata_json text
-             );
-             create table if not exists budgets (
-                 id text primary key,
-                 subject_type text not null,
-                 subject_id text not null,
-                 kind text not null,
-                 unit text not null,
-                 limit_value real,
-                 used_value real not null default 0,
-                 metadata_json text
-             );
-             create table if not exists recipes (
-                 id text primary key,
-                 name text not null,
-                 version text not null,
-                 enabled integer not null default 1,
-                 description text,
-                 command_template text,
-                 metadata_json text,
-                 unique(name, version)
-             );
-             pragma user_version = 1;",
-        )
-        .context("failed to initialize state database")?;
-    migrate_state_schema(&connection)?;
+    initialize_state_database(&mut connection)?;
     Ok(connection)
 }
 
-fn migrate_state_schema(connection: &Connection) -> Result<()> {
+fn initialize_state_database(connection: &mut Connection) -> Result<()> {
+    connection
+        .execute_batch(
+            "pragma journal_mode = wal;
+             pragma foreign_keys = on;",
+        )
+        .context("failed to initialize state database pragmas")?;
+    apply_ordered_schema_migrations(connection)?;
+    ensure_default_web_queue_tab(connection)?;
+    scrub_non_task_sequences(connection)?;
+    seed_task_sequence_counters(connection)?;
+    backfill_task_sequences(connection)?;
+    Ok(())
+}
+
+fn apply_ordered_schema_migrations(connection: &mut Connection) -> Result<()> {
+    ensure_schema_migrations(connection)?;
+    for migration in SCHEMA_MIGRATIONS {
+        if schema_migration_applied(connection, migration.id)? {
+            continue;
+        }
+        let tx = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .with_context(|| format!("failed to begin schema migration {}", migration.id))?;
+        (migration.apply)(&tx).with_context(|| format!("failed to apply schema migration {}", migration.id))?;
+        tx.execute(
+            "insert into schema_migrations (name, applied_at_unix)
+             values (?1, ?2)
+             on conflict(name) do nothing",
+            params![
+                migration.id,
+                i64::try_from(unix_now()).unwrap_or(i64::MAX)
+            ],
+        )
+        .with_context(|| format!("failed to record schema migration {}", migration.id))?;
+        tx.commit()
+            .with_context(|| format!("failed to commit schema migration {}", migration.id))?;
+    }
+    Ok(())
+}
+
+fn apply_initial_state_schema(connection: &Connection) -> Result<()> {
+    connection
+        .execute_batch(INITIAL_STATE_SCHEMA_SQL)
+        .context("failed to initialize state schema")?;
+    Ok(())
+}
+
+fn apply_task_record_repo_context_schema(connection: &Connection) -> Result<()> {
     ensure_column(connection, "tasks", "repo_root", "text")?;
     ensure_column(connection, "tasks", "cwd", "text")?;
     ensure_column(connection, "tasks", "agent_id", "text")?;
     ensure_column(connection, "tasks", "metadata_json", "text")?;
     ensure_column(connection, "tasks", "sequence", "integer")?;
     ensure_column(connection, "agents", "cwd", "text")?;
-    ensure_web_queue_schema(connection)?;
-    ensure_default_web_queue_tab(connection)?;
+    Ok(())
+}
+
+fn apply_web_queue_schema(connection: &Connection) -> Result<()> {
+    ensure_web_queue_schema(connection)
+}
+
+fn apply_web_queue_execution_metadata_schema(connection: &Connection) -> Result<()> {
     ensure_column(
         connection,
         "web_queue_runs",
@@ -259,7 +338,10 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
     )?;
     ensure_web_queue_item_attempt_schema(connection)?;
     backfill_web_queue_item_attempts(connection)?;
-    ensure_schema_migrations(connection)?;
+    Ok(())
+}
+
+fn apply_task_sequence_counter_schema(connection: &Connection) -> Result<()> {
     connection
         .execute(
             "create table if not exists task_sequence_counters (
@@ -269,8 +351,6 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
             [],
         )
         .context("failed to create task sequence counters table")?;
-    repair_legacy_task_sequence_pollution_once(connection)?;
-    scrub_non_task_sequences(connection)?;
     connection
         .execute(
             "create unique index if not exists tasks_repo_sequence
@@ -279,8 +359,6 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
             [],
         )
         .context("failed to create task sequence index")?;
-    seed_task_sequence_counters(connection)?;
-    backfill_task_sequences(connection)?;
     Ok(())
 }
 
@@ -662,11 +740,7 @@ fn max_task_sequence(connection: &Connection, repo_root: &str) -> Result<u64> {
     u64::try_from(value).context("task sequence overflow")
 }
 
-fn repair_legacy_task_sequence_pollution_once(connection: &Connection) -> Result<()> {
-    const MIGRATION: &str = "task_sequence_task_sources_only_v1";
-    if schema_migration_applied(connection, MIGRATION)? {
-        return Ok(());
-    }
+fn repair_legacy_task_sequence_pollution(connection: &Connection) -> Result<()> {
     scrub_non_task_sequences(connection)?;
 
     let mut statement = connection
@@ -694,15 +768,6 @@ fn repair_legacy_task_sequence_pollution_once(connection: &Connection) -> Result
             )
             .context("failed to repair task sequence counter")?;
     }
-
-    connection
-        .execute(
-            "insert into schema_migrations (name, applied_at_unix)
-             values (?1, ?2)
-             on conflict(name) do nothing",
-            params![MIGRATION, i64::try_from(unix_now()).unwrap_or(i64::MAX)],
-        )
-        .context("failed to record task sequence repair migration")?;
     Ok(())
 }
 
@@ -1100,4 +1165,290 @@ fn unix_now() -> u64 {
 
 fn unescape_field(value: &str) -> String {
     value.replace("\\t", "\t").replace("\\\\", "\\")
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::{initialize_state_database, SCHEMA_MIGRATIONS};
+
+    const REPRESENTATIVE_LEGACY_SCHEMA_SQL: &str = "
+        create table agents (
+            id text primary key,
+            track text not null,
+            pid integer not null,
+            started_at_unix integer not null,
+            command_json text not null,
+            stdout_log_path text,
+            stderr_log_path text,
+            created_at_unix integer not null
+        );
+        create table tasks (
+            id text primary key,
+            source text not null,
+            title text not null,
+            description text not null,
+            status text not null,
+            created_at_unix integer not null,
+            updated_at_unix integer not null
+        );
+        create table web_queue_runs (
+            id text primary key,
+            status text not null,
+            selected_agent_command text not null,
+            selected_repo_root text,
+            selected_repo_name text,
+            track text not null,
+            current_index integer not null,
+            stop_requested integer not null default 0,
+            message text not null,
+            created_at_unix integer not null,
+            updated_at_unix integer not null
+        );
+        create table web_queue_items (
+            id text primary key,
+            run_id text not null references web_queue_runs(id) on delete cascade,
+            position integer not null,
+            prompt text not null,
+            slug text not null,
+            repo_root text,
+            repo_name text,
+            agent_command text not null,
+            agent_id text,
+            status text not null,
+            message text not null,
+            attempts integer not null default 0,
+            next_attempt_at_unix integer,
+            started_at_unix integer not null,
+            updated_at_unix integer not null,
+            unique(run_id, position),
+            unique(run_id, slug)
+        );
+    ";
+
+    #[test]
+    fn representative_legacy_schema_migrates_queue_data_and_records_migrations() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        create_representative_legacy_schema(&connection);
+        insert_legacy_queue_data(&connection);
+
+        initialize_state_database(&mut connection).unwrap();
+
+        let task_count: i64 = connection
+            .query_row("select count(*) from tasks where id = 'task/legacy'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(task_count, 1);
+
+        let run = connection
+            .query_row(
+                "select execution_mode, execution_host, remote_launcher
+                 from web_queue_runs
+                 where id = 'run-legacy'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(run, ("sequence".to_string(), "local".to_string(), None));
+
+        let item = connection
+            .query_row(
+                "select depends_on_json, execution_host, recovery_attempts
+                 from web_queue_items
+                 where run_id = 'run-legacy' and id = 'item-legacy'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(item, ("[]".to_string(), "local".to_string(), 0));
+
+        let default_tab = connection
+            .query_row(
+                "select run_id, active, is_default
+                 from web_queue_tabs
+                 where id = 'default'",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(default_tab, (Some("run-legacy".to_string()), 1, 1));
+
+        for migration in SCHEMA_MIGRATIONS {
+            assert!(migration_recorded(&connection, migration.id));
+        }
+    }
+
+    #[test]
+    fn fresh_and_migrated_schema_have_equivalent_table_column_and_index_coverage() {
+        let mut fresh = Connection::open_in_memory().unwrap();
+        initialize_state_database(&mut fresh).unwrap();
+
+        let mut migrated = Connection::open_in_memory().unwrap();
+        create_representative_legacy_schema(&migrated);
+        initialize_state_database(&mut migrated).unwrap();
+
+        assert_eq!(schema_signature(&fresh), schema_signature(&migrated));
+    }
+
+    #[test]
+    fn schema_migration_registry_is_idempotent() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        initialize_state_database(&mut connection).unwrap();
+        let schema = schema_signature(&connection);
+        let migration_count = recorded_migration_count(&connection);
+
+        initialize_state_database(&mut connection).unwrap();
+
+        assert_eq!(schema_signature(&connection), schema);
+        assert_eq!(recorded_migration_count(&connection), migration_count);
+        assert_eq!(migration_count, SCHEMA_MIGRATIONS.len());
+    }
+
+    fn create_representative_legacy_schema(connection: &Connection) {
+        connection
+            .execute_batch(REPRESENTATIVE_LEGACY_SCHEMA_SQL)
+            .unwrap();
+    }
+
+    fn insert_legacy_queue_data(connection: &Connection) {
+        connection
+            .execute(
+                "insert into tasks
+                     (id, source, title, description, status, created_at_unix, updated_at_unix)
+                 values ('task/legacy', 'manual', 'Legacy', 'Legacy task', 'open', 10, 10)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into web_queue_runs
+                     (id, status, selected_agent_command, selected_repo_root, selected_repo_name,
+                      track, current_index, stop_requested, message, created_at_unix, updated_at_unix)
+                 values ('run-legacy', 'running', 'c1', '/repo', 'repo', 'track', 0, 0,
+                         'running', 20, 30)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into web_queue_items
+                     (id, run_id, position, prompt, slug, repo_root, repo_name, agent_command,
+                      agent_id, status, message, attempts, next_attempt_at_unix, started_at_unix,
+                      updated_at_unix)
+                 values ('item-legacy', 'run-legacy', 0, 'prompt', 'legacy', '/repo', 'repo',
+                         'c1', null, 'pending', 'pending', 0, null, 20, 30)",
+                [],
+            )
+            .unwrap();
+    }
+
+    fn migration_recorded(connection: &Connection, id: &str) -> bool {
+        connection
+            .query_row(
+                "select exists(select 1 from schema_migrations where name = ?1)",
+                [id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            != 0
+    }
+
+    fn recorded_migration_count(connection: &Connection) -> usize {
+        let count: i64 = connection
+            .query_row("select count(*) from schema_migrations", [], |row| row.get(0))
+            .unwrap();
+        usize::try_from(count).unwrap()
+    }
+
+    fn schema_signature(connection: &Connection) -> Vec<String> {
+        let mut entries = Vec::new();
+        for table in schema_tables(connection) {
+            entries.push(format!("table:{table}"));
+            entries.extend(table_columns(connection, &table));
+        }
+        entries.extend(schema_indexes(connection));
+        entries.sort();
+        entries
+    }
+
+    fn schema_tables(connection: &Connection) -> Vec<String> {
+        let mut statement = connection
+            .prepare(
+                "select name
+                 from sqlite_schema
+                 where type = 'table' and name not like 'sqlite_%'
+                 order by name",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn table_columns(connection: &Connection, table: &str) -> Vec<String> {
+        let mut statement = connection
+            .prepare(&format!("pragma table_info({table})"))
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                let name = row.get::<_, String>(1)?;
+                let type_name = row.get::<_, String>(2)?;
+                let not_null = row.get::<_, i64>(3)?;
+                let default_value = row.get::<_, Option<String>>(4)?.unwrap_or_default();
+                let primary_key = row.get::<_, i64>(5)?;
+                Ok(format!(
+                    "column:{table}:{name}:{type_name}:{not_null}:{default_value}:{primary_key}"
+                ))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn schema_indexes(connection: &Connection) -> Vec<String> {
+        let mut statement = connection
+            .prepare(
+                "select name, tbl_name, sql
+                 from sqlite_schema
+                 where type = 'index' and name not like 'sqlite_autoindex_%'
+                 order by name",
+            )
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                let name = row.get::<_, String>(0)?;
+                let table = row.get::<_, String>(1)?;
+                let sql = row.get::<_, Option<String>>(2)?.unwrap_or_default();
+                Ok(format!("index:{name}:{table}:{}", normalize_sql(&sql)))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
+    }
+
+    fn normalize_sql(sql: &str) -> String {
+        sql.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
 }
