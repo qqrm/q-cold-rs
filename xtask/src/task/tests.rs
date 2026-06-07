@@ -192,6 +192,68 @@ mod tests {
     }
 
     #[test]
+    fn metadata_only_task_cleanup_removes_unregistered_residue_with_missing_branch() {
+        let root = unique_test_dir("qcold-metadata-only-task-cleanup");
+        let primary = root.join("primary");
+        run_git_in(&root, ["init", path_arg(&primary)]);
+        run_git_in(&primary, ["config", "user.name", "tester"]);
+        run_git_in(&primary, ["config", "user.email", "tester@example.com"]);
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        run_git_in(&primary, ["add", "README.md"]);
+        run_git_in(&primary, ["commit", "-m", "seed"]);
+
+        let residue = root.join("WT/primary/003-residue");
+        let mut task = test_task_env();
+        task.primary_repo_path = primary.clone();
+        task.task_worktree = residue.clone();
+        task.task_branch = "task/residue".into();
+        task.task_name = "residue".into();
+        task.status = "failed-closeout".into();
+        write_task_env(&task).unwrap();
+
+        let cleanup = clear_metadata_only_task_residue(&primary).unwrap();
+
+        assert_eq!(cleanup.removed, 1);
+        assert!(!residue.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn metadata_only_task_cleanup_preserves_source_files_and_existing_branches() {
+        let root = unique_test_dir("qcold-metadata-only-task-preserve");
+        let primary = root.join("primary");
+        run_git_in(&root, ["init", path_arg(&primary)]);
+        run_git_in(&primary, ["config", "user.name", "tester"]);
+        run_git_in(&primary, ["config", "user.email", "tester@example.com"]);
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        run_git_in(&primary, ["add", "README.md"]);
+        run_git_in(&primary, ["commit", "-m", "seed"]);
+        run_git_in(&primary, ["branch", "task/branch-residue"]);
+
+        let source_residue = root.join("WT/primary/004-source-residue");
+        let mut source_task = test_task_env();
+        source_task.primary_repo_path = primary.clone();
+        source_task.task_worktree = source_residue.clone();
+        source_task.task_branch = "task/source-residue".into();
+        write_task_env(&source_task).unwrap();
+        fs::write(source_residue.join("change.txt"), "keep\n").unwrap();
+
+        let branch_residue = root.join("WT/primary/005-branch-residue");
+        let mut branch_task = test_task_env();
+        branch_task.primary_repo_path = primary.clone();
+        branch_task.task_worktree = branch_residue.clone();
+        branch_task.task_branch = "task/branch-residue".into();
+        write_task_env(&branch_task).unwrap();
+
+        let cleanup = clear_metadata_only_task_residue(&primary).unwrap();
+
+        assert_eq!(cleanup.removed, 0);
+        assert!(source_residue.exists());
+        assert!(branch_residue.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn orphan_task_cleanup_removes_detached_top_level_managed_worktrees() {
         let root = unique_test_dir("qcold-orphan-task-cleanup");
         let primary = root.join("primary");

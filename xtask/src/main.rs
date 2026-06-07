@@ -333,11 +333,18 @@ fn list_command() -> Result<u8> {
 
 fn terminal_check_command() -> Result<u8> {
     let repo = task_inventory_repo_root()?;
+    let metadata_cleanup = clear_metadata_only_task_residue(&repo)?;
     let terminal_cleanup = clear_terminal_task_worktrees(&repo)?;
     let orphan_cleanup = clear_orphan_task_worktrees(&repo)?;
     let cleanup = clear_stale_paused_tasks(&repo, paused_task_ttl_hours()?)?;
     let bundle_cleanup = clear_stale_bundles(&repo, bundle_retention_hours()?)?;
     prune_git_worktree_metadata(&repo)?;
+    if metadata_cleanup.removed > 0 {
+        println!(
+            "metadata-only-task-cleanup\tremoved={}",
+            metadata_cleanup.removed
+        );
+    }
     if terminal_cleanup.removed > 0 {
         println!(
             "terminal-task-cleanup\tremoved={}",
@@ -560,6 +567,7 @@ fn remove_success_task_worktree(task: &TaskEnv) -> Result<()> {
             path_arg(&task.task_worktree),
         ],
     )?;
+    remove_metadata_only_task_dir(&task.task_worktree)?;
     Ok(())
 }
 
@@ -914,11 +922,16 @@ fn orphan_list_command() -> Result<u8> {
 
 fn orphan_clear_stale_command(max_age_hours: u64) -> Result<u8> {
     let repo = task_inventory_repo_root()?;
+    let metadata_cleanup = clear_metadata_only_task_residue(&repo)?;
     let terminal_cleanup = clear_terminal_task_worktrees(&repo)?;
     let orphan_cleanup = clear_orphan_task_worktrees(&repo)?;
     let cleanup = clear_stale_paused_tasks(&repo, max_age_hours)?;
     let bundle_cleanup = clear_stale_bundles(&repo, bundle_retention_hours()?)?;
     prune_git_worktree_metadata(&repo)?;
+    println!(
+        "metadata-only-task-clear\tremoved={}",
+        metadata_cleanup.removed
+    );
     println!("terminal-task-clear\tremoved={}", terminal_cleanup.removed);
     println!("orphan-task-clear\tremoved={}", orphan_cleanup.removed);
     println!(

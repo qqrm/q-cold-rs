@@ -10,6 +10,40 @@ fn clear_terminal_task_worktrees(repo: &Path) -> Result<TaskWorktreeCleanup> {
     Ok(TaskWorktreeCleanup { removed })
 }
 
+fn clear_metadata_only_task_residue(repo: &Path) -> Result<TaskWorktreeCleanup> {
+    let managed = managed_root(repo)?;
+    if !managed.exists() {
+        return Ok(TaskWorktreeCleanup { removed: 0 });
+    }
+    let managed = managed
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", managed.display()))?;
+    let registered_worktrees = git_worktree_paths(repo)?
+        .into_iter()
+        .filter_map(|path| path.canonicalize().ok())
+        .collect::<BTreeSet<_>>();
+    let mut removed = 0;
+    for task in open_tasks(repo)? {
+        if !task.task_worktree.exists() || !metadata_only_task_dir(&task.task_worktree)? {
+            continue;
+        }
+        let worktree = task
+            .task_worktree
+            .canonicalize()
+            .with_context(|| format!("failed to resolve {}", task.task_worktree.display()))?;
+        if !is_direct_child(&managed, &worktree) || registered_worktrees.contains(&worktree) {
+            continue;
+        }
+        if !task_branch_is_missing(repo, &task.task_branch)? {
+            continue;
+        }
+        fs::remove_dir_all(&task.task_worktree)
+            .with_context(|| format!("failed to remove {}", task.task_worktree.display()))?;
+        removed += 1;
+    }
+    Ok(TaskWorktreeCleanup { removed })
+}
+
 fn clear_finished_task_worktree(repo: &Path, task: &TaskEnv) -> Result<()> {
     if task.task_worktree.exists() {
         let _ = run_git(&task.task_worktree, ["checkout", "--detach"]);
@@ -22,6 +56,7 @@ fn clear_finished_task_worktree(repo: &Path, task: &TaskEnv) -> Result<()> {
                 path_arg(&task.task_worktree),
             ],
         )?;
+        remove_metadata_only_task_dir(&task.task_worktree)?;
     }
     let _ = run_git(repo, ["branch", "-D", &task.task_branch]);
     Ok(())
@@ -71,6 +106,38 @@ fn git_worktree_paths(repo: &Path) -> Result<Vec<PathBuf>> {
         .filter_map(|line| line.strip_prefix("worktree "))
         .map(PathBuf::from)
         .collect())
+}
+
+fn metadata_only_task_dir(path: &Path) -> Result<bool> {
+    if !path.is_dir() || !path.join(".task/task.env").is_file() {
+        return Ok(false);
+    }
+    let mut found_task_dir = false;
+    for entry in fs::read_dir(path).with_context(|| format!("failed to read {}", path.display()))? {
+        let entry = entry?;
+        if entry.file_name().to_string_lossy() != ".task" || !entry.file_type()?.is_dir() {
+            return Ok(false);
+        }
+        found_task_dir = true;
+    }
+    Ok(found_task_dir)
+}
+
+fn remove_metadata_only_task_dir(path: &Path) -> Result<()> {
+    if metadata_only_task_dir(path)? {
+        fs::remove_dir_all(path).with_context(|| format!("failed to remove {}", path.display()))?;
+    }
+    Ok(())
+}
+
+fn task_branch_is_missing(repo: &Path, branch: &str) -> Result<bool> {
+    let branch = branch.trim();
+    if branch.is_empty() {
+        return Ok(false);
+    }
+    Ok(git_output(repo, ["branch", "--list", branch])?
+        .trim()
+        .is_empty())
 }
 
 fn is_direct_child(parent: &Path, child: &Path) -> bool {

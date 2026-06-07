@@ -68,10 +68,11 @@ Use `qcold task pause --reason "<reason>"` for a non-terminal wait. Use terminal
 blocked/failed closeout only when the task is actually stopped.
 Successful, blocked, and failed terminal closeouts remove their managed task
 worktrees after writing the terminal bundle. Health and stale-cleanup commands
-also prune leftover `closed:*` task worktrees, top-level detached managed
-worktrees with no `.task/task.env`, and stale Git worktree metadata. `open`,
-`paused`, and `failed-closeout` worktrees are preserved because they still need
-resume, operator action, or closeout repair.
+also prune leftover `closed:*` task worktrees, metadata-only direct-child task
+directories whose task branch is gone, top-level detached managed worktrees with
+no `.task/task.env`, and stale Git worktree metadata. `open`, `paused`, and
+`failed-closeout` worktrees are preserved when a repairable Git worktree still
+exists because they still need resume, operator action, or closeout repair.
 
 ## Queue
 
