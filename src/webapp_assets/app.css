@@ -13,6 +13,7 @@
       --bad: #b42318;
       --info: #2563eb;
       --shadow: rgba(20, 28, 44, .08);
+      --z-system-strip: 10; --z-dashboard-toast: 30; --z-dashboard-modal: 100;
     }
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
@@ -827,12 +828,9 @@
     .terminal-slash-menu span { white-space: nowrap; }
     .transcript-modal[hidden] { display: none; }
     .transcript-modal {
-      position: fixed; inset: 0;
-      z-index: 20;
-      display: grid;
-      place-items: center;
-      padding: 18px;
-      background: rgba(0, 0, 0, .56);
+      position: fixed; inset: 0; z-index: var(--z-dashboard-modal); isolation: isolate;
+      display: grid; place-items: center;
+      padding: 18px; background: rgba(0, 0, 0, .74); backdrop-filter: blur(2px);
     }
     .transcript-dialog {
       width: min(960px, calc(100vw - 36px));
@@ -943,7 +941,7 @@
       left: max(12px, calc((100vw - 1120px) / 2 + 16px));
       right: max(12px, calc((100vw - 1120px) / 2 + 16px));
       bottom: 12px;
-      z-index: 10;
+      z-index: var(--z-system-strip);
       display: flex;
       align-items: center;
       justify-content: space-between;

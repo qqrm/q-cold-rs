@@ -257,6 +257,19 @@ mod asset_tests {
     }
 
     #[test]
+    fn dashboard_modals_have_a_dedicated_top_layer() {
+        let strip = css_var_usize(APP_CSS, "--z-system-strip");
+        let toast = css_var_usize(APP_CSS, "--z-dashboard-toast");
+        let modal = css_var_usize(APP_CSS, "--z-dashboard-modal");
+
+        assert!(strip < toast);
+        assert!(toast < modal);
+        assert!(QUEUE_CSS.contains("z-index: var(--z-dashboard-toast);"));
+        assert!(APP_CSS.contains("z-index: var(--z-dashboard-modal);"));
+        assert!(APP_CSS.contains("background: rgba(0, 0, 0, .74);"));
+    }
+
+    #[test]
     fn terminal_metadata_edit_uses_full_header_layout() {
         assert!(APP_CSS.contains(".terminal-head.editing-terminal-meta"));
         assert!(APP_JS.contains("classList.add('editing-terminal-meta')"));
@@ -369,5 +382,15 @@ mod asset_tests {
         assert!(!APP_JS.contains("/api/queue/tab/switch"));
         assert!(APP_JS.contains("tab_id: activeQueueTabId"));
         assert!(APP_JS.contains("QcoldApi.clearQueue(runId)"));
+    }
+
+    fn css_var_usize(css: &str, name: &str) -> usize {
+        let value = css
+            .split_once(name)
+            .and_then(|(_, rest)| rest.split_once(':'))
+            .and_then(|(_, rest)| rest.split_once(';'))
+            .map(|(value, _)| value.trim())
+            .unwrap();
+        value.parse().unwrap()
     }
 }
