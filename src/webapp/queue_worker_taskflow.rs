@@ -573,6 +573,7 @@ fn queue_task_record_matches_item(
     }
     queue_task_record_launcher_matches_item(item, record)
         || legacy_local_item_matches_remote_terminal_record(item, record)
+        || remote_native_terminal_record_without_launcher_matches_item(item, record)
 }
 
 fn legacy_local_item_matches_remote_terminal_record(
@@ -583,6 +584,21 @@ fn legacy_local_item_matches_remote_terminal_record(
         && record.source == "task-flow"
         && queue_task_status_terminal(&record.status)
         && task_record_remote_launcher(record).is_some()
+}
+
+fn remote_native_terminal_record_without_launcher_matches_item(
+    item: &state::QueueItemRow,
+    record: &state::TaskRecordRow,
+) -> bool {
+    queue_item_remote_native(item)
+        && item.remote_launcher.is_some()
+        && record.source == "task-flow"
+        && queue_task_status_terminal(&record.status)
+        && task_record_remote_launcher(record).is_none()
+        && record
+            .agent_id
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
 }
 
 fn queue_task_record_agent_matches_item(

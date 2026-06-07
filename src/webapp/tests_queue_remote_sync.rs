@@ -461,6 +461,79 @@ mod queue_remote_sync_tests {
     }
 
     #[cfg(unix)]
+    #[test]
+    fn remote_native_running_sequence_accepts_imported_success_without_resync() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let sync_attempt = temp.path().join("sync-attempted");
+        let remote_launcher = temp.path().join("remote-dev-env");
+        fs::write(
+            &remote_launcher,
+            format!(
+                "#!/bin/sh\n\
+                 touch {}\n\
+                 exit 1\n",
+                shell_quote(&sync_attempt),
+            ),
+        )
+        .unwrap();
+        make_executable(&remote_launcher);
+        let run = queue_run("remote-native-imported-success-sequence", &repo);
+        let mut first = queue_item("iouring-rust-03-fd-semantics", &repo);
+        first.run_id = run.id.clone();
+        first.id = "03-fd-semantics".to_string();
+        first.position = 3;
+        first.execution_host = "remote-native".into();
+        first.remote_launcher = Some(remote_launcher.display().to_string());
+        first.status = "running".into();
+        first.agent_id = Some("qa-iouring-rust-03-fd-semantics".to_string());
+        let mut second = queue_item("iouring-rust-04-eager-executor", &repo);
+        second.run_id = run.id.clone();
+        second.id = "04-eager-executor".to_string();
+        second.position = 4;
+        state::replace_web_queue(&run, &[first, second]).unwrap();
+        state::upsert_task_record(&state::new_task_record(
+            "task/iouring-rust-03-fd-semantics".to_string(),
+            "task-flow".to_string(),
+            "Iouring Rust 03 Fd Semantics".to_string(),
+            "Remote work".to_string(),
+            "closed:success".to_string(),
+            Some(repo.display().to_string()),
+            Some("/home/abeliakov/vitastor".to_string()),
+            Some("abeliakov".to_string()),
+            None,
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+
+        assert!(!sync_attempt.exists(), "queue tried remote sync despite imported success");
+        assert_eq!(
+            stored_items
+                .iter()
+                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .collect::<Vec<_>>(),
+            [("03-fd-semantics", "success"), ("04-eager-executor", "pending")]
+        );
+        assert_eq!(
+            queue_ready_items(&stored_run, &stored_items)
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            ["04-eager-executor"]
+        );
+    }
+
+    #[cfg(unix)]
     fn make_executable(path: &Path) {
         use std::os::unix::fs::PermissionsExt;
 

@@ -252,6 +252,47 @@ fn sync_remote_preserves_newer_terminal_status() {
 }
 
 #[test]
+fn sync_remote_times_out_hung_remote_launcher() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let local_repo = temp.path().join("vitastor");
+    git_init(&local_repo);
+    let remote = temp.path().join("remote-dev-env");
+    write_executable(
+        &remote,
+        concat!(
+            "#!/bin/sh\n",
+            "sleep 10\n",
+            "printf 'task-record-export\\tcount=0\\n'\n",
+        ),
+    );
+
+    let assert = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "sync-remote",
+            "--via",
+            remote.to_str().unwrap(),
+            "--local-repo-root",
+            local_repo.to_str().unwrap(),
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env("QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS", "1")
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .failure();
+
+    let stderr = String::from_utf8(assert.get_output().stderr.clone()).unwrap();
+    assert!(stderr.contains("timed out after 1s"), "{stderr}");
+    assert!(
+        stderr.contains("remote repository task-record export"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn sync_remote_retries_transient_task_record_write_lock() {
     let temp = tempdir().unwrap();
     let state_dir = temp.path().join("state");

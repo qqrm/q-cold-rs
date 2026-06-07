@@ -2,6 +2,9 @@ fn queue_task_status(item: &state::QueueItemRow) -> Result<Option<String>> {
     let task_id = format!("task/{}", item.slug);
     let local_status = queue_task_status_from_local_records(item, &task_id)?;
     if item.remote_launcher.is_some() {
+        if local_status.closed_success() {
+            return Ok(local_status.status);
+        }
         let required_remote_native_sync = remote_native_requires_task_record_sync(item);
         if !required_remote_native_sync && local_status.supersedes_optional_remote_sync() {
             return Ok(local_status.status);
@@ -53,6 +56,10 @@ impl QueueTaskLocalStatus {
             && self.status.as_deref().is_some_and(|status| {
                 status == "closed:success" || !queue_task_status_terminal(status)
             })
+    }
+
+    fn closed_success(&self) -> bool {
+        self.status.as_deref() == Some("closed:success")
     }
 }
 

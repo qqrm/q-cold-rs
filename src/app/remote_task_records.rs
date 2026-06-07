@@ -10,6 +10,9 @@ struct RemoteTaskRecordSyncSummary {
 
 const REMOTE_TASK_RECORD_UPSERT_LOCK_RETRIES: usize = 8;
 const REMOTE_TASK_RECORD_UPSERT_LOCK_RETRY_MS: u64 = 100;
+const DEFAULT_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECS: u64 = 30;
+const REMOTE_TASK_RECORD_SYNC_TIMEOUT_ENV: &str = "QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS";
+const REMOTE_TASK_RECORD_SYNC_KILL_GRACE: Duration = Duration::from_secs(2);
 
 impl RemoteTaskRecordSyncSummary {
     fn render(&self) -> String {
@@ -178,10 +181,7 @@ fn remote_qcold_task_record_list(via: &str, limit: usize) -> Result<Vec<state::T
 fn remote_qcold_output(via: &str, qcold_args: &[&str]) -> Result<String> {
     let mut command = Command::new(via);
     command.arg("qcold").args(qcold_args);
-    output_guard::scrub_inherited_output_guard(&mut command);
-    let output = command
-        .output()
-        .with_context(|| format!("failed to run remote Q-COLD through {via}"))?;
+    let output = remote_command_output(&mut command, "remote Q-COLD", via)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("remote Q-COLD exited with {}: {}", output.status, stderr.trim());
@@ -196,15 +196,145 @@ fn remote_adapter_output(
 ) -> Result<String> {
     let mut command = Command::new(&remote.via);
     append_remote_adapter_words(&mut command, remote, adapter_args);
-    output_guard::scrub_inherited_output_guard(&mut command);
-    let output = command
-        .output()
-        .with_context(|| format!("failed to run {context} through {}", remote.via))?;
+    let output = remote_command_output(&mut command, context, &remote.via)?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         anyhow::bail!("{context} exited with {}: {}", output.status, stderr.trim());
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn remote_command_output(command: &mut Command, context: &str, via: &str) -> Result<std::process::Output> {
+    output_guard::scrub_inherited_output_guard(command);
+    configure_remote_command_group(command);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let timeout = remote_task_record_sync_timeout();
+    let mut child = command
+        .spawn()
+        .with_context(|| format!("failed to run {context} through {via}"))?;
+    if remote_command_timed_out(&mut child, timeout)? {
+        terminate_remote_command(&mut child);
+        let output = child
+            .wait_with_output()
+            .with_context(|| format!("failed to collect timed-out {context} output"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "{context} through {via} timed out after {}s: {}",
+            timeout.as_secs(),
+            compact_remote_process_output(&stdout, &stderr),
+        );
+    }
+    child
+        .wait_with_output()
+        .with_context(|| format!("failed to collect {context} output"))
+}
+
+fn remote_command_timed_out(child: &mut std::process::Child, timeout: Duration) -> Result<bool> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        if child
+            .try_wait()
+            .context("failed to poll remote task-record sync")?
+            .is_some()
+        {
+            return Ok(false);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(true);
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+fn remote_task_record_sync_timeout() -> Duration {
+    let seconds = std::env::var(REMOTE_TASK_RECORD_SYNC_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECS);
+    Duration::from_secs(seconds)
+}
+
+#[cfg(unix)]
+fn configure_remote_command_group(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: the child-side closure only calls async-signal-safe setsid(2)
+    // before exec, returning the OS error directly on failure.
+    unsafe {
+        command.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn configure_remote_command_group(_command: &mut Command) {}
+
+fn terminate_remote_command(child: &mut std::process::Child) {
+    terminate_remote_command_tree(child);
+    let deadline = std::time::Instant::now() + REMOTE_TASK_RECORD_SYNC_KILL_GRACE;
+    while std::time::Instant::now() < deadline {
+        if child.try_wait().ok().flatten().is_some() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    terminate_remote_command_force(child);
+}
+
+#[cfg(unix)]
+fn terminate_remote_command_tree(child: &mut std::process::Child) {
+    let Ok(pid) = libc::pid_t::try_from(child.id()) else {
+        let _ = child.kill();
+        return;
+    };
+    // SAFETY: the child was started in its own session/process group by
+    // configure_remote_command_group, so -pid targets only that launcher tree.
+    unsafe {
+        libc::kill(-pid, libc::SIGTERM);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_remote_command_tree(child: &mut std::process::Child) {
+    let _ = child.kill();
+}
+
+#[cfg(unix)]
+fn terminate_remote_command_force(child: &mut std::process::Child) {
+    let Ok(pid) = libc::pid_t::try_from(child.id()) else {
+        let _ = child.kill();
+        return;
+    };
+    // SAFETY: the process group belongs to the timed-out child launcher tree.
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_remote_command_force(child: &mut std::process::Child) {
+    let _ = child.kill();
+}
+
+fn compact_remote_process_output(stdout: &str, stderr: &str) -> String {
+    const MAX_PROCESS_OUTPUT: usize = 1200;
+
+    let text = format!("{}{}", stdout.trim(), stderr.trim());
+    if text.is_empty() {
+        return "<no output>".to_string();
+    }
+    let mut chars = text.chars();
+    let compacted = chars.by_ref().take(MAX_PROCESS_OUTPUT).collect::<String>();
+    if chars.next().is_none() {
+        return text;
+    }
+    format!("{compacted}...")
 }
 
 fn append_remote_adapter_words(
