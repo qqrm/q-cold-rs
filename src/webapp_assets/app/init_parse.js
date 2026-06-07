@@ -63,7 +63,15 @@ const tg = typeof QcoldTelegram === 'undefined' ? null : QcoldTelegram;
     let queueItems = (queueSaved.items || [])
       .map((item) => ({ ...defaultQueueItem(), ...item }));
     let queueWaves = normalizeQueueWaves(queueSaved.waves || [], queueItems);
-    let queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+    let queueRun = {
+      running: false,
+      stopped: false,
+      stop: false,
+      activeIndex: -1,
+      runId: '',
+      status: '',
+      executionMode: '',
+    };
     let transcriptContext = { taskId: '', terminalTarget: '', chatAvailable: false };
     let agentLimits = null;
     let agentLimitsLoading = false;
@@ -713,6 +721,7 @@ const tg = typeof QcoldTelegram === 'undefined' ? null : QcoldTelegram;
           activeIndex: Number(activeTab.run.current_index ?? -1),
           runId: nextRunId,
           status: activeTab.run.status || '',
+          executionMode: nextExecutionMode,
         };
         queueGraphMode = nextExecutionMode === QcoldQueueExecutionMode.Graph;
         return;
@@ -785,7 +794,15 @@ const tg = typeof QcoldTelegram === 'undefined' ? null : QcoldTelegram;
 
     function loadActiveQueueDraft() {
       const saved = loadQueueStorageForTab(activeQueueTabId);
-      queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+      queueRun = {
+        running: false,
+        stopped: false,
+        stop: false,
+        activeIndex: -1,
+        runId: '',
+        status: '',
+        executionMode: '',
+      };
       queueItems = (saved.items || []).map((item) => ({ ...defaultQueueItem(), ...item }));
       queueWaves = normalizeQueueWaves(saved.waves || [], queueItems, { pruneBackendEmpty: true });
       queueGraphMode = typeof saved.graphMode === 'boolean'
@@ -794,7 +811,15 @@ const tg = typeof QcoldTelegram === 'undefined' ? null : QcoldTelegram;
     }
 
     function reconcileDraftQueueItems() {
-      queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+      queueRun = {
+        running: false,
+        stopped: false,
+        stop: false,
+        activeIndex: -1,
+        runId: '',
+        status: '',
+        executionMode: '',
+      };
       let changed = false;
       const beforeCount = queueItems.length;
       queueItems = queueItems.filter((item) => !isStaleQueueItem(item));

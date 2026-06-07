@@ -661,6 +661,7 @@
         activeIndex: -1,
         runId: existingQueueRunId() || Date.now().toString(36),
         status: QcoldQueueRunStatus.Starting,
+        executionMode: queueGraphMode ? QcoldQueueExecutionMode.Graph : QcoldQueueExecutionMode.Sequence,
       };
       const usedSlugs = usedQueueSlugs(queueRun.runId);
       queueItems = queueItems.map((item, index) => {
@@ -702,7 +703,15 @@
         });
         applyQueueGraphDiagnostics(payload, { markErrors: payload.ok === false });
         if (payload.ok === false) {
-          queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+          queueRun = {
+            running: false,
+            stopped: false,
+            stop: false,
+            activeIndex: -1,
+            runId: '',
+            status: '',
+            executionMode: '',
+          };
           queueItems[0].status = QcoldQueueItemStatus.Failed;
           queueItems[0].message = QcoldApi.queueGraphResponseMessage(payload, 'failed to start backend queue');
           appendLocalMessage('error', queueItems[0].message);
@@ -715,7 +724,15 @@
           appendLocalMessage('status', QcoldApi.queueGraphResponseMessage(payload, 'Queue graph normalized'));
         }
       } catch (err) {
-        queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+        queueRun = {
+          running: false,
+          stopped: false,
+          stop: false,
+          activeIndex: -1,
+          runId: '',
+          status: '',
+          executionMode: '',
+        };
         queueItems[0].status = QcoldQueueItemStatus.Failed;
         queueItems[0].message = String(err);
         appendLocalMessage('error', queueItems[0].message);
@@ -849,6 +866,7 @@
         stop: false,
         runId,
         status: QcoldQueueRunStatus.Starting,
+        executionMode: queueGraphMode ? QcoldQueueExecutionMode.Graph : QcoldQueueExecutionMode.Sequence,
       };
       queueItems = queueItems.map((item) => {
         if (!QcoldQueueStatus.isQueueItemStoppedOrPaused(item)) return item;

@@ -148,6 +148,13 @@ mod asset_tests {
     }
 
     #[test]
+    fn backend_graph_queue_run_uses_execution_mode_not_status() {
+        assert!(APP_JS.contains("executionMode: nextExecutionMode"));
+        assert!(APP_JS.contains("queueRun.executionMode === QcoldQueueExecutionMode.Graph"));
+        assert!(!APP_JS.contains("queueRun.status === QcoldQueueExecutionMode.Graph"));
+    }
+
+    #[test]
     fn queue_open_target_prefers_executor_before_transcript() {
         let target_start = APP_JS.find("function queueItemContextTarget").unwrap();
         let target = &APP_JS[target_start..];

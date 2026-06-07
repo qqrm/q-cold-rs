@@ -19,8 +19,9 @@ Remaining intentional include sites:
 - `src/queue.rs` still includes queue-tab display helpers and queue unit tests.
   Split it after queue tab display data has an explicit typed boundary.
 - `src/webapp/models_assets.rs` and `src/webapp_assets/app_js_assets.rs` still
-  assemble frontend assets at compile time. Keep that path until frontend files
-  are independent syntax units and the asset verifier consumes the production
-  order directly.
+  assemble frontend assets at compile time. Frontend JavaScript files are now
+  independent syntax units, and `xtask` consumes the production asset order for
+  syntax checks. Keep this embedded asset path until Q-COLD deliberately grows
+  a separate frontend build pipeline.
 - `xtask` and test-support include sites are fixture or test aggregation debt,
   not production runtime boundaries.

@@ -425,7 +425,7 @@
 
     function queueRunningText() {
       const activePosition = Number(queueRun.activeIndex);
-      if (queueGraphMode || queueRun.status === QcoldQueueExecutionMode.Graph) {
+      if (queueGraphMode || queueRun.executionMode === QcoldQueueExecutionMode.Graph) {
         const active = queueItems.filter((item) => {
           return QcoldQueueStatus.isQueueItemActive(queueItemView(item));
         }).length;
@@ -779,7 +779,15 @@
       }
       queueItems = [];
       queueWaves = [{ id: newQueueWaveId() }];
-      queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
+      queueRun = {
+        running: false,
+        stopped: false,
+        stop: false,
+        activeIndex: -1,
+        runId: '',
+        status: '',
+        executionMode: '',
+      };
       saveQueueStorage();
       if (runId) await loadSnapshot();
       renderQueue();
