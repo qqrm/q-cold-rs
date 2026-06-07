@@ -150,6 +150,24 @@ fn open_db() -> Result<Connection> {
                  unique(run_id, position),
                  unique(run_id, slug)
              );
+             create table if not exists web_queue_item_attempts (
+                 run_id text not null,
+                 item_id text not null references web_queue_items(id) on delete cascade,
+                 semantic_iteration integer not null,
+                 agent_command text not null,
+                 agent_id text,
+                 task_record_id text,
+                 terminal_target text,
+                 stdout_log_path text,
+                 stderr_log_path text,
+                 bundle_path text,
+                 status text not null,
+                 failure_message text,
+                 started_at_unix integer not null,
+                 finished_at_unix integer,
+                 updated_at_unix integer not null,
+                 primary key(run_id, item_id, semantic_iteration)
+             );
              create unique index if not exists web_queue_tabs_default
              on web_queue_tabs(is_default)
              where is_default = 1;
@@ -239,6 +257,8 @@ fn migrate_state_schema(connection: &Connection) -> Result<()> {
         "recovery_attempts",
         "integer not null default 0",
     )?;
+    ensure_web_queue_item_attempt_schema(connection)?;
+    backfill_web_queue_item_attempts(connection)?;
     ensure_schema_migrations(connection)?;
     connection
         .execute(
@@ -319,6 +339,24 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  unique(run_id, position),
                  unique(run_id, slug)
              );
+             create table if not exists web_queue_item_attempts (
+                 run_id text not null,
+                 item_id text not null references web_queue_items(id) on delete cascade,
+                 semantic_iteration integer not null,
+                 agent_command text not null,
+                 agent_id text,
+                 task_record_id text,
+                 terminal_target text,
+                 stdout_log_path text,
+                 stderr_log_path text,
+                 bundle_path text,
+                 status text not null,
+                 failure_message text,
+                 started_at_unix integer not null,
+                 finished_at_unix integer,
+                 updated_at_unix integer not null,
+                 primary key(run_id, item_id, semantic_iteration)
+             );
              create unique index if not exists web_queue_tabs_default
              on web_queue_tabs(is_default)
              where is_default = 1;
@@ -327,6 +365,55 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
              where active = 1;",
         )
         .context("failed to initialize web queue tables")?;
+    Ok(())
+}
+
+fn ensure_web_queue_item_attempt_schema(connection: &Connection) -> Result<()> {
+    connection
+        .execute(
+            "create table if not exists web_queue_item_attempts (
+                 run_id text not null,
+                 item_id text not null references web_queue_items(id) on delete cascade,
+                 semantic_iteration integer not null,
+                 agent_command text not null,
+                 agent_id text,
+                 task_record_id text,
+                 terminal_target text,
+                 stdout_log_path text,
+                 stderr_log_path text,
+                 bundle_path text,
+                 status text not null,
+                 failure_message text,
+                 started_at_unix integer not null,
+                 finished_at_unix integer,
+                 updated_at_unix integer not null,
+                 primary key(run_id, item_id, semantic_iteration)
+             )",
+            [],
+        )
+        .context("failed to create web queue item attempt ledger")?;
+    Ok(())
+}
+
+fn backfill_web_queue_item_attempts(connection: &Connection) -> Result<()> {
+    let now = unix_now();
+    connection
+        .execute(
+            "insert into web_queue_item_attempts
+                 (run_id, item_id, semantic_iteration, agent_command, agent_id, task_record_id,
+                  status, failure_message, started_at_unix, finished_at_unix, updated_at_unix)
+             select run_id, id, recovery_attempts + 1, agent_command, agent_id, 'task/' || slug,
+                    status,
+                    case when status in ('failed', 'blocked') then nullif(message, '') else null end,
+                    started_at_unix,
+                    case when status in ('success', 'failed', 'blocked') then updated_at_unix else null end,
+                    ?1
+             from web_queue_items
+             where true
+             on conflict(run_id, item_id, semantic_iteration) do nothing",
+            [now],
+        )
+        .context("failed to backfill web queue item attempt ledger")?;
     Ok(())
 }
 

@@ -122,6 +122,25 @@ pub struct QueueItemRow {
     pub updated_at: u64,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub struct QueueItemAttemptRow {
+    pub run_id: String,
+    pub item_id: String,
+    pub semantic_iteration: i64,
+    pub agent_command: String,
+    pub agent_id: Option<String>,
+    pub task_record_id: Option<String>,
+    pub terminal_target: Option<String>,
+    pub stdout_log_path: Option<String>,
+    pub stderr_log_path: Option<String>,
+    pub bundle_path: Option<String>,
+    pub status: String,
+    pub failure_message: Option<String>,
+    pub started_at: u64,
+    pub finished_at: Option<u64>,
+    pub updated_at: u64,
+}
+
 include!("state/agent_records.rs");
 
 pub fn load_terminal_metadata() -> Result<Vec<TerminalMetadataRow>> {
@@ -252,6 +271,7 @@ fn replace_web_queue_with_assignment(
             ],
         )
         .context("failed to insert web queue item")?;
+        sync_web_queue_item_attempt_projection(&tx, item)?;
     }
     match tab_id {
         Some(tab_id) => assign_web_queue_run_to_tab_in_connection(&tx, tab_id, &run.id)?,
@@ -318,6 +338,7 @@ pub fn append_web_queue_items(run_id: &str, items: &[QueueItemRow]) -> Result<()
             ],
         )
         .context("failed to append web queue item")?;
+        sync_web_queue_item_attempt_projection(&tx, item)?;
     }
     tx.execute(
         "update web_queue_runs
@@ -604,6 +625,7 @@ pub fn update_web_queue_item(
             ],
         )
         .context("failed to update web queue item")?;
+    sync_web_queue_item_attempt_for_key(&connection, run_id, item_id)?;
     Ok(())
 }
 
@@ -611,9 +633,19 @@ pub fn schedule_web_queue_item_recovery(
     run_id: &str,
     item_id: &str,
     message: &str,
+    failure_message: &str,
     recovery_attempts: i64,
 ) -> Result<()> {
     let connection = open_db()?;
+    if let Some(item) = web_queue_item_by_key(&connection, run_id, item_id)? {
+        finish_web_queue_item_attempt(
+            &connection,
+            &item,
+            "failed",
+            failure_message,
+            item.agent_id.as_deref(),
+        )?;
+    }
     connection
         .execute(
             "update web_queue_items
@@ -623,6 +655,7 @@ pub fn schedule_web_queue_item_recovery(
             params![run_id, item_id, message, recovery_attempts, unix_now()],
         )
         .context("failed to schedule web queue item recovery")?;
+    sync_web_queue_item_attempt_for_key(&connection, run_id, item_id)?;
     Ok(())
 }
 
@@ -642,6 +675,7 @@ pub fn reset_web_queue_item_for_relaunch(
             params![run_id, item_id, message, attempts, unix_now()],
         )
         .context("failed to reset web queue item for relaunch")?;
+    sync_web_queue_item_attempt_for_key(&connection, run_id, item_id)?;
     Ok(())
 }
 
@@ -669,6 +703,7 @@ pub fn schedule_web_queue_item_relaunch(
             ],
         )
         .context("failed to schedule web queue item relaunch")?;
+    sync_web_queue_item_attempt_for_key(&connection, run_id, item_id)?;
     Ok(())
 }
 
@@ -682,6 +717,7 @@ pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> 
             params![run_id, item_id, agent_id, unix_now()],
         )
         .context("failed to update web queue item agent")?;
+    sync_web_queue_item_attempt_for_key(&connection, run_id, item_id)?;
     Ok(())
 }
 
@@ -696,6 +732,56 @@ pub fn set_web_queue_item_remote_proxy(run_id: &str, item_id: &str, remote_proxy
         )
         .context("failed to update web queue item remote proxy")?;
     Ok(())
+}
+
+pub fn set_web_queue_item_attempt_terminal(
+    run_id: &str,
+    item_id: &str,
+    semantic_iteration: i64,
+    terminal_target: &str,
+) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_item_attempts
+             set terminal_target = ?4, updated_at_unix = ?5
+             where run_id = ?1 and item_id = ?2 and semantic_iteration = ?3",
+            params![run_id, item_id, semantic_iteration, terminal_target, unix_now()],
+        )
+        .context("failed to update web queue item attempt terminal")?;
+    Ok(())
+}
+
+pub fn load_web_queue_item_attempts(
+    run_id: &str,
+    item_id: &str,
+) -> Result<Vec<QueueItemAttemptRow>> {
+    let connection = open_db()?;
+    let mut statement = connection
+        .prepare(
+            "select run_id, item_id, semantic_iteration, agent_command, agent_id, task_record_id,
+                    terminal_target, stdout_log_path, stderr_log_path, bundle_path, status,
+                    failure_message, started_at_unix, finished_at_unix, updated_at_unix
+             from web_queue_item_attempts
+             where run_id = ?1 and item_id = ?2
+             order by semantic_iteration",
+        )
+        .context("failed to prepare web queue item attempt query")?;
+    let rows = statement
+        .query_map(params![run_id, item_id], queue_item_attempt_from_row)
+        .context("failed to query web queue item attempts")?
+        .collect::<Result<Vec<_>, _>>()
+        .context("failed to decode web queue item attempts")?;
+    Ok(rows)
+}
+
+pub fn web_queue_item_semantic_iterations_started(item: &QueueItemRow) -> Result<i64> {
+    let connection = open_db()?;
+    sync_web_queue_item_attempt_projection(&connection, item)?;
+    drop(connection);
+    let ledger_count =
+        i64::try_from(load_web_queue_item_attempts(&item.run_id, &item.id)?.len()).unwrap_or(i64::MAX);
+    Ok(ledger_count.max(queue_item_semantic_iteration(item)))
 }
 
 pub fn save_terminal_metadata(target: &str, name: Option<&str>, scope: Option<&str>) -> Result<()> {
@@ -1111,6 +1197,215 @@ pub fn new_task_record(
         agent_id,
         metadata_json,
     }
+}
+
+fn queue_item_attempt_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemAttemptRow> {
+    Ok(QueueItemAttemptRow {
+        run_id: row.get(0)?,
+        item_id: row.get(1)?,
+        semantic_iteration: row.get(2)?,
+        agent_command: row.get(3)?,
+        agent_id: row.get(4)?,
+        task_record_id: row.get(5)?,
+        terminal_target: row.get(6)?,
+        stdout_log_path: row.get(7)?,
+        stderr_log_path: row.get(8)?,
+        bundle_path: row.get(9)?,
+        status: row.get(10)?,
+        failure_message: row.get(11)?,
+        started_at: row.get(12)?,
+        finished_at: row.get(13)?,
+        updated_at: row.get(14)?,
+    })
+}
+
+fn web_queue_item_by_key(
+    connection: &Connection,
+    run_id: &str,
+    item_id: &str,
+) -> Result<Option<QueueItemRow>> {
+    connection
+        .query_row(
+            "select id, run_id, position, prompt, slug, repo_root, repo_name, execution_host,
+                    agent_command, remote_launcher, remote_agent_local_proxy, remote_agent_remote_proxy,
+                    agent_id, status, message, attempts, recovery_attempts, next_attempt_at_unix,
+                    started_at_unix, updated_at_unix, depends_on_json
+             from web_queue_items
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id],
+            queue_item_from_row,
+        )
+        .optional()
+        .context("failed to load web queue item")
+}
+
+fn sync_web_queue_item_attempt_for_key(
+    connection: &Connection,
+    run_id: &str,
+    item_id: &str,
+) -> Result<()> {
+    if let Some(item) = web_queue_item_by_key(connection, run_id, item_id)? {
+        sync_web_queue_item_attempt_projection(connection, &item)?;
+    }
+    Ok(())
+}
+
+fn sync_web_queue_item_attempt_projection(
+    connection: &Connection,
+    item: &QueueItemRow,
+) -> Result<()> {
+    let semantic_iteration = queue_item_semantic_iteration(item);
+    let task_record_id = queue_item_task_record_id(item);
+    let (stdout_log_path, stderr_log_path) = queue_item_agent_logs(connection, item.agent_id.as_deref())?;
+    let bundle_path = task_record_bundle_path(connection, &task_record_id)?;
+    let status = item.status.as_str();
+    let terminal = item.status.is_terminal();
+    let failure_message = item
+        .status
+        .is_failed_or_blocked()
+        .then(|| item.message.trim().to_string())
+        .filter(|message| !message.is_empty());
+    let finished_at = terminal.then_some(item.updated_at);
+    connection
+        .execute(
+            "insert into web_queue_item_attempts
+                 (run_id, item_id, semantic_iteration, agent_command, agent_id, task_record_id,
+                  stdout_log_path, stderr_log_path, bundle_path, status, failure_message,
+                  started_at_unix, finished_at_unix, updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             on conflict(run_id, item_id, semantic_iteration) do update set
+                 agent_command = excluded.agent_command,
+                 agent_id = coalesce(excluded.agent_id, web_queue_item_attempts.agent_id),
+                 task_record_id = excluded.task_record_id,
+                 stdout_log_path = coalesce(excluded.stdout_log_path, web_queue_item_attempts.stdout_log_path),
+                 stderr_log_path = coalesce(excluded.stderr_log_path, web_queue_item_attempts.stderr_log_path),
+                 bundle_path = coalesce(excluded.bundle_path, web_queue_item_attempts.bundle_path),
+                 status = excluded.status,
+                 failure_message = excluded.failure_message,
+                 finished_at_unix = coalesce(excluded.finished_at_unix, web_queue_item_attempts.finished_at_unix),
+                 updated_at_unix = excluded.updated_at_unix",
+            params![
+                item.run_id,
+                item.id,
+                semantic_iteration,
+                item.agent_command,
+                item.agent_id,
+                task_record_id,
+                stdout_log_path,
+                stderr_log_path,
+                bundle_path,
+                status,
+                failure_message,
+                item.started_at,
+                finished_at,
+                unix_now(),
+            ],
+        )
+        .context("failed to sync web queue item attempt")?;
+    Ok(())
+}
+
+fn finish_web_queue_item_attempt(
+    connection: &Connection,
+    item: &QueueItemRow,
+    status: &str,
+    failure_message: &str,
+    agent_id: Option<&str>,
+) -> Result<()> {
+    let semantic_iteration = queue_item_semantic_iteration(item);
+    let task_record_id = queue_item_task_record_id(item);
+    let (stdout_log_path, stderr_log_path) = queue_item_agent_logs(connection, agent_id)?;
+    let bundle_path = task_record_bundle_path(connection, &task_record_id)?;
+    let now = unix_now();
+    connection
+        .execute(
+            "insert into web_queue_item_attempts
+                 (run_id, item_id, semantic_iteration, agent_command, agent_id, task_record_id,
+                  stdout_log_path, stderr_log_path, bundle_path, status, failure_message,
+                  started_at_unix, finished_at_unix, updated_at_unix)
+             values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+             on conflict(run_id, item_id, semantic_iteration) do update set
+                 agent_id = coalesce(excluded.agent_id, web_queue_item_attempts.agent_id),
+                 task_record_id = excluded.task_record_id,
+                 stdout_log_path = coalesce(excluded.stdout_log_path, web_queue_item_attempts.stdout_log_path),
+                 stderr_log_path = coalesce(excluded.stderr_log_path, web_queue_item_attempts.stderr_log_path),
+                 bundle_path = coalesce(excluded.bundle_path, web_queue_item_attempts.bundle_path),
+                 status = excluded.status,
+                 failure_message = excluded.failure_message,
+                 finished_at_unix = excluded.finished_at_unix,
+                 updated_at_unix = excluded.updated_at_unix",
+            params![
+                item.run_id,
+                item.id,
+                semantic_iteration,
+                item.agent_command,
+                agent_id,
+                task_record_id,
+                stdout_log_path,
+                stderr_log_path,
+                bundle_path,
+                status,
+                failure_message,
+                item.started_at,
+                now,
+            ],
+        )
+        .context("failed to finish web queue item attempt")?;
+    Ok(())
+}
+
+fn queue_item_semantic_iteration(item: &QueueItemRow) -> i64 {
+    item.recovery_attempts.max(0).saturating_add(1)
+}
+
+fn queue_item_task_record_id(item: &QueueItemRow) -> String {
+    format!("task/{}", item.slug)
+}
+
+fn queue_item_agent_logs(
+    connection: &Connection,
+    agent_id: Option<&str>,
+) -> Result<(Option<String>, Option<String>)> {
+    let Some(agent_id) = agent_id else {
+        return Ok((None, None));
+    };
+    connection
+        .query_row(
+            "select stdout_log_path, stderr_log_path
+             from agents
+             where id = ?1",
+            [agent_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()
+        .context("failed to load queue attempt agent logs")
+        .map(|value| value.unwrap_or((None, None)))
+}
+
+fn task_record_bundle_path(connection: &Connection, task_record_id: &str) -> Result<Option<String>> {
+    let metadata_json = connection
+        .query_row(
+            "select metadata_json from tasks where id = ?1",
+            [task_record_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .context("failed to load queue attempt task metadata")?
+        .flatten();
+    let Some(metadata_json) = metadata_json else {
+        return Ok(None);
+    };
+    let bundle_path = serde_json::from_str::<serde_json::Value>(&metadata_json)
+        .ok()
+        .and_then(|metadata| {
+            metadata
+                .get("task_terminal_bundle")
+                .or_else(|| metadata.get("bundle_path"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .filter(|value| !value.trim().is_empty());
+    Ok(bundle_path)
 }
 
 

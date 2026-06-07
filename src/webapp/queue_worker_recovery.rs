@@ -1,4 +1,5 @@
-const WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS: i64 = 1;
+const WEB_QUEUE_SEMANTIC_ITERATIONS_PER_ITEM: i64 = 3;
+const WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS: i64 = WEB_QUEUE_SEMANTIC_ITERATIONS_PER_ITEM - 1;
 
 fn queue_status_auto_recoverable(status: &str) -> bool {
     status == "closed:failed"
@@ -6,6 +7,10 @@ fn queue_status_auto_recoverable(status: &str) -> bool {
 
 fn queue_task_status_terminal(status: &str) -> bool {
     status.starts_with("closed") || status == "failed-closeout"
+}
+
+fn queue_item_semantic_iteration(item: &state::QueueItemRow) -> i64 {
+    item.recovery_attempts.max(0).saturating_add(1)
 }
 
 fn queue_item_recovery_active_or_pending(item: &state::QueueItemRow) -> bool {
@@ -25,12 +30,19 @@ fn schedule_queue_item_auto_recovery(
     item: &state::QueueItemRow,
     failure_message: &str,
 ) -> Result<bool> {
-    if item.recovery_attempts >= WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS {
+    let semantic_iterations = state::web_queue_item_semantic_iterations_started(item)?;
+    if semantic_iterations >= WEB_QUEUE_SEMANTIC_ITERATIONS_PER_ITEM {
         return Ok(false);
     }
-    let recovery_attempts = item.recovery_attempts.saturating_add(1);
+    let recovery_attempts = semantic_iterations;
     let message = format!("auto-recovery scheduled after failed task: {failure_message}");
-    state::schedule_web_queue_item_recovery(run_id, &item.id, &message, recovery_attempts)?;
+    state::schedule_web_queue_item_recovery(
+        run_id,
+        &item.id,
+        &message,
+        failure_message,
+        recovery_attempts,
+    )?;
     state::update_web_queue_run(run_id, "running", item.position, &message)?;
     Ok(true)
 }

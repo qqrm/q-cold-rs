@@ -643,6 +643,12 @@ fn start_web_queue_item(
         attempts,
         None,
     )?;
+    state::set_web_queue_item_attempt_terminal(
+        run_id,
+        &item.id,
+        queue_item_semantic_iteration(item),
+        &target,
+    )?;
     let outcome = wait_for_queue_item_closeout(run_id, item, &agent.id, attempts);
     cleanup_queue_task_packet_file(&prompt_file);
     outcome

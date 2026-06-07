@@ -111,6 +111,12 @@ fn start_remote_native_queue_item(
     )? {
         return Ok(outcome);
     }
+    state::set_web_queue_item_attempt_terminal(
+        run_id,
+        &item.id,
+        queue_item_semantic_iteration(item),
+        &remote_native_terminal_target(&agent_id),
+    )?;
     let wait_item = remote_native_running_wait_item(item);
     wait_for_queue_item_closeout(run_id, &wait_item, &agent_id, attempts)
 }

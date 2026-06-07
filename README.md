@@ -93,6 +93,10 @@ A `queue run` request that reuses an unfinished slug, including retry-shaped
 variants such as new `after-repair-p<port>` suffixes, is rejected before a new
 run is persisted; use `queue append`, `queue continue`, or `queue clear` for
 intentional recovery.
+Each queue item keeps a durable semantic attempt ledger. Q-COLD uses it to cap
+semantic work at three total iterations per item: the original attempt plus two
+auto-recovery attempts. Launch retries for agent startup remain separate from
+that semantic cap.
 
 Mutating queue commands post to the local dashboard daemon on
 `127.0.0.1:8787` by default. If it is not reachable, Q-COLD starts it unless the
