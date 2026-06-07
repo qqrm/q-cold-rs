@@ -10,6 +10,7 @@ mod asset_tests {
         "src/webapp_assets/app/telegram.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
+        "src/webapp_assets/app/queue_graph_diagnostics.js",
         "src/webapp_assets/app/terminal.js",
         "src/webapp_assets/app/events.js",
         "src/webapp_assets/app/queue_scroll.js",
@@ -47,6 +48,8 @@ mod asset_tests {
         assert!(APP_JS.contains("headers['x-qcold-write-token'] = token;"));
         assert!(APP_JS.contains("sessionStorage.setItem(writeTokenStorageKey, value);"));
         assert!(APP_JS.contains("Dashboard write token required; enter it in the header."));
+        assert!(APP_JS.contains("function queueGraphDiagnosticMessages(payload)"));
+        assert!(APP_JS.contains("function queueGraphResponseMessage(payload, fallback = 'request failed')"));
         assert!(INDEX_HTML.contains("id=\"write-token-input\""));
         assert!(!APP_JS.contains("QCOLD_WEBAPP_WRITE_TOKEN"));
     }
@@ -121,10 +124,27 @@ mod asset_tests {
     fn graph_queue_active_run_keeps_wave_append_controls() {
         assert!(APP_JS.contains("addWaveButton.disabled = !queueGraphAppendable();"));
         assert!(APP_JS.contains("function queueBackendRunAppendable()"));
-        assert!(APP_JS.contains("QcoldApi.appendQueue(runId, [{ id: item.id, prompt, depends_on: dependsOn }])"));
+        assert!(APP_JS.contains("QcoldApi.appendQueue(runId, ["));
+        assert!(APP_JS.contains("queueRunItemPayload({ ...item, dependsOn }, { prompt, dependsOn })"));
         assert!(APP_JS.contains(
             "queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });"
         ));
+    }
+
+    #[test]
+    fn graph_queue_frontend_consumes_backend_diagnostics() {
+        assert!(APP_JS.contains("QcoldApi.runQueue({"));
+        assert!(APP_JS.contains("items: queueItems.map((item) => queueRunItemPayload(item, { selectedAgent }))"));
+        assert!(APP_JS.contains("function queueGraphPayloadFields(item, dependsOn = item?.dependsOn || [])"));
+        assert!(APP_JS.contains("fields.wave_id = item.waveId;"));
+        assert!(APP_JS.contains("fields.wave_index = waveIndex;"));
+        assert!(APP_JS.contains("function applyQueueGraphDiagnostics(payload, options = {})"));
+        assert!(APP_JS.contains("applyQueueGraphCanonicalItems(graph);"));
+        assert!(APP_JS.contains("QcoldApi.queueGraphResponseMessage(payload, 'failed to start backend queue')"));
+        assert!(APP_JS.contains("QcoldApi.queueGraphResponseMessage(payload, 'failed to append queue item')"));
+        assert!(APP_JS.contains("QcoldApi.queueGraphResponseMessage(payload, 'failed to update queue plan')"));
+        assert!(APP_JS.contains("QcoldApi.queueGraphDiagnosticMessages(payload)"));
+        assert!(!APP_JS.contains("function assignQueueWavesFromDependencies"));
     }
 
     #[test]
@@ -173,6 +193,7 @@ mod asset_tests {
     #[test]
     fn graph_queue_active_run_prunes_empty_non_final_waves() {
         assert!(APP_JS.contains("function pruneEmptyBackendQueueWaves(waves, items)"));
+        assert!(APP_JS.contains("function assignQueueWavesForDisplay(waves, items)"));
         assert!(APP_JS.contains("{ pruneBackendEmpty: true }"));
         assert!(APP_JS.contains("wavesWithItems.has(wave.id) || index === waves.length - 1"));
         assert!(APP_JS.contains(".filter((dependency) => byId.has(dependency))"));

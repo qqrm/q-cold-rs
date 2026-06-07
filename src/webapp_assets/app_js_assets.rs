@@ -6,6 +6,7 @@ macro_rules! qcold_app_js_assets {
             "telegram.js",
             "init_parse.js",
             "queue.js",
+            "queue_graph_diagnostics.js",
             "terminal.js",
             "events.js",
             "queue_scroll.js",

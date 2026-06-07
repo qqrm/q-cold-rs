@@ -90,7 +90,7 @@
       let known = new Set(normalized.map((wave) => wave.id));
       const missing = items.filter((item) => !item.waveId || !known.has(item.waveId));
       if (missing.some((item) => item.dependsOn?.length)) {
-        assignQueueWavesFromDependencies(normalized, items);
+        assignQueueWavesForDisplay(normalized, items);
         known = new Set(normalized.map((wave) => wave.id));
       }
       const lastWave = lastQueueWave(normalized);
@@ -113,7 +113,7 @@
       return waves[waves.length - 1];
     }
 
-    function assignQueueWavesFromDependencies(waves, items) {
+    function assignQueueWavesForDisplay(waves, items) {
       const byId = new Map(items.map((item) => [item.id, item]));
       const memo = new Map();
       const depth = (item, stack = new Set()) => {
@@ -476,10 +476,21 @@
       const dependsOn = queueGraphMode ? queueDependenciesForWave(item.waveId) : [];
       appendLocalMessage('status', 'Adding queue item to backend');
       try {
-        const payload = await QcoldApi.appendQueue(runId, [{ id: item.id, prompt, depends_on: dependsOn }]);
+        const payload = await QcoldApi.appendQueue(runId, [
+          queueRunItemPayload({ ...item, dependsOn }, { prompt, dependsOn }),
+        ]);
+        applyQueueGraphDiagnostics(payload, { markErrors: payload.ok === false });
         if (payload.ok === false) {
-          appendLocalMessage('error', payload.output || 'failed to append queue item');
+          appendLocalMessage(
+            'error',
+            QcoldApi.queueGraphResponseMessage(payload, 'failed to append queue item'),
+          );
+          renderQueue();
           return;
+        }
+        const diagnostics = QcoldApi.queueGraphDiagnosticMessages(payload);
+        if (diagnostics.length) {
+          appendLocalMessage('status', QcoldApi.queueGraphResponseMessage(payload, 'Queue graph normalized'));
         }
         appendLocalMessage('status', 'Appended queue item');
         queueInput.value = '';
@@ -700,20 +711,21 @@
       try {
         const payload = await QcoldApi.updateQueue(
           runId,
-          items.map(({ item, index }) => ({
-            id: item.id,
-            prompt: item.prompt,
-            position: index,
-            depends_on: queueGraphMode ? (item.dependsOn || []) : [],
-            repo_root: item.repoRoot,
-            repo_name: item.repoName,
-            agent_command: item.agentCommand,
-          })),
+          items.map(({ item, index }) => queueUpdateItemPayload(item, index)),
         );
+        applyQueueGraphDiagnostics(payload, { markErrors: payload.ok === false });
         if (payload.ok === false) {
-          appendLocalMessage('error', payload.output || 'failed to update queue plan');
+          appendLocalMessage(
+            'error',
+            QcoldApi.queueGraphResponseMessage(payload, 'failed to update queue plan'),
+          );
+          renderQueue();
           await loadSnapshot();
           return;
+        }
+        const diagnostics = QcoldApi.queueGraphDiagnosticMessages(payload);
+        if (diagnostics.length) {
+          appendLocalMessage('status', QcoldApi.queueGraphResponseMessage(payload, 'Queue graph normalized'));
         }
         await loadSnapshot();
       } catch (err) {

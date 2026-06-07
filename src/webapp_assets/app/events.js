@@ -698,24 +698,21 @@
           selected_agent_command: selectedAgent.command,
           selected_repo_root: selectedRepo.root || '',
           selected_repo_name: selectedRepo.name || '',
-          items: queueItems.map((item) => ({
-            id: item.id,
-            prompt: item.prompt,
-            slug: item.slug,
-            depends_on: queueGraphMode ? (item.dependsOn || []) : [],
-            repo_root: item.repoRoot,
-            repo_name: item.repoName,
-            agent_command: item.agentCommand || selectedAgent.command,
-          })),
+          items: queueItems.map((item) => queueRunItemPayload(item, { selectedAgent })),
         });
+        applyQueueGraphDiagnostics(payload, { markErrors: payload.ok === false });
         if (payload.ok === false) {
           queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
           queueItems[0].status = QcoldQueueItemStatus.Failed;
-          queueItems[0].message = payload.output || 'failed to start backend queue';
+          queueItems[0].message = QcoldApi.queueGraphResponseMessage(payload, 'failed to start backend queue');
           appendLocalMessage('error', queueItems[0].message);
           saveQueueStorage();
           renderQueue();
           return;
+        }
+        const diagnostics = QcoldApi.queueGraphDiagnosticMessages(payload);
+        if (diagnostics.length) {
+          appendLocalMessage('status', QcoldApi.queueGraphResponseMessage(payload, 'Queue graph normalized'));
         }
       } catch (err) {
         queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };

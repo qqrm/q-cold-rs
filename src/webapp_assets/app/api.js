@@ -43,6 +43,42 @@ const QcoldApi = (() => {
     return /write[- ]token|X-QCOLD-Write-Token|GUI write token/i.test(message);
   }
 
+  function queueGraphDiagnostics(payload) {
+    const graph = payload?.queue_graph;
+    return graph && typeof graph === 'object' ? graph : null;
+  }
+
+  function queueGraphDiagnosticTarget(diagnostic) {
+    const parts = [];
+    if (diagnostic?.item_id) parts.push(`item ${diagnostic.item_id}`);
+    else if (diagnostic?.item_slug) parts.push(`task/${diagnostic.item_slug}`);
+    else if (Number.isInteger(Number(diagnostic?.item_position))) {
+      parts.push(`item #${Number(diagnostic.item_position) + 1}`);
+    }
+    if (diagnostic?.dependency) parts.push(`dependency ${diagnostic.dependency}`);
+    return parts.length ? `${parts.join(' / ')}: ` : '';
+  }
+
+  function queueGraphDiagnosticMessages(payload) {
+    const graph = queueGraphDiagnostics(payload);
+    if (!graph || !Array.isArray(graph.diagnostics)) return [];
+    const messages = graph.diagnostics
+      .map((diagnostic) => {
+        const message = String(diagnostic?.message || '').trim();
+        if (!message) return '';
+        const severity = String(diagnostic?.severity || 'warning').toLowerCase();
+        return `${severity}: ${queueGraphDiagnosticTarget(diagnostic)}${message}`;
+      })
+      .filter(Boolean);
+    return [...new Set(messages)];
+  }
+
+  function queueGraphResponseMessage(payload, fallback = 'request failed') {
+    const output = String(payload?.output || payload?.error || payload?.message || '').trim();
+    const parts = [output, ...queueGraphDiagnosticMessages(payload)].filter(Boolean);
+    return [...new Set(parts)].join('; ') || fallback;
+  }
+
   async function parseJsonResponse(response) {
     const text = await response.text();
     if (!text.trim()) return {};
@@ -107,6 +143,9 @@ const QcoldApi = (() => {
     writeTokenConfigured,
     setWriteToken,
     clearWriteToken,
+    queueGraphDiagnostics,
+    queueGraphDiagnosticMessages,
+    queueGraphResponseMessage,
     getState: () => readJson('/api/state'),
     getAgentLimits: (refresh) => readJson(`/api/agent-limits${refresh ? '?refresh=true' : ''}`),
     getTaskTranscript: (taskId) => jsonRequest(

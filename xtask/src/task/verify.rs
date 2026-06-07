@@ -177,6 +177,7 @@ mod web_asset_tests {
         "src/webapp_assets/app/telegram.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
+        "src/webapp_assets/app/queue_graph_diagnostics.js",
         "src/webapp_assets/app/terminal.js",
         "src/webapp_assets/app/events.js",
         "src/webapp_assets/app/queue_scroll.js",
