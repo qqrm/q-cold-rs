@@ -3,14 +3,8 @@ fn handle_terminal_send(
     payload: &TerminalSendRequest,
 ) -> TerminalSendResponse {
     match handle_terminal_send_result(headers, payload) {
-        Ok(()) => TerminalSendResponse {
-            ok: true,
-            output: "sent".to_string(),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(()) => TerminalSendResponse::success("sent"),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
@@ -282,14 +276,8 @@ fn handle_terminal_metadata(
     payload: &TerminalMetadataRequest,
 ) -> TerminalSendResponse {
     match handle_terminal_metadata_result(headers, payload) {
-        Ok(()) => TerminalSendResponse {
-            ok: true,
-            output: "saved".to_string(),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(()) => TerminalSendResponse::success("saved"),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 

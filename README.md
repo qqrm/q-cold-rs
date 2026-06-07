@@ -102,6 +102,9 @@ Each queue item keeps a durable semantic attempt ledger. Q-COLD uses it to cap
 semantic work at three total iterations per item: the original attempt plus two
 auto-recovery attempts. Launch retries for agent startup remain separate from
 that semantic cap.
+Queue run, append, and update dashboard API responses preserve the existing
+`ok`/`output` fields and may include `queue_graph` diagnostics with canonical
+dependency normalization, wave indexes, and display-safe validation messages.
 
 Mutating queue commands post to the local dashboard daemon on
 `127.0.0.1:8787` by default. If it is not reachable, Q-COLD starts it unless the

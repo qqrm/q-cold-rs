@@ -784,7 +784,7 @@ fn remote_queue_sync_key(item: &state::QueueItemRow, launcher: &str) -> String {
 fn mark_remote_queue_sync_recent(item: &state::QueueItemRow, launcher: &str) {
     let sync_times = WEB_QUEUE_REMOTE_SYNC_AT.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut sync_times) = sync_times.lock() {
-        sync_times.insert(remote_queue_sync_key(item, launcher), unix_now());
+        sync_times.insert(remote_queue_sync_key(item, launcher), unix_now().saturating_add(60));
     }
 }
 

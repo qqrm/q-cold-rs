@@ -460,6 +460,8 @@ mod tests {
                     prompt: "run remotely".to_string(),
                     slug: None,
                     depends_on: None,
+                    wave_id: None,
+                    wave_index: None,
                     repo_root: None,
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
@@ -505,6 +507,8 @@ mod tests {
                     prompt: "retry the same task".to_string(),
                     slug: Some("shared-task".to_string()),
                     depends_on: None,
+                    wave_id: None,
+                    wave_index: None,
                     repo_root: None,
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
@@ -556,6 +560,8 @@ mod tests {
                             .to_string(),
                     ),
                     depends_on: None,
+                    wave_id: None,
+                    wave_index: None,
                     repo_root: None,
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
@@ -607,6 +613,8 @@ mod tests {
                             .to_string(),
                     ),
                     depends_on: None,
+                    wave_id: None,
+                    wave_index: None,
                     repo_root: None,
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
@@ -652,6 +660,8 @@ mod tests {
                     prompt: "replace this run".to_string(),
                     slug: Some("shared-task".to_string()),
                     depends_on: None,
+                    wave_id: None,
+                    wave_index: None,
                     repo_root: None,
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
@@ -694,6 +704,8 @@ mod tests {
                     prompt: "run somewhere".to_string(),
                     slug: None,
                     depends_on: None,
+                    wave_id: None,
+                    wave_index: None,
                     repo_root: None,
                     repo_name: None,
                     execution_host: None,
@@ -1038,19 +1050,53 @@ mod tests {
     }
 
     #[test]
-    fn graph_dependency_normalization_keeps_only_valid_unique_prerequisites() {
+    fn graph_dependency_normalization_reports_acyclic_waves() {
         let mut items = vec![
             queue_item_fixture("graph", "first", 0, "pending", None),
             queue_item_fixture("graph", "second", 1, "pending", None),
             queue_item_fixture("graph", "third", 2, "pending", None),
         ];
-        items[2].depends_on = ids(&["task-first", "missing", "task-first", "task-third", "second"]);
+        items[2].depends_on = ids(&["first", "second"]);
 
-        normalize_queue_dependencies("graph", &mut items).unwrap();
+        let report = normalize_queue_dependencies("graph", &mut items).unwrap();
 
+        assert!(report.ok);
+        assert!(report.diagnostics.is_empty());
+        assert_eq!(items[2].depends_on, ids(&["first", "second"]));
         assert_eq!(
-            items[2].depends_on,
-            vec!["first".to_string(), "second".to_string()]
+            report
+                .items
+                .iter()
+                .map(|item| (item.id.as_str(), item.canonical_wave_index))
+                .collect::<Vec<_>>(),
+            [("first", Some(0)), ("second", Some(0)), ("third", Some(1))]
+        );
+    }
+
+    #[test]
+    fn graph_dependency_normalization_reports_missing_and_invalid_dependencies() {
+        let mut items = vec![
+            queue_item_fixture("graph", "first", 0, "pending", None),
+            queue_item_fixture("graph", "second", 1, "pending", None),
+            queue_item_fixture("graph", "third", 2, "pending", None),
+        ];
+        items[2].depends_on = ids(&["task-first", "missing", "task-first", "task-third", ""]);
+
+        let report = normalize_queue_dependencies("graph", &mut items).unwrap();
+
+        assert!(report.ok);
+        assert_eq!(items[2].depends_on, ids(&["first"]));
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == QueueGraphDiagnosticKind::MissingDependency));
+        assert_eq!(
+            report
+                .diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.kind == QueueGraphDiagnosticKind::InvalidDependency)
+                .count(),
+            3
         );
     }
 
@@ -1062,9 +1108,34 @@ mod tests {
         ];
         items[1].depends_on = vec!["first".to_string()];
 
-        normalize_queue_dependencies("sequence", &mut items).unwrap();
+        let report = normalize_queue_dependencies("sequence", &mut items).unwrap();
 
+        assert!(report.ok);
+        assert_eq!(report.execution_mode, "sequence");
+        assert!(report.diagnostics.is_empty());
         assert!(items.iter().all(|item| item.depends_on.is_empty()));
+        assert!(report
+            .items
+            .iter()
+            .all(|item| item.canonical_wave_index.is_none()));
+    }
+
+    #[test]
+    fn graph_dependency_normalization_accepts_empty_dependencies() {
+        let mut items = vec![
+            queue_item_fixture("graph", "first", 0, "pending", None),
+            queue_item_fixture("graph", "second", 1, "pending", None),
+        ];
+
+        let report = normalize_queue_dependencies("graph", &mut items).unwrap();
+
+        assert!(report.ok);
+        assert!(report.diagnostics.is_empty());
+        assert!(items.iter().all(|item| item.depends_on.is_empty()));
+        assert!(report
+            .items
+            .iter()
+            .all(|item| item.canonical_wave_index == Some(0)));
     }
 
     #[test]
@@ -1099,7 +1170,127 @@ mod tests {
         items[0].depends_on = vec!["task-second".to_string()];
         items[1].depends_on = vec!["task-first".to_string()];
 
-        assert!(normalize_queue_dependencies("graph", &mut items).is_err());
+        let err = normalize_queue_dependencies("graph", &mut items).unwrap_err();
+        let diagnostics = queue_graph_diagnostics_from_error(&err).unwrap();
+
+        assert!(!diagnostics.ok);
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == QueueGraphDiagnosticKind::Cycle));
+    }
+
+    #[test]
+    fn graph_dependency_normalization_rejects_duplicate_ids() {
+        let mut items = vec![
+            queue_item_fixture("graph", "first", 0, "pending", None),
+            queue_item_fixture("graph", "first", 1, "pending", None),
+        ];
+
+        let err = normalize_queue_dependencies("graph", &mut items).unwrap_err();
+        let diagnostics = queue_graph_diagnostics_from_error(&err).unwrap();
+
+        assert!(!diagnostics.ok);
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == QueueGraphDiagnosticKind::DuplicateId));
+    }
+
+    #[test]
+    fn graph_dependency_normalization_reports_wave_conflicts() {
+        let mut items = vec![
+            queue_item_fixture("graph", "first", 0, "pending", None),
+            queue_item_fixture("graph", "second", 1, "pending", None),
+        ];
+        items[1].depends_on = ids(&["first"]);
+        let metadata = vec![
+            QueueGraphItemMetadata {
+                wave_id: Some("wave-a".to_string()),
+                wave_index: Some(0),
+            },
+            QueueGraphItemMetadata {
+                wave_id: Some("wave-a".to_string()),
+                wave_index: Some(0),
+            },
+        ];
+
+        let report =
+            normalize_queue_dependencies_with_metadata("graph", &mut items, &metadata).unwrap();
+
+        assert!(report.ok);
+        assert!(report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == QueueGraphDiagnosticKind::WaveConflict));
+        assert_eq!(report.items[1].canonical_wave_index, Some(1));
+    }
+
+    #[test]
+    fn queue_run_duplicate_id_returns_graph_diagnostics_before_persisting() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+
+        let response = handle_queue_run(
+            &HeaderMap::new(),
+            QueueRunRequest {
+                run_id: Some("duplicate-id-run".to_string()),
+                tab_id: None,
+                execution_mode: Some("graph".to_string()),
+                selected_execution_host: Some("remote-native".into()),
+                selected_agent_command: "remote-only-agent".to_string(),
+                selected_remote_launcher: Some("remote-dev-env".to_string()),
+                selected_remote_agent_local_proxy: None,
+                selected_remote_agent_remote_proxy: None,
+                selected_repo_root: Some("/workspace/repo".to_string()),
+                selected_repo_name: Some("repo".to_string()),
+                items: vec![
+                    QueueRunItemRequest {
+                        id: Some("same-id".to_string()),
+                        prompt: "first".to_string(),
+                        slug: Some("first".to_string()),
+                        depends_on: None,
+                        wave_id: None,
+                        wave_index: None,
+                        repo_root: None,
+                        repo_name: None,
+                        execution_host: Some("remote-native".into()),
+                        agent_command: None,
+                        remote_launcher: None,
+                        remote_agent_local_proxy: None,
+                        remote_agent_remote_proxy: None,
+                    },
+                    QueueRunItemRequest {
+                        id: Some("same-id".to_string()),
+                        prompt: "second".to_string(),
+                        slug: Some("second".to_string()),
+                        depends_on: None,
+                        wave_id: None,
+                        wave_index: None,
+                        repo_root: None,
+                        repo_name: None,
+                        execution_host: Some("remote-native".into()),
+                        agent_command: None,
+                        remote_launcher: None,
+                        remote_agent_local_proxy: None,
+                        remote_agent_remote_proxy: None,
+                    },
+                ],
+            },
+        );
+
+        assert!(!response.ok);
+        assert!(response.output.contains("duplicate item ids"));
+        let diagnostics = response.queue_graph.unwrap();
+        assert!(!diagnostics.ok);
+        assert!(diagnostics
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == QueueGraphDiagnosticKind::DuplicateId));
+        let (run, items) = state::load_web_queue_run("duplicate-id-run").unwrap();
+        assert!(run.is_none());
+        assert!(items.is_empty());
     }
 
     fn queue_ready_item_ids(

@@ -555,6 +555,8 @@ pub(crate) struct QueueRunItemRequest {
     pub(crate) prompt: String,
     pub(crate) slug: Option<String>,
     pub(crate) depends_on: Option<Vec<String>>,
+    pub(crate) wave_id: Option<String>,
+    pub(crate) wave_index: Option<usize>,
     pub(crate) repo_root: Option<String>,
     pub(crate) repo_name: Option<String>,
     pub(crate) execution_host: Option<String>,
@@ -582,6 +584,8 @@ struct QueueUpdateItemRequest {
     prompt: String,
     position: Option<i64>,
     depends_on: Option<Vec<String>>,
+    wave_id: Option<String>,
+    wave_index: Option<usize>,
     repo_root: Option<String>,
     repo_name: Option<String>,
     execution_host: Option<String>,
@@ -660,6 +664,8 @@ struct TerminalMetadataRequest {
 pub(crate) struct TerminalSendResponse {
     pub(crate) ok: bool,
     pub(crate) output: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) queue_graph: Option<QueueGraphDiagnostics>,
 }
 
 #[derive(Serialize)]

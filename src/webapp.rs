@@ -640,6 +640,7 @@ where
 }
 
 include!("webapp/queue_api.rs");
+include!("webapp/queue_graph.rs");
 include!("webapp/queue_api_dedupe.rs");
 include!("webapp/queue_api_cleanup.rs");
 include!("webapp/queue_worker.rs");
@@ -657,6 +658,7 @@ include!("webapp/queue_worker_ids.rs");
 include!("webapp/snapshot.rs");
 include!("webapp/agent_limits.rs");
 include!("webapp/models_assets.rs");
+include!("webapp/terminal_send_response.rs");
 
 include!("webapp/tests.rs");
 include!("webapp/tests_assets.rs");

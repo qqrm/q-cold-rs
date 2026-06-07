@@ -1,17 +1,42 @@
 fn handle_queue_run(headers: &HeaderMap, payload: QueueRunRequest) -> TerminalSendResponse {
     match handle_queue_run_result(headers, payload) {
-        Ok(run_id) => TerminalSendResponse {
-            ok: true,
-            output: format!("queue-run\t{run_id}"),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(outcome) => TerminalSendResponse::success_with_queue_graph(
+            format!("queue-run\t{}", outcome.run_id),
+            outcome.queue_graph,
+        ),
+        Err(err) => queue_api_failure_response(&err),
     }
 }
 
-fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Result<String> {
+struct QueueRunOutcome {
+    run_id: String,
+    queue_graph: QueueGraphDiagnostics,
+}
+
+struct QueueCountOutcome {
+    count: usize,
+    queue_graph: QueueGraphDiagnostics,
+}
+
+fn queue_api_failure_response(err: &anyhow::Error) -> TerminalSendResponse {
+    let output = format!("{err:#}");
+    if let Some(queue_graph) = queue_graph_diagnostics_from_error(err) {
+        TerminalSendResponse::failure_with_queue_graph(output, queue_graph)
+    } else {
+        TerminalSendResponse::failure(output)
+    }
+}
+
+fn queue_graph_metadata_from_run_requests(
+    requests: &[QueueRunItemRequest],
+) -> Vec<QueueGraphItemMetadata> {
+    requests
+        .iter()
+        .map(QueueGraphItemMetadata::from_run_request)
+        .collect()
+}
+
+fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Result<QueueRunOutcome> {
     if webapp_write_token_required() {
         require_write_token(headers)?;
     }
@@ -60,10 +85,12 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
     if prompts.is_empty() {
         bail!("queue has no runnable items");
     }
+    let graph_metadata = queue_graph_metadata_from_run_requests(&prompts);
     let mut used_slugs = HashSet::new();
     let mut items = queue_items_from_requests(&run, prompts, 0, &mut used_slugs, now);
     validate_queue_execution_hosts(&run, &items)?;
-    normalize_queue_dependencies(&run.execution_mode, &mut items)?;
+    let queue_graph =
+        normalize_queue_dependencies_with_metadata(&run.execution_mode, &mut items, &graph_metadata)?;
     ensure_queue_run_slugs_available(&run, &items)?;
     if let Some(tab_id) = tab_id.as_deref() {
         state::replace_web_queue_for_tab(tab_id, &run, &items)?;
@@ -71,7 +98,10 @@ fn handle_queue_run_result(headers: &HeaderMap, payload: QueueRunRequest) -> Res
         state::replace_web_queue(&run, &items)?;
     }
     spawn_web_queue_worker(run_id.clone());
-    Ok(run_id)
+    Ok(QueueRunOutcome {
+        run_id,
+        queue_graph,
+    })
 }
 
 fn ensure_queue_run_slugs_available(
@@ -83,18 +113,15 @@ fn ensure_queue_run_slugs_available(
 
 fn handle_queue_append(headers: &HeaderMap, payload: QueueAppendRequest) -> TerminalSendResponse {
     match handle_queue_append_result(headers, payload) {
-        Ok(count) => TerminalSendResponse {
-            ok: true,
-            output: format!("appended {count} queue item(s)"),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(outcome) => TerminalSendResponse::success_with_queue_graph(
+            format!("appended {} queue item(s)", outcome.count),
+            outcome.queue_graph,
+        ),
+        Err(err) => queue_api_failure_response(&err),
     }
 }
 
-fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) -> Result<usize> {
+fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) -> Result<QueueCountOutcome> {
     if webapp_write_token_required() {
         require_write_token(headers)?;
     }
@@ -114,6 +141,7 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
     if prompts.is_empty() {
         bail!("queue append has no runnable items");
     }
+    let graph_metadata = queue_graph_metadata_from_run_requests(&prompts);
     let now = unix_now();
     let mut used_slugs = existing_items
         .iter()
@@ -127,9 +155,13 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
         .saturating_add(1);
     let mut items = queue_items_from_requests(&run, prompts, start_position, &mut used_slugs, now);
     validate_queue_execution_hosts(&run, &items)?;
+    let existing_count = existing_items.len();
     let mut all_items = existing_items;
     all_items.extend(items.clone());
-    normalize_queue_dependencies(&run.execution_mode, &mut all_items)?;
+    let mut all_metadata = vec![QueueGraphItemMetadata::default(); existing_count];
+    all_metadata.extend(graph_metadata);
+    let queue_graph =
+        normalize_queue_dependencies_with_metadata(&run.execution_mode, &mut all_items, &all_metadata)?;
     let normalized = all_items
         .into_iter()
         .filter(|item| items.iter().any(|new_item| new_item.id == item.id))
@@ -138,23 +170,23 @@ fn handle_queue_append_result(headers: &HeaderMap, payload: QueueAppendRequest) 
     let count = items.len();
     state::append_web_queue_items(&run_id, &items)?;
     spawn_web_queue_worker(run_id);
-    Ok(count)
+    Ok(QueueCountOutcome {
+        count,
+        queue_graph,
+    })
 }
 
 fn handle_queue_update(headers: &HeaderMap, payload: QueueUpdateRequest) -> TerminalSendResponse {
     match handle_queue_update_result(headers, payload) {
-        Ok(count) => TerminalSendResponse {
-            ok: true,
-            output: format!("updated {count} queue item(s)"),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(outcome) => TerminalSendResponse::success_with_queue_graph(
+            format!("updated {} queue item(s)", outcome.count),
+            outcome.queue_graph,
+        ),
+        Err(err) => queue_api_failure_response(&err),
     }
 }
 
-fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) -> Result<usize> {
+fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) -> Result<QueueCountOutcome> {
     if webapp_write_token_required() {
         require_write_token(headers)?;
     }
@@ -181,62 +213,24 @@ fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) 
         let Some(request) = requested.get(&item.id) else {
             continue;
         };
-        if !queue_item_editable_while_running(&run, item)? {
-            bail!("queue item is already active: {}", item.id);
-        }
-        if request.position.is_some_and(|position| position <= run.current_index) {
-            bail!("queue item cannot move before the active cursor: {}", item.id);
-        }
-        let prompt = request.prompt.trim();
-        if prompt.is_empty() {
-            bail!("queue item prompt is empty: {}", item.id);
-        }
-        item.prompt = prompt.to_string();
-        item.position = request.position.unwrap_or(item.position);
-        item.depends_on = request.depends_on.clone().unwrap_or_default();
-        item.repo_root = request
-            .repo_root
-            .clone()
-            .or_else(|| run.selected_repo_root.clone())
-            .filter(|value| !value.trim().is_empty());
-        item.repo_name = request
-            .repo_name
-            .clone()
-            .or_else(|| run.selected_repo_name.clone())
-            .filter(|value| !value.trim().is_empty());
-        item.agent_command = request
-            .agent_command
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| run.selected_agent_command.clone());
-        item.execution_host = resolve_queue_item_execution_host(
-            request.execution_host.as_deref(),
-            Some(item.execution_host.clone()),
-            run.execution_host.clone(),
-        );
-        item.remote_launcher = update_queue_item_remote_launcher(
-            request.remote_launcher.as_deref(),
-            item.remote_launcher.clone(),
-            run.remote_launcher.clone(),
-            item.repo_root.as_deref(),
-        );
-        item.remote_agent_local_proxy = resolve_queue_item_optional_setting(
-            request.remote_agent_local_proxy.as_deref(),
-            item.remote_agent_local_proxy.clone(),
-            run.remote_agent_local_proxy.clone(),
-        );
-        item.remote_agent_remote_proxy = resolve_queue_item_optional_setting(
-            request.remote_agent_remote_proxy.as_deref(),
-            item.remote_agent_remote_proxy.clone(),
-            run.remote_agent_remote_proxy.clone(),
-        );
+        apply_queue_update_item(&run, item, request)?;
         updated_ids.insert(item.id.clone());
     }
     if updated_ids.len() != requested.len() {
         bail!("queue update references unknown item");
     }
     validate_queue_execution_hosts(&run, &all_items)?;
-    normalize_queue_dependencies(&run.execution_mode, &mut all_items)?;
+    let graph_metadata = all_items
+        .iter()
+        .map(|item| {
+            requested
+                .get(&item.id)
+                .map(QueueGraphItemMetadata::from_update_request)
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>();
+    let queue_graph =
+        normalize_queue_dependencies_with_metadata(&run.execution_mode, &mut all_items, &graph_metadata)?;
     let updates = all_items
         .into_iter()
         .filter(|item| updated_ids.contains(&item.id))
@@ -244,19 +238,73 @@ fn handle_queue_update_result(headers: &HeaderMap, payload: QueueUpdateRequest) 
     let count = updates.len();
     state::update_web_queue_item_plans(&run_id, &updates)?;
     spawn_web_queue_worker(run_id);
-    Ok(count)
+    Ok(QueueCountOutcome {
+        count,
+        queue_graph,
+    })
+}
+
+fn apply_queue_update_item(
+    run: &state::QueueRunRow,
+    item: &mut state::QueueItemRow,
+    request: &QueueUpdateItemRequest,
+) -> Result<()> {
+    if !queue_item_editable_while_running(run, item)? {
+        bail!("queue item is already active: {}", item.id);
+    }
+    if request.position.is_some_and(|position| position <= run.current_index) {
+        bail!("queue item cannot move before the active cursor: {}", item.id);
+    }
+    let prompt = request.prompt.trim();
+    if prompt.is_empty() {
+        bail!("queue item prompt is empty: {}", item.id);
+    }
+    item.prompt = prompt.to_string();
+    item.position = request.position.unwrap_or(item.position);
+    item.depends_on = request.depends_on.clone().unwrap_or_default();
+    item.repo_root = request
+        .repo_root
+        .clone()
+        .or_else(|| run.selected_repo_root.clone())
+        .filter(|value| !value.trim().is_empty());
+    item.repo_name = request
+        .repo_name
+        .clone()
+        .or_else(|| run.selected_repo_name.clone())
+        .filter(|value| !value.trim().is_empty());
+    item.agent_command = request
+        .agent_command
+        .clone()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| run.selected_agent_command.clone());
+    item.execution_host = resolve_queue_item_execution_host(
+        request.execution_host.as_deref(),
+        Some(item.execution_host.clone()),
+        run.execution_host.clone(),
+    );
+    item.remote_launcher = update_queue_item_remote_launcher(
+        request.remote_launcher.as_deref(),
+        item.remote_launcher.clone(),
+        run.remote_launcher.clone(),
+        item.repo_root.as_deref(),
+    );
+    item.remote_agent_local_proxy = resolve_queue_item_optional_setting(
+        request.remote_agent_local_proxy.as_deref(),
+        item.remote_agent_local_proxy.clone(),
+        run.remote_agent_local_proxy.clone(),
+    );
+    item.remote_agent_remote_proxy = resolve_queue_item_optional_setting(
+        request.remote_agent_remote_proxy.as_deref(),
+        item.remote_agent_remote_proxy.clone(),
+        run.remote_agent_remote_proxy.clone(),
+    );
+    Ok(())
 }
 
 fn handle_queue_stop(headers: &HeaderMap, payload: &QueueStopRequest) -> TerminalSendResponse {
     match handle_queue_stop_result(headers, payload) {
-        Ok(()) => TerminalSendResponse {
-            ok: true,
-            output: "queue stop requested".to_string(),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(()) => TerminalSendResponse::success("queue stop requested"),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
@@ -277,14 +325,8 @@ fn handle_queue_continue(
     payload: &QueueContinueRequest,
 ) -> TerminalSendResponse {
     match handle_queue_continue_result(headers, payload) {
-        Ok(()) => TerminalSendResponse {
-            ok: true,
-            output: "queue continued".to_string(),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(()) => TerminalSendResponse::success("queue continued"),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
@@ -311,14 +353,8 @@ fn handle_queue_tab_create(
     payload: &QueueTabCreateRequest,
 ) -> TerminalSendResponse {
     match handle_queue_tab_create_result(headers, payload) {
-        Ok(tab_id) => TerminalSendResponse {
-            ok: true,
-            output: format!("queue-tab\t{tab_id}"),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(tab_id) => TerminalSendResponse::success(format!("queue-tab\t{tab_id}")),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
@@ -347,14 +383,8 @@ fn handle_queue_tab_switch(
     payload: &QueueTabRequest,
 ) -> TerminalSendResponse {
     match handle_queue_tab_switch_result(headers, payload) {
-        Ok(()) => TerminalSendResponse {
-            ok: true,
-            output: "queue tab switched".to_string(),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(()) => TerminalSendResponse::success("queue tab switched"),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
@@ -374,14 +404,8 @@ fn handle_queue_tab_delete(
     payload: &QueueTabRequest,
 ) -> TerminalSendResponse {
     match handle_queue_tab_delete_result(headers, payload) {
-        Ok(()) => TerminalSendResponse {
-            ok: true,
-            output: "queue tab deleted".to_string(),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(()) => TerminalSendResponse::success("queue tab deleted"),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
@@ -763,88 +787,10 @@ fn queue_remote_launcher_setting(value: Option<&str>) -> Option<QueueRemoteLaunc
     Some(QueueRemoteLauncherSetting::Remote(value.to_string()))
 }
 
-fn normalize_queue_dependencies(
-    execution_mode: impl Into<state::QueueExecutionMode>,
-    items: &mut [state::QueueItemRow],
-) -> Result<()> {
-    let execution_mode = execution_mode.into();
-    if !execution_mode.is_graph() {
-        for item in items {
-            item.depends_on.clear();
-        }
-        return Ok(());
-    }
-    let mut references = HashMap::new();
-    for item in items.iter() {
-        references.insert(item.id.clone(), item.id.clone());
-    }
-    for item in items.iter() {
-        references
-            .entry(item.slug.clone())
-            .or_insert_with(|| item.id.clone());
-    }
-    for item in items.iter_mut() {
-        let item_id = item.id.clone();
-        let mut seen = HashSet::new();
-        item.depends_on = item
-            .depends_on
-            .iter()
-            .filter_map(|dependency| references.get(dependency).cloned())
-            .filter(|dependency_id| dependency_id != &item_id && seen.insert(dependency_id.clone()))
-            .collect();
-    }
-    if queue_dependency_graph_has_cycle(items) {
-        bail!("queue dependency graph contains a cycle");
-    }
-    Ok(())
-}
-
-fn queue_dependency_graph_has_cycle(items: &[state::QueueItemRow]) -> bool {
-    let by_id = items
-        .iter()
-        .map(|item| (item.id.as_str(), item.depends_on.as_slice()))
-        .collect::<HashMap<_, _>>();
-    let mut visiting = HashSet::new();
-    let mut visited = HashSet::new();
-    items
-        .iter()
-        .any(|item| queue_dependency_visit(&by_id, item.id.as_str(), &mut visiting, &mut visited))
-}
-
-fn queue_dependency_visit<'a>(
-    by_id: &HashMap<&'a str, &'a [String]>,
-    id: &'a str,
-    visiting: &mut HashSet<&'a str>,
-    visited: &mut HashSet<&'a str>,
-) -> bool {
-    if visited.contains(id) {
-        return false;
-    }
-    if !visiting.insert(id) {
-        return true;
-    }
-    if let Some(dependencies) = by_id.get(id) {
-        for dependency in *dependencies {
-            if queue_dependency_visit(by_id, dependency.as_str(), visiting, visited) {
-                return true;
-            }
-        }
-    }
-    visiting.remove(id);
-    visited.insert(id);
-    false
-}
-
 fn handle_queue_remove(headers: &HeaderMap, payload: &QueueRemoveRequest) -> TerminalSendResponse {
     match handle_queue_remove_result(headers, payload) {
-        Ok(()) => TerminalSendResponse {
-            ok: true,
-            output: "removed".to_string(),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(()) => TerminalSendResponse::success("removed"),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
@@ -917,14 +863,8 @@ fn queue_item_editable_while_running(
 
 fn handle_queue_clear(headers: &HeaderMap, payload: &QueueClearRequest) -> TerminalSendResponse {
     match handle_queue_clear_result(headers, payload) {
-        Ok(count) => TerminalSendResponse {
-            ok: true,
-            output: format!("cleared {count} queue item(s)"),
-        },
-        Err(err) => TerminalSendResponse {
-            ok: false,
-            output: format!("{err:#}"),
-        },
+        Ok(count) => TerminalSendResponse::success(format!("cleared {count} queue item(s)")),
+        Err(err) => TerminalSendResponse::failure(format!("{err:#}")),
     }
 }
 
