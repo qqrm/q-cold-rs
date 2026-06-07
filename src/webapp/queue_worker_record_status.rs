@@ -2,6 +2,8 @@ const REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE: &str =
     "remote-native task is open, but remote-agent session is not running on the remote host";
 const REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE: &str =
     "remote-native task is open but remote-agent session is missing; relaunching item";
+const LOCAL_OPEN_RECORD_STOPPED_MESSAGE: &str =
+    "local task is open but agent session is missing; press Continue to resume";
 
 fn reconcile_queue_task_record_status(
     run: &state::QueueRunRow,
@@ -18,6 +20,21 @@ fn reconcile_queue_task_record_status(
         return Ok(true);
     }
     if reconcile_remote_native_open_record(run, item, &status, changed)? {
+        return Ok(true);
+    }
+    if local_open_record_without_live_agent(item, &status) {
+        mark_local_open_queue_item_stopped(
+            &run.id,
+            item,
+            item.agent_id.as_deref(),
+            item.attempts,
+        )?;
+        *changed = true;
+        terminal_run.get_or_insert((
+            "stopped".into(),
+            item.position,
+            LOCAL_OPEN_RECORD_STOPPED_MESSAGE.to_string(),
+        ));
         return Ok(true);
     }
     if status == "paused" && !item.status.is_paused() {
@@ -80,6 +97,16 @@ fn reconcile_queue_task_record_status(
         return Ok(true);
     }
     Ok(false)
+}
+
+fn local_open_record_without_live_agent(item: &state::QueueItemRow, status: &str) -> bool {
+    status == "open"
+        && !queue_item_remote_native(item)
+        && !item.status.is_success()
+        && item
+            .agent_id
+            .as_deref()
+            .is_none_or(|agent_id| !agent_running(agent_id))
 }
 
 fn reconcile_remote_native_open_record(
@@ -273,14 +300,8 @@ fn queue_item_status_closeout_outcome(
         return relaunch_remote_native_disconnected_item(run_id, item, attempts).map(Some);
     }
     if status == "open" && !queue_item_remote_native(item) && !agent_running(agent_id) {
-        return fail_or_schedule_queue_item_recovery(
-            run_id,
-            item,
-            "agent exited before task closeout",
-            Some(agent_id),
-            attempts,
-        )
-        .map(Some);
+        return mark_local_open_queue_item_stopped(run_id, item, Some(agent_id), attempts)
+            .map(Some);
     }
     if status == "open"
         && !queue_item_remote_native(item)
@@ -321,6 +342,30 @@ fn mark_queue_item_paused(
         None,
     )?;
     state::update_web_queue_run(run_id, "stopped", item.position, status)?;
+    Ok(QueueItemOutcome::Stopped)
+}
+
+fn mark_local_open_queue_item_stopped(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    agent_id: Option<&str>,
+    attempts: i64,
+) -> Result<QueueItemOutcome> {
+    state::update_web_queue_item(
+        run_id,
+        &item.id,
+        "stopped",
+        LOCAL_OPEN_RECORD_STOPPED_MESSAGE,
+        agent_id,
+        attempts,
+        None,
+    )?;
+    state::update_web_queue_run(
+        run_id,
+        "stopped",
+        item.position,
+        LOCAL_OPEN_RECORD_STOPPED_MESSAGE,
+    )?;
     Ok(QueueItemOutcome::Stopped)
 }
 

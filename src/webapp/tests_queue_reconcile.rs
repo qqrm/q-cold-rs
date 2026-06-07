@@ -290,6 +290,8 @@ mod queue_reconcile_tests {
         assert!(test_web_queue_worker_spawned(&run.id));
     }
 
+    include!("tests_queue_reconcile_open_local.rs");
+
     #[test]
     fn failed_graph_queue_restarts_after_newer_recovery_task_succeeds() {
         let _guard = test_support::env_guard();
@@ -995,5 +997,4 @@ mod queue_reconcile_tests {
             updated_at: 0,
         }
     }
-
 }

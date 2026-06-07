@@ -64,6 +64,7 @@ fn failed_queue_run_may_be_resolved(
         }
         if let Some(status) = queue_task_status(item)? {
             if status == "closed:success"
+                || local_open_record_without_live_agent(item, &status)
                 || (queue_status_auto_recoverable(&status)
                     && item.recovery_attempts < WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS)
             {
@@ -261,6 +262,10 @@ fn stale_queue_task_record_handled(
         if !item.status.is_success() || item.agent_id.as_deref().is_some_and(agent_running) {
             update_successful_queue_item(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
         }
+        return Ok(true);
+    }
+    if local_open_record_without_live_agent(item, &status) {
+        mark_local_open_queue_item_stopped(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
         return Ok(true);
     }
     if queue_status_auto_recoverable(&status)

@@ -111,6 +111,8 @@ that semantic cap.
 Queue run, append, and update dashboard API responses preserve the existing
 `ok`/`output` fields and may include `queue_graph` diagnostics with canonical
 dependency normalization, wave indexes, and display-safe validation messages.
+Local rows with a matching open task record but no live agent session are
+stopped for operator resume instead of being treated as failed task attempts.
 
 Mutating queue commands post to the local dashboard daemon on
 `127.0.0.1:8787` by default. If it is not reachable, Q-COLD starts it unless the
