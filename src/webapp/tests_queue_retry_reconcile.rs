@@ -65,6 +65,59 @@ mod queue_retry_reconcile_tests {
         );
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn stale_running_remote_native_open_record_without_session_is_relaunched() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        let state_dir = temp.path().join("state");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir(&state_dir).unwrap();
+        std::fs::create_dir(&repo).unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", &state_dir);
+        let repo = repo.to_string_lossy().to_string();
+        let mut run = queue_run_fixture("stale-remote-native-open-record", "running", 1);
+        run.execution_mode = "graph".into();
+        let first = queue_item_fixture(&run.id, "first", 0, "success", Some("agent-1"));
+        let mut second =
+            queue_item_fixture(&run.id, "second", 1, "running", Some("qa-task-second"));
+        second.repo_root = Some(repo.clone());
+        second.execution_host = "remote-native".into();
+        second.remote_launcher = Some("/bin/false".to_string());
+        second.message = "remote-native retry is still running after failed closeout".into();
+        let mut third = queue_item_fixture(&run.id, "third", 2, "pending", None);
+        third.repo_root = Some(repo.clone());
+        third.depends_on = vec!["second".to_string()];
+        state::replace_web_queue(&run, &[first, second.clone(), third]).unwrap();
+        state::upsert_task_record(&state::new_task_record(
+            "task/task-second".to_string(),
+            "task-flow".to_string(),
+            "second".to_string(),
+            "prompt second".to_string(),
+            "open".to_string(),
+            Some(repo),
+            Some("/remote/repo/task-second".to_string()),
+            second.agent_id.clone(),
+            None,
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        resume_stale_active_queue_run(&run, stored_items).unwrap();
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+        let relaunched = &stored_items[1];
+
+        assert_eq!(stored_run.status, "running");
+        assert_eq!(stored_run.current_index, 1);
+        assert_eq!(relaunched.status, "pending");
+        assert_eq!(relaunched.agent_id.as_deref(), None);
+        assert_eq!(
+            relaunched.message,
+            REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
+        );
+    }
+
     fn queue_run_fixture(id: &str, status: &str, current_index: i64) -> state::QueueRunRow {
         state::QueueRunRow {
             id: id.to_string(),

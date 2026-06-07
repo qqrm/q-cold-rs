@@ -198,6 +198,23 @@ fn reconcile_remote_native_missing_record_launch(
     Ok(true)
 }
 
+fn reconcile_remote_native_open_record_launch(
+    run: &state::QueueRunRow,
+    item: &state::QueueItemRow,
+) -> Result<bool> {
+    if !item.status.is_starting_or_running() || !queue_item_remote_native(item) {
+        return Ok(false);
+    }
+    let Some(status) = queue_task_status(item)? else {
+        return Ok(false);
+    };
+    if !remote_native_open_record_without_live_session(item, &status) {
+        return Ok(false);
+    }
+    relaunch_remote_native_disconnected_item(&run.id, item, item.attempts)?;
+    Ok(true)
+}
+
 fn fail_queue_run_item(
     run_id: &str,
     item: &state::QueueItemRow,
@@ -223,6 +240,10 @@ fn resume_stale_active_queue_run(
 ) -> Result<()> {
     for item in items {
         if reconcile_remote_native_missing_record_launch(run, &item)? {
+            spawn_web_queue_worker(run.id.clone());
+            return Ok(());
+        }
+        if reconcile_remote_native_open_record_launch(run, &item)? {
             spawn_web_queue_worker(run.id.clone());
             return Ok(());
         }
