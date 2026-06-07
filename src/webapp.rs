@@ -42,6 +42,8 @@ const AGENT_LIMIT_PENDING_RETRY: u64 = 30;
 const DASHBOARD_STATE_CACHE_TTL: u64 = 2;
 const DASHBOARD_STATE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_EVENT_INTERVAL: Duration = Duration::from_secs(2);
+const WEB_QUEUE_STATUS_SYNC_INTERVAL_ENV: &str = "QCOLD_WEB_QUEUE_STATUS_SYNC_INTERVAL_SECONDS";
+const WEB_QUEUE_STATUS_SYNC_INTERVAL_SECS: u64 = 60;
 const WEB_QUEUE_RETRY_DELAYS: [u64; 3] = [60, 300, 600];
 const WEB_QUEUE_WORKER_LEASE_TTL_SECS: u64 = 120;
 static AGENT_LIMIT_CACHE: OnceLock<Mutex<Option<AgentLimitCache>>> = OnceLock::new();
@@ -54,6 +56,7 @@ static WEB_QUEUE_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static TEST_WEB_QUEUE_WORKER_SPAWNS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 static WEB_QUEUE_ITEM_WORKERS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static WEB_QUEUE_RECONCILE_WORKER: OnceLock<Mutex<bool>> = OnceLock::new();
+static WEB_QUEUE_STATUS_RECONCILER: OnceLock<()> = OnceLock::new();
 static WEB_QUEUE_REMOTE_SYNC_AT: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
 
 #[derive(Args, Clone)]
@@ -335,7 +338,7 @@ async fn serve_async(args: &ServeArgs) -> Result<()> {
     eprintln!("Q-COLD Mini App listening on http://{}", args.listen);
     refresh_dashboard_state_cache_soon();
     start_dashboard_state_cache_refresher();
-    reconcile_stale_web_queue_run_soon();
+    start_web_queue_status_reconciler();
     axum::serve(listener, router())
         .await
         .context("Mini App server failed")
@@ -682,6 +685,7 @@ include!("webapp/tests_queue_retry_reconcile.rs");
 include!("webapp/tests_queue_recovery_precedence.rs");
 include!("webapp/tests_queue_remote_sync.rs");
 include!("webapp/tests_queue_state_model.rs");
+include!("webapp/tests_queue_status_sync.rs");
 include!("webapp/tests_queue_tabs.rs");
 include!("webapp/tests_queue_taskflow_missing_record.rs");
 include!("webapp/tests_queue_taskflow.rs");

@@ -142,6 +142,9 @@ until the next terminal record, terminal bundle, or operator continue action.
 Remote task-record sync is bounded by
 `QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS`, defaulting to 30 seconds, so a
 stale remote launcher cannot freeze queue reconciliation.
+The dashboard daemon periodically reconciles queue rows against task records
+once per minute by default. Set `QCOLD_WEB_QUEUE_STATUS_SYNC_INTERVAL_SECONDS`
+to tune that interval.
 If remote-agent launch succeeds but the remote task record and tmux session are
 not visible, Q-COLD schedules a bounded relaunch instead of leaving a terminal
 failed row. Remote port-forward failures run a best-effort `remote-agent down`

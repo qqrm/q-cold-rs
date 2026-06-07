@@ -1,3 +1,21 @@
+fn start_web_queue_status_reconciler() {
+    WEB_QUEUE_STATUS_RECONCILER.get_or_init(|| {
+        thread::spawn(|| loop {
+            reconcile_stale_web_queue_run_soon();
+            thread::sleep(web_queue_status_sync_interval());
+        });
+    });
+}
+
+fn web_queue_status_sync_interval() -> Duration {
+    let seconds = env::var(WEB_QUEUE_STATUS_SYNC_INTERVAL_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(WEB_QUEUE_STATUS_SYNC_INTERVAL_SECS);
+    Duration::from_secs(seconds)
+}
+
 fn reconcile_stale_web_queue_run_soon() {
     let worker = WEB_QUEUE_RECONCILE_WORKER.get_or_init(|| Mutex::new(false));
     if let Ok(mut active) = worker.lock() {
