@@ -48,13 +48,14 @@ default to `mid`. Ready graph items are admitted against live reservations and
 last-hour host resource history. When resources are insufficient, the item stays
 waiting with an admission reason and next retry time.
 
-If a managed queue task reaches `closed:failed`, lands in `failed-closeout`, or
-its executor exits before recording a closeout, Q-COLD starts a fresh
-auto-recovery executor for that row. The recovery packet points at the failed
-task record, task logs when present, and the previous failure. Q-COLD caps this
-at three semantic iterations total: the original attempt plus two recovery
-attempts. A successful recovery closeout advances the queue; exhausting the cap
-leaves the row failed.
+If a managed queue task reaches `closed:failed`, lands in `failed-closeout`, its
+executor exits before recording a closeout, or an open local task record loses
+its live agent session, Q-COLD starts a fresh auto-recovery executor for that
+row. The recovery packet points at the failed or interrupted task record, task
+logs when present, terminal bundle metadata when present, and the previous
+failure. Q-COLD caps this at three semantic iterations total: the original
+attempt plus two recovery attempts. A successful recovery closeout advances the
+queue; exhausting the cap leaves the row failed.
 
 Remote-native execution is available with top-level `selected_execution_host:
 "remote-native"` or per-item `execution_host: "remote-native"`. It requires a

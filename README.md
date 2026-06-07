@@ -124,10 +124,11 @@ and `next_attempt_at` retry time.
 Queue run, append, and update dashboard API responses preserve the existing
 `ok`/`output` fields and may include `queue_graph` diagnostics with canonical
 dependency normalization, wave indexes, and display-safe validation messages.
-Local rows with a matching open task record but no live agent session are
-stopped for operator resume instead of being treated as failed task attempts.
-On `queue continue`, those local rows are reset to pending with a clean agent
-context; remote-native stopped rows retain their remote agent identity for
+Local rows with a matching open task record but no live agent session use the
+same bounded auto-recovery path, starting a fresh executor with the prior task
+record, logs, and bundle context instead of stopping for operator resume. Older
+stopped rows with that missing-agent message are reconciled into the same
+recovery path. Remote-native stopped rows retain their remote agent identity for
 remote resume.
 
 Mutating queue commands post to the local dashboard daemon on
@@ -137,8 +138,8 @@ command is passed `--no-start-daemon`.
 Remote-native rows are reconciled against task records, terminal bundles, and
 live remote tmux sessions. A stale `failed-closeout` record is shown as running
 while the same remote-native agent session is still alive. An `open`
-remote-native record without a live remote-agent session is shown as stopped
-until the next terminal record, terminal bundle, or operator continue action.
+remote-native record without a live remote-agent session is relaunched through
+the bounded remote-native retry path.
 Remote task-record sync is bounded by
 `QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS`, defaulting to 30 seconds, so a
 stale remote launcher cannot freeze queue reconciliation.

@@ -119,6 +119,7 @@ mod queue_status_sync_tests {
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
+            task_class: state::QueueTaskClass::Mid,
             agent_id: agent_id.map(str::to_string),
             status: status.into(),
             message: String::new(),

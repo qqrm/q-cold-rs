@@ -51,6 +51,7 @@ fn queue_run_needs_stale_reconcile(
                     .as_deref()
                     .is_some_and(agent_running))
         })
+        || stopped_local_open_record_may_auto_recover(run, items)?
     {
         return Ok(true);
     }
@@ -87,10 +88,32 @@ fn failed_queue_run_may_be_resolved(
         }
         if let Some(status) = queue_task_status(item)? {
             if status == "closed:success"
-                || local_open_record_without_live_agent(item, &status)
+                || local_open_record_without_live_agent(run, item, &status)
                 || (queue_status_auto_recoverable(&status)
                     && item.recovery_attempts < WEB_QUEUE_AUTO_RECOVERY_ATTEMPTS)
             {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn stopped_local_open_record_may_auto_recover(
+    run: &state::QueueRunRow,
+    items: &[state::QueueItemRow],
+) -> Result<bool> {
+    if run.status != state::QueueRunStatus::Stopped {
+        return Ok(false);
+    }
+    for item in items {
+        if item.status != state::QueueItemStatus::Stopped
+            || item.message != LOCAL_OPEN_RECORD_STOPPED_MESSAGE
+        {
+            continue;
+        }
+        if let Some(status) = queue_task_status(item)? {
+            if local_open_record_without_live_agent(run, item, &status) {
                 return Ok(true);
             }
         }
@@ -287,8 +310,20 @@ fn stale_queue_task_record_handled(
         }
         return Ok(true);
     }
-    if local_open_record_without_live_agent(item, &status) {
-        mark_local_open_queue_item_stopped(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
+    if local_open_record_recovery_waiting_on_current_attempt(item, &status) {
+        return Ok(false);
+    }
+    if local_open_record_without_live_agent(run, item, &status) {
+        let outcome = fail_or_schedule_queue_item_recovery(
+            &run.id,
+            item,
+            LOCAL_OPEN_RECORD_RECOVERY_MESSAGE,
+            item.agent_id.as_deref(),
+            item.attempts,
+        )?;
+        if let QueueItemOutcome::Failed { message, .. } = outcome {
+            state::update_web_queue_run(&run.id, "failed", item.position, &message)?;
+        }
         return Ok(true);
     }
     if queue_status_auto_recoverable(&status)
