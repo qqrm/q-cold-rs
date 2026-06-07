@@ -522,6 +522,7 @@ struct TaskTranscriptResponse {
     title: String,
     status: String,
     session_path: Option<String>,
+    transcript_path: Option<String>,
     chat_available: bool,
     messages: Vec<TaskTranscriptMessage>,
     output: String,

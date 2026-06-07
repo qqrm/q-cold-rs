@@ -323,6 +323,7 @@ fn task_transcript_response(task_id: &str) -> TaskTranscriptResponse {
             title: String::new(),
             status: String::new(),
             session_path: None,
+            transcript_path: None,
             chat_available: false,
             messages: Vec::new(),
             output: format!("{err:#}"),
@@ -335,30 +336,86 @@ fn task_transcript_result(task_id: &str) -> Result<TaskTranscriptResponse> {
     if task_id.is_empty() || task_id.chars().any(char::is_control) {
         bail!("invalid task id");
     }
-    crate::sync_codex_task_records().ok();
-    let record = state::get_task_record(task_id)?
-        .with_context(|| format!("unknown task record: {task_id}"))?;
+    let record = task_record_for_transcript(task_id)?;
     if live_web_queue_task_without_closed_status(&record) {
+        if let Some(response) = task_agent_execution_log_response(&record)? {
+            return Ok(response);
+        }
         bail!("live queue tasks are available through their executor terminal only");
     }
-    let session_path = codex_session_path_from_metadata(record.metadata_json.as_deref())
-        .context("task record has no Codex session transcript")?;
-    let path = PathBuf::from(&session_path);
-    if !is_codex_session_path(&path) {
-        bail!("refusing to read non-Codex session path: {}", path.display());
+    if let Some(session_path) = codex_session_path_from_metadata(record.metadata_json.as_deref()) {
+        let path = PathBuf::from(&session_path);
+        if !is_codex_session_path(&path) {
+            bail!("refusing to read non-Codex session path: {}", path.display());
+        }
+        let messages = codex_transcript_messages(&path)?;
+        let chat_available = task_record_chat_available(&record);
+        return Ok(TaskTranscriptResponse {
+            ok: true,
+            task_id: record.id,
+            title: record.title,
+            chat_available,
+            status: record.status,
+            session_path: Some(session_path),
+            transcript_path: None,
+            messages,
+            output: String::new(),
+        });
     }
-    let messages = codex_transcript_messages(&path)?;
-    let chat_available = task_record_chat_available(&record);
-    Ok(TaskTranscriptResponse {
+    task_agent_execution_log_response(&record)?
+        .context("task record has no Codex session transcript or task execution log")
+}
+
+fn task_record_for_transcript(task_id: &str) -> Result<state::TaskRecordRow> {
+    if let Some(record) = state::get_task_record(task_id)? {
+        return Ok(record);
+    }
+    crate::sync_codex_task_records().ok();
+    state::get_task_record(task_id)?.with_context(|| format!("unknown task record: {task_id}"))
+}
+
+fn task_agent_execution_log_response(record: &state::TaskRecordRow) -> Result<Option<TaskTranscriptResponse>> {
+    let Some(path) = task_agent_execution_log_path(record) else {
+        return Ok(None);
+    };
+    let text = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read task execution log {}", path.display()))?;
+    let messages = transcript_message(String::new(), "assistant", &text).into_iter().collect();
+    Ok(Some(TaskTranscriptResponse {
         ok: true,
-        task_id: record.id,
-        title: record.title,
-        chat_available,
-        status: record.status,
-        session_path: Some(session_path),
+        task_id: record.id.clone(),
+        title: record.title.clone(),
+        chat_available: task_record_chat_available(record),
+        status: record.status.clone(),
+        session_path: None,
+        transcript_path: Some(path.display().to_string()),
         messages,
         output: String::new(),
-    })
+    }))
+}
+
+fn task_agent_execution_log_path(record: &state::TaskRecordRow) -> Option<PathBuf> {
+    let worktree = task_metadata_string(record.metadata_json.as_deref(), "task_worktree")
+        .or_else(|| record.cwd.clone())
+        .map(PathBuf::from)?;
+    if !worktree.is_absolute() {
+        return None;
+    }
+    let logs_dir = worktree.join(".task/logs");
+    let path = logs_dir.join("agent-execution.md");
+    if !path.is_file() || !task_log_path_is_inside_worktree(&worktree, &logs_dir, &path) {
+        return None;
+    }
+    Some(path)
+}
+
+fn task_log_path_is_inside_worktree(worktree: &Path, logs_dir: &Path, path: &Path) -> bool {
+    let (Ok(worktree), Ok(logs_dir), Ok(path)) =
+        (worktree.canonicalize(), logs_dir.canonicalize(), path.canonicalize())
+    else {
+        return false;
+    };
+    logs_dir.starts_with(&worktree) && path.starts_with(&logs_dir)
 }
 
 fn task_record_chat_available(record: &state::TaskRecordRow) -> bool {

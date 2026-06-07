@@ -886,6 +886,7 @@
         transcriptSubtitle.textContent = [
           payload.task_id,
           payload.status,
+          payload.transcript_path,
           payload.session_path || (terminal ? `agent ${terminal.agent_id || terminal.label || terminal.target}` : ''),
         ].filter(Boolean).join(' / ');
         transcriptContext.chatAvailable = Boolean(transcriptContext.terminalTarget || payload.chat_available);

@@ -143,6 +143,9 @@ before rotating to the next candidate remote proxy port.
 Queue rows with a live executor terminal open the task chat modal with the
 latest bounded terminal tail, including remote-native tmux panes captured
 through the configured remote launcher.
+Rows without a live executor terminal but with `.task/logs/agent-execution.md`
+show that visible task-flow log immediately instead of waiting on Codex session
+metadata refresh.
 
 ## Node Snapshot
 
