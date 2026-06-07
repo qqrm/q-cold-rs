@@ -351,11 +351,30 @@ fn config_for_managed_worktree(root: &Path) -> Result<RepositoryConfig> {
         if let Some(mut repo) = registered_for_root(&primary)? {
             repo.id = format!("{}:worktree", repo.id);
             repo.root = root;
+            repo.xtask_manifest =
+                managed_worktree_xtask_manifest(&repo.root, &primary, repo.xtask_manifest.as_deref())?;
             repo.active = true;
             return Ok(repo);
         }
     }
     fallback_for_root(&root)
+}
+
+fn managed_worktree_xtask_manifest(
+    worktree: &Path,
+    primary: &Path,
+    manifest: Option<&Path>,
+) -> Result<Option<PathBuf>> {
+    let Some(manifest) = manifest else {
+        return Ok(None);
+    };
+    if let Ok(relative) = manifest.strip_prefix(primary) {
+        let worktree_manifest = worktree.join(relative);
+        if worktree_manifest.is_file() {
+            return Ok(Some(canonical_existing(&worktree_manifest)?));
+        }
+    }
+    Ok(Some(manifest.to_path_buf()))
 }
 
 fn config_for_managed_worktree_primary(root: &Path) -> Result<RepositoryConfig> {
@@ -674,6 +693,60 @@ mod tests {
         assert_eq!(repo.xtask_manifest, Some(canonical_existing(&manifest).unwrap()));
 
         env::remove_var("QCOLD_REPO_ROOT");
+        env::remove_var("QCOLD_STATE_DIR");
+        env::set_current_dir(original_cwd).unwrap();
+    }
+
+    #[test]
+    fn managed_worktree_config_remaps_primary_xtask_manifest_into_worktree() {
+        let _guard = crate::test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        let original_cwd = env::current_dir().unwrap();
+        env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        env::set_current_dir(temp.path()).unwrap();
+
+        let primary = temp.path().join("primary");
+        let worktree = temp.path().join("WT/primary/anchor-task");
+        let primary_manifest = primary.join("xtask/Cargo.toml");
+        let worktree_manifest = worktree.join("xtask/Cargo.toml");
+        std::fs::create_dir_all(primary_manifest.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(worktree.join(".task")).unwrap();
+        std::fs::create_dir_all(worktree_manifest.parent().unwrap()).unwrap();
+        std::fs::write(
+            &primary_manifest,
+            "[package]\nname = \"primary-fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &worktree_manifest,
+            "[package]\nname = \"worktree-fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            worktree.join(".task/task.env"),
+            format!("PRIMARY_REPO_PATH='{}'\n", primary.display()),
+        )
+        .unwrap();
+
+        upsert(&RepositoryConfig {
+            id: "primary".to_string(),
+            root: canonical_root(&primary).unwrap(),
+            adapter: "xtask-process".to_string(),
+            xtask_manifest: Some(canonical_existing(&primary_manifest).unwrap()),
+            default_branch: Some("main".to_string()),
+            active: true,
+        })
+        .unwrap();
+
+        let repo = config_for_managed_worktree(&worktree).unwrap();
+        assert_eq!(repo.id, "primary:worktree");
+        assert_eq!(repo.root, canonical_root(&worktree).unwrap());
+        assert_eq!(
+            repo.xtask_manifest,
+            Some(canonical_existing(&worktree_manifest).unwrap())
+        );
+        assert_eq!(repo.default_branch.as_deref(), Some("main"));
+
         env::remove_var("QCOLD_STATE_DIR");
         env::set_current_dir(original_cwd).unwrap();
     }

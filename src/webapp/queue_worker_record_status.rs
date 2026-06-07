@@ -32,10 +32,30 @@ fn reconcile_queue_task_record_status(
         terminal_run.get_or_insert(("stopped".into(), item.position, status));
         return Ok(true);
     }
-    if queue_status_auto_recoverable(&status)
-        && queue_item_recovery_waiting_on_current_attempt(item)
-    {
-        return Ok(true);
+    if queue_status_auto_recoverable(&status) {
+        if let Some(agent_id) = live_queue_item_recovery_agent_id(item) {
+            let message = format!("running recovery retry ({agent_id})");
+            if !item.status.is_running()
+                || item.message != message
+                || item.agent_id.as_deref() != Some(agent_id)
+            {
+                state::update_web_queue_item(
+                    &run.id,
+                    &item.id,
+                    "running",
+                    &message,
+                    Some(agent_id),
+                    item.attempts,
+                    None,
+                )?;
+                *changed = true;
+            }
+            state::update_web_queue_run(&run.id, "running", item.position, &message)?;
+            return Ok(true);
+        }
+        if queue_item_recovery_waiting_on_current_attempt(item) {
+            return Ok(true);
+        }
     }
     if queue_status_auto_recoverable(&status)
         && schedule_queue_item_auto_recovery(&run.id, item, &status)?

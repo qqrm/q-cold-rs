@@ -14,15 +14,26 @@ fn queue_item_semantic_iteration(item: &state::QueueItemRow) -> i64 {
 }
 
 fn queue_item_recovery_active_or_pending(item: &state::QueueItemRow) -> bool {
-    item.recovery_attempts > 0 && !queue_item_terminal(&item.status)
+    item.recovery_attempts > 0
+        && (!queue_item_terminal(&item.status) || live_queue_item_recovery_agent_id(item).is_some())
 }
 
 fn queue_item_recovery_waiting_on_current_attempt(item: &state::QueueItemRow) -> bool {
-    queue_item_recovery_active_or_pending(item)
-        && item
-            .agent_id
-            .as_deref()
-            .is_none_or(|agent_id| agent_running(agent_id) && !agent_terminal_closeout_failed(agent_id))
+    if item.recovery_attempts <= 0 {
+        return false;
+    }
+    if live_queue_item_recovery_agent_id(item).is_some() {
+        return true;
+    }
+    !queue_item_terminal(&item.status) && item.agent_id.is_none()
+}
+
+fn live_queue_item_recovery_agent_id(item: &state::QueueItemRow) -> Option<&str> {
+    let agent_id = item.agent_id.as_deref()?;
+    (item.recovery_attempts > 0
+        && agent_running(agent_id)
+        && !agent_terminal_closeout_failed(agent_id))
+    .then_some(agent_id)
 }
 
 fn schedule_queue_item_auto_recovery(

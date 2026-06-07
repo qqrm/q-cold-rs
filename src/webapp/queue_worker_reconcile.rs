@@ -56,6 +56,9 @@ fn failed_queue_run_may_be_resolved(
         if !item.status.is_failed_or_blocked() {
             continue;
         }
+        if queue_item_recovery_waiting_on_current_attempt(item) {
+            return Ok(true);
+        }
         if remote_native_retry_session_running(item) {
             return Ok(true);
         }

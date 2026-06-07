@@ -660,6 +660,7 @@ include!("webapp/tests_assets.rs");
 include!("webapp/tests_queue_live_edit.rs");
 include!("webapp/tests_queue_prompt.rs");
 include!("webapp/tests_queue_reconcile.rs");
+include!("webapp/tests_queue_retry_reconcile.rs");
 include!("webapp/tests_queue_recovery_precedence.rs");
 include!("webapp/tests_queue_remote_sync.rs");
 include!("webapp/tests_queue_state_model.rs");

@@ -721,8 +721,7 @@ fn remote_queue_sync_due(item: &state::QueueItemRow, launcher: &str, required: b
     } else {
         REMOTE_QUEUE_SYNC_INTERVAL_SECS
     };
-    let repo = item.repo_root.as_deref().unwrap_or("");
-    let key = format!("{launcher}\t{repo}");
+    let key = remote_queue_sync_key(item, launcher);
     let now = unix_now();
     let sync_times = WEB_QUEUE_REMOTE_SYNC_AT.get_or_init(|| Mutex::new(HashMap::new()));
     let Ok(mut sync_times) = sync_times.lock() else {
@@ -736,6 +735,19 @@ fn remote_queue_sync_due(item: &state::QueueItemRow, launcher: &str, required: b
     }
     sync_times.insert(key, now);
     true
+}
+
+fn remote_queue_sync_key(item: &state::QueueItemRow, launcher: &str) -> String {
+    let repo = item.repo_root.as_deref().unwrap_or("");
+    format!("{launcher}\t{repo}")
+}
+
+#[cfg(test)]
+fn mark_remote_queue_sync_recent(item: &state::QueueItemRow, launcher: &str) {
+    let sync_times = WEB_QUEUE_REMOTE_SYNC_AT.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Ok(mut sync_times) = sync_times.lock() {
+        sync_times.insert(remote_queue_sync_key(item, launcher), unix_now());
+    }
 }
 
 fn compact_process_output(stdout: &str, stderr: &str) -> String {

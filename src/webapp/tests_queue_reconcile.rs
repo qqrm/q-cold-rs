@@ -764,7 +764,7 @@ mod queue_reconcile_tests {
             .iter()
             .find(|item| item.id == "second")
             .unwrap();
-        let _ = remote_queue_sync_due(retry_item, "/bin/true", true);
+        mark_remote_queue_sync_recent(retry_item, "/bin/true");
         assert!(matches!(
             reconcile_queue_task_statuses(&restarted_run, &retry_items).unwrap(),
             QueueReconcile::Changed
@@ -994,4 +994,5 @@ mod queue_reconcile_tests {
             updated_at: 0,
         }
     }
+
 }
