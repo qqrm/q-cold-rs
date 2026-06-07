@@ -40,6 +40,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         apply: apply_task_sequence_counter_schema,
     },
     SchemaMigration {
+        id: "006_web_queue_worker_leases",
+        apply: apply_web_queue_worker_lease_schema,
+    },
+    SchemaMigration {
         id: "task_sequence_task_sources_only_v1",
         apply: repair_legacy_task_sequence_pollution,
     },
@@ -395,6 +399,10 @@ fn apply_task_sequence_counter_schema(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn apply_web_queue_worker_lease_schema(connection: &Connection) -> Result<()> {
+    ensure_web_queue_worker_lease_schema(connection)
+}
+
 fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
     connection
         .execute_batch(
@@ -476,6 +484,31 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
              where active = 1;",
         )
         .context("failed to initialize web queue tables")?;
+    Ok(())
+}
+
+fn ensure_web_queue_worker_lease_schema(connection: &Connection) -> Result<()> {
+    connection
+        .execute_batch(
+            "create table if not exists web_queue_item_worker_leases (
+                 item_id text primary key references web_queue_items(id) on delete cascade,
+                 run_id text not null references web_queue_runs(id) on delete cascade,
+                 owner_id text,
+                 lease_epoch integer not null default 0,
+                 acquired_at_unix integer,
+                 heartbeat_at_unix integer,
+                 expires_at_unix integer,
+                 released_at_unix integer,
+                 recovery_count integer not null default 0,
+                 updated_at_unix integer not null
+             );
+             create index if not exists web_queue_item_worker_leases_run
+             on web_queue_item_worker_leases(run_id);
+             create index if not exists web_queue_item_worker_leases_active
+             on web_queue_item_worker_leases(expires_at_unix)
+             where owner_id is not null;",
+        )
+        .context("failed to initialize web queue worker lease table")?;
     Ok(())
 }
 
@@ -1316,6 +1349,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(item, ("[]".to_string(), "local".to_string(), 0));
+
+        let lease_rows: i64 = connection
+            .query_row(
+                "select count(*) from web_queue_item_worker_leases",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(lease_rows, 0);
 
         let default_tab = connection
             .query_row(

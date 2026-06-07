@@ -110,6 +110,10 @@ auto-recovery attempts. Launch retries for agent startup remain separate from
 that semantic cap. Failed task closeout, `closed:failed`, and local executor
 exit before closeout all route through that bounded recovery path with a fresh
 executor and prior-failure context.
+Queue item workers also take a durable SQLite lease with a heartbeat before
+launching executor work, so a restarted daemon can distinguish active ownership
+from expired ownership and retry bounded stale work without relying only on
+process-local thread state.
 Queue run, append, and update dashboard API responses preserve the existing
 `ok`/`output` fields and may include `queue_graph` diagnostics with canonical
 dependency normalization, wave indexes, and display-safe validation messages.

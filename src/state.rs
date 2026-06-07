@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 
 const DEFAULT_SQLITE_BUSY_TIMEOUT_MS: u64 = 30_000;
@@ -159,6 +159,66 @@ pub struct QueueItemAttemptRow {
     pub started_at: u64,
     pub finished_at: Option<u64>,
     pub updated_at: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QueueWorkerLease {
+    pub run_id: String,
+    pub item_id: String,
+    pub owner_id: String,
+    pub lease_epoch: i64,
+    pub acquired_at: u64,
+    pub heartbeat_at: u64,
+    pub expires_at: u64,
+    pub recovered_stale: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QueueWorkerLeaseAcquire {
+    Acquired(QueueWorkerLease),
+    Busy {
+        owner_id: String,
+        lease_epoch: i64,
+        expires_at: u64,
+    },
+    Retryable {
+        next_attempt_at: u64,
+    },
+    Terminal {
+        status: QueueItemStatus,
+    },
+    Missing,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum QueueWorkerLeaseState {
+    Missing,
+    Unowned {
+        lease_epoch: i64,
+    },
+    Active {
+        owner_id: String,
+        lease_epoch: i64,
+        expires_at: u64,
+    },
+    Stale {
+        owner_id: String,
+        lease_epoch: i64,
+        expires_at: u64,
+    },
+    Retryable {
+        next_attempt_at: u64,
+    },
+    Terminal {
+        status: QueueItemStatus,
+    },
+}
+
+#[derive(Clone, Debug)]
+struct QueueWorkerLeaseRow {
+    owner_id: Option<String>,
+    lease_epoch: i64,
+    expires_at: Option<u64>,
 }
 
 pub fn load_terminal_metadata() -> Result<Vec<TerminalMetadataRow>> {
@@ -662,6 +722,245 @@ pub fn web_queue_stop_requested(run_id: &str) -> Result<bool> {
         .optional()
         .context("failed to query web queue stop flag")?;
     Ok(requested != Some(0))
+}
+
+pub fn acquire_web_queue_item_worker_lease(
+    run_id: &str,
+    item_id: &str,
+    owner_id: &str,
+    lease_ttl_secs: u64,
+) -> Result<QueueWorkerLeaseAcquire> {
+    acquire_web_queue_item_worker_lease_at(run_id, item_id, owner_id, unix_now(), lease_ttl_secs)
+}
+
+pub fn acquire_web_queue_item_worker_lease_at(
+    run_id: &str,
+    item_id: &str,
+    owner_id: &str,
+    now: u64,
+    lease_ttl_secs: u64,
+) -> Result<QueueWorkerLeaseAcquire> {
+    if owner_id.trim().is_empty() {
+        bail!("queue worker lease owner id cannot be empty");
+    }
+    let mut connection = open_db()?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("failed to start queue worker lease transaction")?;
+    let Some((status, next_attempt_at)) = queue_worker_lease_item_state(&tx, run_id, item_id)?
+    else {
+        tx.commit()
+            .context("failed to commit missing queue worker lease transaction")?;
+        return Ok(QueueWorkerLeaseAcquire::Missing);
+    };
+    if status.is_terminal() {
+        tx.commit()
+            .context("failed to commit terminal queue worker lease transaction")?;
+        return Ok(QueueWorkerLeaseAcquire::Terminal { status });
+    }
+    if let Some(next_attempt_at) = next_attempt_at.filter(|next_attempt_at| *next_attempt_at > now)
+    {
+        tx.commit()
+            .context("failed to commit retryable queue worker lease transaction")?;
+        return Ok(QueueWorkerLeaseAcquire::Retryable { next_attempt_at });
+    }
+
+    let existing = queue_worker_lease_row(&tx, run_id, item_id)?;
+    if let Some((owner_id, lease_epoch, expires_at)) =
+        active_queue_worker_lease(existing.as_ref(), now)
+    {
+        tx.commit()
+            .context("failed to commit busy queue worker lease transaction")?;
+        return Ok(QueueWorkerLeaseAcquire::Busy {
+            owner_id,
+            lease_epoch,
+            expires_at,
+        });
+    }
+    let recovered_stale = existing.as_ref().is_some_and(|lease| {
+        lease.owner_id.is_some() && lease.expires_at.is_none_or(|expires_at| expires_at <= now)
+    });
+    let lease_epoch = existing
+        .as_ref()
+        .map_or(1, |lease| lease.lease_epoch.saturating_add(1));
+    let expires_at = now.saturating_add(lease_ttl_secs);
+    tx.execute(
+        "insert into web_queue_item_worker_leases
+             (item_id, run_id, owner_id, lease_epoch, acquired_at_unix, heartbeat_at_unix,
+              expires_at_unix, released_at_unix, recovery_count, updated_at_unix)
+         values (?1, ?2, ?3, ?4, ?5, ?5, ?6, null, ?7, ?5)
+         on conflict(item_id) do update set
+             run_id = excluded.run_id,
+             owner_id = excluded.owner_id,
+             lease_epoch = excluded.lease_epoch,
+             acquired_at_unix = excluded.acquired_at_unix,
+             heartbeat_at_unix = excluded.heartbeat_at_unix,
+             expires_at_unix = excluded.expires_at_unix,
+             released_at_unix = null,
+             recovery_count = web_queue_item_worker_leases.recovery_count + excluded.recovery_count,
+             updated_at_unix = excluded.updated_at_unix",
+        params![
+            item_id,
+            run_id,
+            owner_id,
+            lease_epoch,
+            now,
+            expires_at,
+            i64::from(recovered_stale),
+        ],
+    )
+    .context("failed to acquire queue worker lease")?;
+    tx.commit()
+        .context("failed to commit queue worker lease acquisition")?;
+    Ok(QueueWorkerLeaseAcquire::Acquired(QueueWorkerLease {
+        run_id: run_id.to_string(),
+        item_id: item_id.to_string(),
+        owner_id: owner_id.to_string(),
+        lease_epoch,
+        acquired_at: now,
+        heartbeat_at: now,
+        expires_at,
+        recovered_stale,
+    }))
+}
+
+pub fn heartbeat_web_queue_item_worker_lease(
+    lease: &QueueWorkerLease,
+    lease_ttl_secs: u64,
+) -> Result<bool> {
+    heartbeat_web_queue_item_worker_lease_at(lease, unix_now(), lease_ttl_secs)
+}
+
+pub fn heartbeat_web_queue_item_worker_lease_at(
+    lease: &QueueWorkerLease,
+    now: u64,
+    lease_ttl_secs: u64,
+) -> Result<bool> {
+    let connection = open_db()?;
+    let expires_at = now.saturating_add(lease_ttl_secs);
+    let updated = connection
+        .execute(
+            "update web_queue_item_worker_leases
+             set owner_id = ?3, heartbeat_at_unix = ?5, expires_at_unix = ?6,
+                 released_at_unix = null, updated_at_unix = ?5
+             where run_id = ?1 and item_id = ?2 and lease_epoch = ?4
+               and (owner_id = ?3 or owner_id is null)
+               and exists (
+                   select 1 from web_queue_items
+                   where id = ?2 and run_id = ?1 and status not in ('success', 'failed', 'blocked')
+               )",
+            params![
+                lease.run_id,
+                lease.item_id,
+                lease.owner_id,
+                lease.lease_epoch,
+                now,
+                expires_at,
+            ],
+        )
+        .context("failed to heartbeat queue worker lease")?;
+    Ok(updated > 0)
+}
+
+pub fn release_web_queue_item_worker_lease(lease: &QueueWorkerLease) -> Result<bool> {
+    let connection = open_db()?;
+    let now = unix_now();
+    let updated = connection
+        .execute(
+            "update web_queue_item_worker_leases
+             set owner_id = null, expires_at_unix = null, released_at_unix = ?5, updated_at_unix = ?5
+             where run_id = ?1 and item_id = ?2 and owner_id = ?3 and lease_epoch = ?4",
+            params![
+                lease.run_id,
+                lease.item_id,
+                lease.owner_id,
+                lease.lease_epoch,
+                now,
+            ],
+        )
+        .context("failed to release queue worker lease")?;
+    Ok(updated > 0)
+}
+
+pub fn recover_stale_web_queue_item_worker_leases(run_id: &str) -> Result<usize> {
+    recover_stale_web_queue_item_worker_leases_at(run_id, unix_now())
+}
+
+pub fn recover_stale_web_queue_item_worker_leases_at(run_id: &str, now: u64) -> Result<usize> {
+    let connection = open_db()?;
+    let updated = connection
+        .execute(
+            "update web_queue_item_worker_leases
+             set owner_id = null, expires_at_unix = null, released_at_unix = ?2,
+                 recovery_count = recovery_count + 1, updated_at_unix = ?2
+             where run_id = ?1 and owner_id is not null and expires_at_unix is not null
+               and expires_at_unix <= ?2
+               and exists (
+                   select 1 from web_queue_items
+                   where id = web_queue_item_worker_leases.item_id
+                     and run_id = ?1 and status not in ('success', 'failed', 'blocked')
+                     and (next_attempt_at_unix is null or next_attempt_at_unix <= ?2)
+               )",
+            params![run_id, now],
+        )
+        .context("failed to recover stale queue worker leases")?;
+    Ok(updated)
+}
+
+pub fn web_queue_item_worker_lease_active(run_id: &str, item_id: &str) -> Result<bool> {
+    Ok(matches!(
+        inspect_web_queue_item_worker_lease(run_id, item_id)?,
+        QueueWorkerLeaseState::Active { .. }
+    ))
+}
+
+pub fn inspect_web_queue_item_worker_lease(
+    run_id: &str,
+    item_id: &str,
+) -> Result<QueueWorkerLeaseState> {
+    inspect_web_queue_item_worker_lease_at(run_id, item_id, unix_now())
+}
+
+pub fn inspect_web_queue_item_worker_lease_at(
+    run_id: &str,
+    item_id: &str,
+    now: u64,
+) -> Result<QueueWorkerLeaseState> {
+    let connection = open_db()?;
+    let Some((status, next_attempt_at)) =
+        queue_worker_lease_item_state(&connection, run_id, item_id)?
+    else {
+        return Ok(QueueWorkerLeaseState::Missing);
+    };
+    if status.is_terminal() {
+        return Ok(QueueWorkerLeaseState::Terminal { status });
+    }
+    if let Some(next_attempt_at) = next_attempt_at.filter(|next_attempt_at| *next_attempt_at > now)
+    {
+        return Ok(QueueWorkerLeaseState::Retryable { next_attempt_at });
+    }
+    let Some(lease) = queue_worker_lease_row(&connection, run_id, item_id)? else {
+        return Ok(QueueWorkerLeaseState::Unowned { lease_epoch: 0 });
+    };
+    let Some(owner_id) = lease.owner_id else {
+        return Ok(QueueWorkerLeaseState::Unowned {
+            lease_epoch: lease.lease_epoch,
+        });
+    };
+    let expires_at = lease.expires_at.unwrap_or(now);
+    if expires_at > now {
+        Ok(QueueWorkerLeaseState::Active {
+            owner_id,
+            lease_epoch: lease.lease_epoch,
+            expires_at,
+        })
+    } else {
+        Ok(QueueWorkerLeaseState::Stale {
+            owner_id,
+            lease_epoch: lease.lease_epoch,
+            expires_at,
+        })
+    }
 }
 
 pub fn update_web_queue_item(
@@ -1337,6 +1636,61 @@ fn web_queue_item_by_key(
         )
         .optional()
         .context("failed to load web queue item")
+}
+
+fn queue_worker_lease_item_state(
+    connection: &Connection,
+    run_id: &str,
+    item_id: &str,
+) -> Result<Option<(QueueItemStatus, Option<u64>)>> {
+    connection
+        .query_row(
+            "select status, next_attempt_at_unix
+             from web_queue_items
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id],
+            |row| {
+                Ok((
+                    QueueItemStatus::from_db_value(row.get::<_, String>(0)?),
+                    row.get(1)?,
+                ))
+            },
+        )
+        .optional()
+        .context("failed to load queue item lease state")
+}
+
+fn queue_worker_lease_row(
+    connection: &Connection,
+    run_id: &str,
+    item_id: &str,
+) -> Result<Option<QueueWorkerLeaseRow>> {
+    connection
+        .query_row(
+            "select owner_id, lease_epoch, expires_at_unix
+             from web_queue_item_worker_leases
+             where run_id = ?1 and item_id = ?2",
+            params![run_id, item_id],
+            |row| {
+                Ok(QueueWorkerLeaseRow {
+                    owner_id: row.get(0)?,
+                    lease_epoch: row.get(1)?,
+                    expires_at: row.get(2)?,
+                })
+            },
+        )
+        .optional()
+        .context("failed to load queue worker lease")
+}
+
+fn active_queue_worker_lease(
+    lease: Option<&QueueWorkerLeaseRow>,
+    now: u64,
+) -> Option<(String, i64, u64)> {
+    let lease = lease?;
+    let owner_id = lease.owner_id.clone()?;
+    let expires_at = lease.expires_at?;
+    (expires_at > now).then_some((owner_id, lease.lease_epoch, expires_at))
 }
 
 fn sync_web_queue_item_attempt_for_key(

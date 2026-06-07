@@ -41,6 +41,7 @@ fn start_remote_native_queue_item(
     run_id: &str,
     item: &mut state::QueueItemRow,
     attempts: i64,
+    lease: Option<&state::QueueWorkerLease>,
 ) -> Result<QueueItemOutcome> {
     let repo_root = queue_item_repo_root(item)?;
     ensure_queue_item_slug_available(item)?;
@@ -121,7 +122,7 @@ fn start_remote_native_queue_item(
         &remote_native_terminal_target(&agent_id),
     )?;
     let wait_item = remote_native_running_wait_item(item, &agent_id);
-    wait_for_queue_item_closeout(run_id, &wait_item, &agent_id, attempts)
+    wait_for_queue_item_closeout(run_id, &wait_item, &agent_id, attempts, lease)
 }
 
 fn remote_native_queue_session(agent_id: &str) -> String {

@@ -77,6 +77,7 @@ fn run_web_queue(run_id: &str) -> Result<()> {
             return Ok(());
         }
         crate::sync_codex_task_records().ok();
+        state::recover_stale_web_queue_item_worker_leases(run_id)?;
         match reconcile_queue_task_statuses(&run, &items)? {
             QueueReconcile::Unchanged => {}
             QueueReconcile::Changed => continue,
@@ -286,24 +287,45 @@ fn queue_item_worker_key(run_id: &str, item_id: &str) -> String {
 
 fn queue_item_worker_active(run_id: &str, item_id: &str) -> bool {
     let key = queue_item_worker_key(run_id, item_id);
-    WEB_QUEUE_ITEM_WORKERS
+    let local_active = WEB_QUEUE_ITEM_WORKERS
         .get()
         .and_then(|workers| workers.lock().ok())
-        .is_some_and(|active| active.contains(&key))
+        .is_some_and(|active| active.contains(&key));
+    local_active || state::web_queue_item_worker_lease_active(run_id, item_id).unwrap_or(false)
 }
 
 fn spawn_web_queue_item_worker(run_id: String, item: state::QueueItemRow) -> bool {
     let key = queue_item_worker_key(&run_id, &item.id);
+    let owner_id = queue_item_worker_owner_id(&key);
+    let lease = match state::acquire_web_queue_item_worker_lease(
+        &run_id,
+        &item.id,
+        &owner_id,
+        WEB_QUEUE_WORKER_LEASE_TTL_SECS,
+    ) {
+        Ok(state::QueueWorkerLeaseAcquire::Acquired(lease)) => lease,
+        Ok(
+            state::QueueWorkerLeaseAcquire::Busy { .. }
+            | state::QueueWorkerLeaseAcquire::Retryable { .. }
+            | state::QueueWorkerLeaseAcquire::Terminal { .. }
+            | state::QueueWorkerLeaseAcquire::Missing,
+        ) => return false,
+        Err(err) => {
+            eprintln!("warning: failed to acquire queue worker lease for {key}: {err:#}");
+            return false;
+        }
+    };
     let workers = WEB_QUEUE_ITEM_WORKERS.get_or_init(|| Mutex::new(HashSet::new()));
     if let Ok(mut active) = workers.lock() {
         if !active.insert(key.clone()) {
+            let _ = state::release_web_queue_item_worker_lease(&lease);
             return false;
         }
     }
     thread::spawn(move || {
         let item_id = item.id.clone();
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            run_web_queue_item(&run_id, &item)
+            run_web_queue_item_with_lease(&run_id, &item, Some(&lease))
         })) {
             Ok(Ok(_)) => {}
             Ok(Err(err)) => {
@@ -333,6 +355,7 @@ fn spawn_web_queue_item_worker(run_id: String, item: state::QueueItemRow) -> boo
                 );
             }
         }
+        let _ = state::release_web_queue_item_worker_lease(&lease);
         if let Some(workers) = WEB_QUEUE_ITEM_WORKERS.get() {
             if let Ok(mut active) = workers.lock() {
                 active.remove(&key);
@@ -340,6 +363,10 @@ fn spawn_web_queue_item_worker(run_id: String, item: state::QueueItemRow) -> boo
         }
     });
     true
+}
+
+fn queue_item_worker_owner_id(key: &str) -> String {
+    format!("pid:{}:{key}", std::process::id())
 }
 
 fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -380,7 +407,17 @@ impl QueueItemOutcome {
 }
 
 #[allow(clippy::too_many_lines, reason = "existing queue runner split debt")]
+#[allow(dead_code, reason = "unit tests exercise the lease-free direct runner")]
 fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueItemOutcome> {
+    run_web_queue_item_with_lease(run_id, item, None)
+}
+
+#[allow(clippy::too_many_lines, reason = "existing queue runner split debt")]
+fn run_web_queue_item_with_lease(
+    run_id: &str,
+    item: &state::QueueItemRow,
+    lease: Option<&state::QueueWorkerLease>,
+) -> Result<QueueItemOutcome> {
     let mut item = item.clone();
     if let Some(status) = queue_task_status(&item)? {
         if status == "closed:success" {
@@ -414,7 +451,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
     if item.status.is_starting_or_running() {
         if let Some(agent_id) = item.agent_id.as_deref() {
             if queue_item_remote_native(&item) {
-                return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts);
+                return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts, lease);
             }
             if agent_running(agent_id) {
                 if agent_terminal_closeout_failed(agent_id) {
@@ -426,7 +463,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                         item.attempts,
                     );
                 }
-                return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts);
+                return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts, lease);
             }
             return fail_or_schedule_queue_item_recovery(
                 run_id,
@@ -450,7 +487,13 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                     None,
                 )?;
                 let resumed_item = remote_native_running_wait_item(&item, agent_id);
-                return wait_for_queue_item_closeout(run_id, &resumed_item, agent_id, item.attempts);
+                return wait_for_queue_item_closeout(
+                    run_id,
+                    &resumed_item,
+                    agent_id,
+                    item.attempts,
+                    lease,
+                );
             }
             if agent_running(agent_id) {
                 state::update_web_queue_item(
@@ -462,7 +505,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                     item.attempts,
                     None,
                 )?;
-                return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts);
+                return wait_for_queue_item_closeout(run_id, &item, agent_id, item.attempts, lease);
             }
         }
     }
@@ -472,6 +515,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             pause_web_queue_item(run_id, &item, None, retries)?;
             return Ok(QueueItemOutcome::Stopped);
         }
+        heartbeat_queue_item_worker_lease(lease)?;
 
         if queue_item_remote_native(&item) {
             state::update_web_queue_item(
@@ -483,7 +527,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                 retries,
                 None,
             )?;
-            let outcome = start_remote_native_queue_item(run_id, &mut item, retries)?;
+            let outcome = start_remote_native_queue_item(run_id, &mut item, retries, lease)?;
             if let Some(outcome) =
                 handle_queue_launch_outcome(run_id, &mut item, &mut retries, outcome)?
             {
@@ -568,7 +612,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
             retries,
             None,
         )?;
-        let outcome = start_web_queue_item(run_id, &item, retries)?;
+        let outcome = start_web_queue_item(run_id, &item, retries, lease)?;
         if let Some(outcome) = handle_queue_launch_outcome(run_id, &mut item, &mut retries, outcome)? {
             return Ok(outcome);
         }
@@ -579,6 +623,7 @@ fn start_web_queue_item(
     run_id: &str,
     item: &state::QueueItemRow,
     attempts: i64,
+    lease: Option<&state::QueueWorkerLease>,
 ) -> Result<QueueItemOutcome> {
     let task = match queue_launch_workspace(item) {
         Ok(task) => task,
@@ -672,7 +717,7 @@ fn start_web_queue_item(
         queue_item_semantic_iteration(item),
         &target,
     )?;
-    let outcome = wait_for_queue_item_closeout(run_id, item, &agent.id, attempts);
+    let outcome = wait_for_queue_item_closeout(run_id, item, &agent.id, attempts, lease);
     cleanup_queue_task_packet_file(&prompt_file);
     outcome
 }
@@ -699,12 +744,14 @@ fn wait_for_queue_item_closeout(
     item: &state::QueueItemRow,
     agent_id: &str,
     attempts: i64,
+    lease: Option<&state::QueueWorkerLease>,
 ) -> Result<QueueItemOutcome> {
     loop {
         if state::web_queue_stop_requested(run_id)? {
             pause_web_queue_item(run_id, item, Some(agent_id), attempts)?;
             return Ok(QueueItemOutcome::Stopped);
         }
+        heartbeat_queue_item_worker_lease(lease)?;
         thread::sleep(Duration::from_secs(5));
         crate::sync_codex_task_records().ok();
         if let Some(status) = queue_task_status(item)? {
@@ -718,6 +765,25 @@ fn wait_for_queue_item_closeout(
         {
             return Ok(outcome);
         }
+    }
+}
+
+fn heartbeat_queue_item_worker_lease(lease: Option<&state::QueueWorkerLease>) -> Result<()> {
+    let Some(lease) = lease else {
+        return Ok(());
+    };
+    if state::heartbeat_web_queue_item_worker_lease(lease, WEB_QUEUE_WORKER_LEASE_TTL_SECS)? {
+        return Ok(());
+    }
+    match state::inspect_web_queue_item_worker_lease(&lease.run_id, &lease.item_id)? {
+        state::QueueWorkerLeaseState::Terminal { .. }
+        | state::QueueWorkerLeaseState::Retryable { .. } => Ok(()),
+        state => bail!(
+            "queue worker lease lost for {}:{} to {:?}",
+            lease.run_id,
+            lease.item_id,
+            state
+        ),
     }
 }
 

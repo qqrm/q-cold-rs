@@ -235,6 +235,211 @@ mod queue_state_model_tests {
     }
 
     #[test]
+    fn runtime_worker_lease_acquire_blocks_conflicting_owner() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("lease-conflict", "running", 0);
+        let item = queue_item_fixture(&run.id, "first", 0, "pending", None);
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let lease = match state::acquire_web_queue_item_worker_lease_at(
+            &run.id,
+            "first",
+            "worker-a",
+            100,
+            30,
+        )
+        .unwrap()
+        {
+            state::QueueWorkerLeaseAcquire::Acquired(lease) => lease,
+            other => panic!("expected acquired lease, got {other:?}"),
+        };
+        let blocked = state::acquire_web_queue_item_worker_lease_at(
+            &run.id,
+            "first",
+            "worker-b",
+            101,
+            30,
+        )
+        .unwrap();
+
+        assert_eq!(lease.owner_id, "worker-a");
+        assert_eq!(lease.lease_epoch, 1);
+        assert_eq!(
+            state::inspect_web_queue_item_worker_lease_at(&run.id, "first", 101).unwrap(),
+            state::QueueWorkerLeaseState::Active {
+                owner_id: "worker-a".to_string(),
+                lease_epoch: 1,
+                expires_at: 130,
+            }
+        );
+        assert_eq!(
+            blocked,
+            state::QueueWorkerLeaseAcquire::Busy {
+                owner_id: "worker-a".to_string(),
+                lease_epoch: 1,
+                expires_at: 130,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_worker_lease_recovers_stale_owner_deterministically() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("lease-stale", "running", 0);
+        let item = queue_item_fixture(&run.id, "first", 0, "pending", None);
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let first = match state::acquire_web_queue_item_worker_lease_at(
+            &run.id,
+            "first",
+            "worker-a",
+            100,
+            10,
+        )
+        .unwrap()
+        {
+            state::QueueWorkerLeaseAcquire::Acquired(lease) => lease,
+            other => panic!("expected acquired lease, got {other:?}"),
+        };
+        assert!(state::heartbeat_web_queue_item_worker_lease_at(&first, 105, 10).unwrap());
+        assert_eq!(
+            state::inspect_web_queue_item_worker_lease_at(&run.id, "first", 116).unwrap(),
+            state::QueueWorkerLeaseState::Stale {
+                owner_id: "worker-a".to_string(),
+                lease_epoch: 1,
+                expires_at: 115,
+            }
+        );
+
+        let second = match state::acquire_web_queue_item_worker_lease_at(
+            &run.id,
+            "first",
+            "worker-b",
+            116,
+            20,
+        )
+        .unwrap()
+        {
+            state::QueueWorkerLeaseAcquire::Acquired(lease) => lease,
+            other => panic!("expected stale takeover, got {other:?}"),
+        };
+
+        assert_eq!(second.owner_id, "worker-b");
+        assert_eq!(second.lease_epoch, 2);
+        assert!(second.recovered_stale);
+        assert_eq!(
+            state::inspect_web_queue_item_worker_lease_at(&run.id, "first", 117).unwrap(),
+            state::QueueWorkerLeaseState::Active {
+                owner_id: "worker-b".to_string(),
+                lease_epoch: 2,
+                expires_at: 136,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_stale_recovery_preserves_future_retry_lease() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("lease-retry", "running", 0);
+        let item = queue_item_fixture(&run.id, "first", 0, "pending", None);
+        state::replace_web_queue(&run, &[item]).unwrap();
+
+        let lease = match state::acquire_web_queue_item_worker_lease_at(
+            &run.id,
+            "first",
+            "worker-a",
+            100,
+            10,
+        )
+        .unwrap()
+        {
+            state::QueueWorkerLeaseAcquire::Acquired(lease) => lease,
+            other => panic!("expected acquired lease, got {other:?}"),
+        };
+        state::schedule_web_queue_item_relaunch(&run.id, "first", "retry later", 1, 200)
+            .unwrap();
+
+        assert_eq!(
+            state::recover_stale_web_queue_item_worker_leases_at(&run.id, 150).unwrap(),
+            0
+        );
+        assert_eq!(
+            state::inspect_web_queue_item_worker_lease_at(&run.id, "first", 150).unwrap(),
+            state::QueueWorkerLeaseState::Retryable {
+                next_attempt_at: 200
+            }
+        );
+        assert_eq!(
+            state::recover_stale_web_queue_item_worker_leases_at(&run.id, 201).unwrap(),
+            1
+        );
+        assert!(state::heartbeat_web_queue_item_worker_lease_at(&lease, 202, 10).unwrap());
+        assert_eq!(
+            state::inspect_web_queue_item_worker_lease_at(&run.id, "first", 203).unwrap(),
+            state::QueueWorkerLeaseState::Active {
+                owner_id: "worker-a".to_string(),
+                lease_epoch: 1,
+                expires_at: 212,
+            }
+        );
+    }
+
+    #[test]
+    fn runtime_worker_lease_inspects_retryable_and_terminal_items() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let run = queue_run_fixture("lease-terminal", "running", 0);
+        let mut retryable = queue_item_fixture(&run.id, "retryable", 0, "waiting", None);
+        retryable.next_attempt_at = Some(200);
+        let terminal = queue_item_fixture(&run.id, "terminal", 1, "success", Some("agent-done"));
+        state::replace_web_queue(&run, &[retryable, terminal]).unwrap();
+
+        assert_eq!(
+            state::inspect_web_queue_item_worker_lease_at(&run.id, "retryable", 100).unwrap(),
+            state::QueueWorkerLeaseState::Retryable {
+                next_attempt_at: 200
+            }
+        );
+        assert_eq!(
+            state::acquire_web_queue_item_worker_lease_at(
+                &run.id,
+                "retryable",
+                "worker-a",
+                100,
+                30,
+            )
+            .unwrap(),
+            state::QueueWorkerLeaseAcquire::Retryable {
+                next_attempt_at: 200
+            }
+        );
+        assert_eq!(
+            state::acquire_web_queue_item_worker_lease_at(
+                &run.id,
+                "terminal",
+                "worker-a",
+                100,
+                30,
+            )
+            .unwrap(),
+            state::QueueWorkerLeaseAcquire::Terminal {
+                status: "success".into()
+            }
+        );
+        assert_eq!(
+            state::recover_stale_web_queue_item_worker_leases_at(&run.id, 1_000).unwrap(),
+            0
+        );
+    }
+
+    #[test]
     fn runtime_reconcile_restart_preserves_live_agent_and_attempts() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

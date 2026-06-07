@@ -43,6 +43,7 @@ const DASHBOARD_STATE_CACHE_TTL: u64 = 2;
 const DASHBOARD_STATE_REFRESH_INTERVAL: Duration = Duration::from_secs(2);
 const DASHBOARD_EVENT_INTERVAL: Duration = Duration::from_secs(2);
 const WEB_QUEUE_RETRY_DELAYS: [u64; 3] = [60, 300, 600];
+const WEB_QUEUE_WORKER_LEASE_TTL_SECS: u64 = 120;
 static AGENT_LIMIT_CACHE: OnceLock<Mutex<Option<AgentLimitCache>>> = OnceLock::new();
 static AGENT_LIMIT_REFRESHING: OnceLock<Mutex<bool>> = OnceLock::new();
 static DASHBOARD_STATE_CACHE: OnceLock<Mutex<Option<DashboardStateCache>>> = OnceLock::new();
