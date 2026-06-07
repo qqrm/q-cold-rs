@@ -626,6 +626,40 @@ mod queue_taskflow_tests {
 
     #[test]
     #[cfg(unix)]
+    fn remote_native_sync_failed_terminal_snapshot_captures_remote_output() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let log = temp.path().join("remote.log");
+        std::env::set_var("REMOTE_TERMINAL_LOG", &log);
+        let launcher = fake_remote_terminal_launcher(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run_fixture("remote-native-sync-failed-terminal", &repo);
+        let mut item = queue_taskflow_item(
+            "task-remote-native-sync-failed-terminal",
+            &repo,
+            Some(launcher.to_str().unwrap()),
+        );
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".into();
+        item.status = "failed".into();
+        item.message = "remote-native task-record sync failed: timed out".into();
+        item.agent_id = Some(queue_agent_id(&item));
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+
+        let panes = discover_remote_native_terminal_sessions(
+            &std::collections::HashMap::new(),
+            &std::collections::HashSet::new(),
+        );
+
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0].agent_id, item.agent_id.clone().unwrap());
+        assert_eq!(panes[0].output, "remote output");
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn remote_native_terminal_send_routes_through_remote_launcher() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();

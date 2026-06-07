@@ -550,7 +550,7 @@ fn discover_remote_native_terminal_sessions(
         .unwrap_or_default()
         .into_iter()
         .filter(queue_item_remote_native)
-        .filter(|item| item.status.has_executor_session())
+        .filter(remote_native_queue_item_has_chat_terminal)
         .filter_map(|item| {
             let agent_id = item.agent_id.as_deref()?.trim();
             if agent_id.is_empty() || local_agent_ids.contains(agent_id) {

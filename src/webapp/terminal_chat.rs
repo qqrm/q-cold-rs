@@ -204,7 +204,30 @@ fn active_queue_item_terminal_target(item: &state::QueueItemRow) -> Option<(Stri
     if agent_id.is_empty() {
         return None;
     }
-    active_terminal_target_for_agent(agent_id).map(|target| (target, agent_id.to_string()))
+    if let Some(target) = active_terminal_target_for_agent(agent_id) {
+        return Some((target, agent_id.to_string()));
+    }
+    if remote_native_queue_item_has_chat_terminal(item) {
+        return Some((remote_native_terminal_target(agent_id), agent_id.to_string()));
+    }
+    None
+}
+
+fn remote_native_queue_item_has_chat_terminal(item: &state::QueueItemRow) -> bool {
+    queue_item_remote_native(item)
+        && item.agent_id.as_deref().is_some_and(|value| !value.trim().is_empty())
+        && item
+            .remote_launcher
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        && (item.status.has_executor_session() || remote_native_sync_failure_may_be_live(item))
+}
+
+fn remote_native_sync_failure_may_be_live(item: &state::QueueItemRow) -> bool {
+    item.status.as_str() == "failed"
+        && item
+            .message
+            .contains("remote-native task-record sync failed")
 }
 
 fn request_queue_item_reconcile_from_task_chat(item: &state::QueueItemRow) {
@@ -455,9 +478,19 @@ fn is_codex_session_path(path: &Path) -> bool {
 fn codex_transcript_messages(path: &Path) -> Result<Vec<TaskTranscriptMessage>> {
     let file = File::open(path)
         .with_context(|| format!("failed to open Codex session {}", path.display()))?;
+    codex_transcript_messages_from_reader(
+        BufReader::new(file),
+        &format!("Codex session {}", path.display()),
+    )
+}
+
+fn codex_transcript_messages_from_reader(
+    reader: impl BufRead,
+    label: &str,
+) -> Result<Vec<TaskTranscriptMessage>> {
     let mut messages = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let line = line.with_context(|| format!("failed to read Codex session {}", path.display()))?;
+    for line in reader.lines() {
+        let line = line.with_context(|| format!("failed to read {label}"))?;
         let Ok(value) = serde_json::from_str::<Value>(&line) else {
             continue;
         };

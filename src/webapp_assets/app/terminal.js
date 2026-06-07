@@ -37,6 +37,10 @@
         transcriptContext.chatAvailable = true;
         renderTranscriptComposer();
         await loadSnapshot();
+        const terminal = terminalForTarget(transcriptContext.terminalTarget);
+        if (terminal && !transcriptModal.hidden && transcriptContext.taskId === taskId) {
+          openTaskTranscript(taskId, { terminal });
+        }
       } catch (_) {
         // The send path reports startup failures; opening the transcript should stay readable.
       }

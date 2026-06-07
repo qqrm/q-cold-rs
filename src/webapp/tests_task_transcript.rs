@@ -90,6 +90,117 @@ mod task_transcript_tests {
     }
 
     #[test]
+    fn remote_native_queue_item_without_local_agent_uses_remote_tmux_target() {
+        let run = queue_run_fixture("run-remote-native-target");
+        let mut item = queue_item_fixture(&run.id, "remote-native-target");
+        item.execution_host = "remote-native".into();
+        item.remote_launcher = Some("/bin/true".into());
+        item.status = "running".into();
+        item.agent_id = Some("qa-remote-native-target".into());
+
+        let (target, agent_id) = active_queue_item_terminal_target(&item).unwrap();
+
+        assert_eq!(agent_id, "qa-remote-native-target");
+        assert_eq!(target, remote_native_terminal_target("qa-remote-native-target"));
+    }
+
+    #[test]
+    fn remote_native_sync_failure_queue_item_uses_remote_tmux_target() {
+        let run = queue_run_fixture("run-remote-native-sync-failure-target");
+        let mut item = queue_item_fixture(&run.id, "remote-native-sync-failure-target");
+        item.execution_host = "remote-native".into();
+        item.remote_launcher = Some("/bin/true".into());
+        item.status = "failed".into();
+        item.message = "remote-native task-record sync failed: timed out".into();
+        item.agent_id = Some("qa-remote-native-sync-failure-target".into());
+
+        let (target, agent_id) = active_queue_item_terminal_target(&item).unwrap();
+
+        assert_eq!(agent_id, "qa-remote-native-sync-failure-target");
+        assert_eq!(
+            target,
+            remote_native_terminal_target("qa-remote-native-sync-failure-target")
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn task_transcript_reads_remote_native_codex_session_through_launcher() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let session_fixture = temp.path().join("remote-session.jsonl");
+        fs::write(
+            &session_fixture,
+            format!(
+                "{}\n{}\n",
+                serde_json::json!({
+                    "type": "event_msg",
+                    "timestamp": "2026-06-07T00:00:00Z",
+                    "payload": {
+                        "type": "user_message",
+                        "message": "fix sequence queue chat",
+                    },
+                }),
+                serde_json::json!({
+                    "type": "event_msg",
+                    "timestamp": "2026-06-07T00:00:01Z",
+                    "payload": {
+                        "type": "agent_message",
+                        "message": "sequence transcript ready",
+                    },
+                }),
+            ),
+        )
+        .unwrap();
+        std::env::set_var("REMOTE_SESSION_FIXTURE", &session_fixture);
+        let launcher = temp.path().join("remote-launcher.sh");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\n\
+             if [ \"$1\" = \"cat\" ]; then\n\
+               cat \"$REMOTE_SESSION_FIXTURE\"\n\
+               exit 0\n\
+             fi\n\
+             exit 1\n",
+        )
+        .unwrap();
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = fs::metadata(&launcher).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&launcher, permissions).unwrap();
+        }
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut run = queue_run_fixture("run-remote-native-transcript");
+        run.execution_mode = "sequence".into();
+        let mut item = queue_item_fixture(&run.id, "remote-native-transcript");
+        item.execution_host = "remote-native".into();
+        item.remote_launcher = Some(launcher.display().to_string());
+        item.status = "success".into();
+        state::replace_web_queue(&run, &[item]).unwrap();
+        let remote_session = concat!(
+            "/home/remote/.codex/sessions/",
+            "rollout-2026-06-07T00-00-00-019ea1b4-e5eb-7713-b033-906da38f6d01.jsonl",
+        );
+        let mut record = task_record_fixture("task/remote-native-transcript", "closed:success");
+        record.repo_root = Some(repo.display().to_string());
+        record.metadata_json = Some(serde_json::json!({ "session_path": remote_session }).to_string());
+        state::upsert_task_record(&record).unwrap();
+
+        let response = task_transcript_response("task/remote-native-transcript");
+
+        assert!(response.ok, "{}", response.output);
+        assert_eq!(response.session_path.as_deref(), Some(remote_session));
+        assert_eq!(response.messages.len(), 2);
+        assert_eq!(response.messages[0].role, "user");
+        assert_eq!(response.messages[0].text, "fix sequence queue chat");
+        assert_eq!(response.messages[1].role, "assistant");
+        assert_eq!(response.messages[1].text, "sequence transcript ready");
+    }
+
+    #[test]
     fn task_transcript_for_queued_item_without_record_reports_queue_state_and_spawns_worker() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();

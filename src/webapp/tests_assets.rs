@@ -198,6 +198,22 @@ mod asset_tests {
     }
 
     #[test]
+    fn task_chat_target_refreshes_open_modal_after_terminal_lookup() {
+        let ensure_start = APP_JS.find("async function ensureTaskChatTarget(taskId)").unwrap();
+        let ensure = &APP_JS[ensure_start..];
+        let load_snapshot = ensure.find("await loadSnapshot();").unwrap();
+        let terminal_lookup = ensure
+            .find("const terminal = terminalForTarget(transcriptContext.terminalTarget);")
+            .unwrap();
+        let reopen = ensure
+            .find("openTaskTranscript(taskId, { terminal });")
+            .unwrap();
+
+        assert!(load_snapshot < terminal_lookup);
+        assert!(terminal_lookup < reopen);
+    }
+
+    #[test]
     fn graph_queue_active_run_prunes_empty_non_final_waves() {
         assert!(APP_JS.contains("function pruneEmptyBackendQueueWaves(waves, items)"));
         assert!(APP_JS.contains("function assignQueueWavesForDisplay(waves, items)"));
