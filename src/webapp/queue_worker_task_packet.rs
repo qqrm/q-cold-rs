@@ -205,6 +205,87 @@ fn write_queue_auto_recovery(packet: &mut String, item: &state::QueueItemRow) {
             let _ = writeln!(packet, "    {line}");
         }
     }
+    write_queue_recovery_evidence(packet, item);
+}
+
+fn write_queue_recovery_evidence(packet: &mut String, item: &state::QueueItemRow) {
+    match state::load_web_queue_item_attempts(&item.run_id, &item.id) {
+        Ok(attempts) if attempts.is_empty() => {
+            let _ = writeln!(packet, "  persisted_attempts: none");
+        }
+        Ok(attempts) => {
+            let _ = writeln!(packet, "  persisted_attempts:");
+            for attempt in attempts {
+                let _ = writeln!(packet, "    - iteration: {}", attempt.semantic_iteration);
+                let _ = writeln!(packet, "      status: {}", attempt.status);
+                let _ = writeln!(packet, "      selected_command: {}", attempt.agent_command);
+                write_recovery_scalar(
+                    packet,
+                    "      ",
+                    "task_record_id",
+                    attempt.task_record_id.as_deref(),
+                );
+                write_recovery_scalar(packet, "      ", "agent_id", attempt.agent_id.as_deref());
+                write_recovery_scalar(
+                    packet,
+                    "      ",
+                    "terminal",
+                    attempt.terminal_target.as_deref(),
+                );
+                write_recovery_scalar(
+                    packet,
+                    "      ",
+                    "stdout_log",
+                    attempt.stdout_log_path.as_deref(),
+                );
+                write_recovery_scalar(
+                    packet,
+                    "      ",
+                    "stderr_log",
+                    attempt.stderr_log_path.as_deref(),
+                );
+                write_recovery_scalar(packet, "      ", "bundle", attempt.bundle_path.as_deref());
+                write_recovery_block(
+                    packet,
+                    "      ",
+                    "failure_message",
+                    attempt.failure_message.as_deref(),
+                );
+            }
+        }
+        Err(err) => {
+            let reason = format!("{err:#}");
+            let reason = first_recovery_evidence_line(&reason);
+            let _ = writeln!(packet, "  persisted_attempts: unavailable ({reason})");
+        }
+    }
+}
+
+fn write_recovery_scalar(packet: &mut String, indent: &str, key: &str, value: Option<&str>) {
+    let value = value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("<none>");
+    let _ = writeln!(packet, "{indent}{key}: {value}");
+}
+
+fn write_recovery_block(packet: &mut String, indent: &str, key: &str, value: Option<&str>) {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        let _ = writeln!(packet, "{indent}{key}: <none>");
+        return;
+    };
+    let _ = writeln!(packet, "{indent}{key}: |");
+    for line in value.lines() {
+        let _ = writeln!(packet, "{indent}  {}", line.trim_end());
+    }
+}
+
+fn first_recovery_evidence_line(value: &str) -> &str {
+    value
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("unknown error")
 }
 
 fn write_queue_validation_closeout(packet: &mut String, remote_worktree: bool) {

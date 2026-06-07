@@ -691,26 +691,6 @@ mod queue_taskflow_tests {
     }
 
     #[test]
-    fn recovery_task_packet_is_one_shot_and_uses_separate_agent_id() {
-        let temp = tempfile::tempdir().unwrap();
-        let repo = temp.path().join("repo");
-        fs::create_dir(&repo).unwrap();
-        let mut item = queue_taskflow_item("task-auto-recovery-packet", &repo, None);
-        let first_agent = queue_agent_id(&item);
-        item.recovery_attempts = 1;
-        item.message = "closed:failed".to_string();
-
-        let packet = queue_task_instruction(&item);
-
-        assert_ne!(queue_agent_id(&item), first_agent);
-        assert!(packet.contains("auto_recovery:"));
-        assert!(packet.contains("attempt: 1/2"));
-        assert!(packet.contains("make one repair attempt"));
-        assert!(packet.contains("previous_failure:"));
-        assert!(packet.contains("closed:failed"));
-    }
-
-    #[test]
     #[cfg(unix)]
     fn remote_native_cleanup_stops_remote_agent_session() {
         let _guard = test_support::env_guard();

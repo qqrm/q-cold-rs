@@ -82,14 +82,29 @@ fn fail_or_schedule_queue_item_recovery(
     if schedule_queue_item_auto_recovery(run_id, item, message)? {
         return Ok(QueueItemOutcome::RecoveryScheduled);
     }
+    let message = exhausted_queue_item_failure_message(item, message)?;
     state::update_web_queue_item(
         run_id,
         &item.id,
         "failed",
-        message,
+        &message,
         agent_id,
         attempts,
         None,
     )?;
     Ok(QueueItemOutcome::failed(message))
+}
+
+fn exhausted_queue_item_failure_message(
+    item: &state::QueueItemRow,
+    failure_message: &str,
+) -> Result<String> {
+    let semantic_iterations = state::web_queue_item_semantic_iterations_started(item)?;
+    if semantic_iterations < WEB_QUEUE_SEMANTIC_ITERATIONS_PER_ITEM {
+        return Ok(failure_message.to_string());
+    }
+    Ok(format!(
+        "auto-recovery exhausted after {semantic_iterations} semantic iterations; \
+         last failure: {failure_message}"
+    ))
 }

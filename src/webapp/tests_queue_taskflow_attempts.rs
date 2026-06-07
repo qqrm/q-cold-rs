@@ -125,7 +125,9 @@ fn closed_failed_queue_task_after_second_auto_recovery_remains_failed() {
     assert_eq!(stored_run.unwrap().status, "failed");
     assert_eq!(failed.status, "failed");
     assert_eq!(failed.recovery_attempts, 2);
-    assert_eq!(failed.message, "closed:failed");
+    assert!(failed.message.contains("auto-recovery exhausted"));
+    assert!(failed.message.contains("3 semantic iterations"));
+    assert!(failed.message.contains("closed:failed"));
     let attempts = state::load_web_queue_item_attempts(&run.id, &failed.id).unwrap();
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].semantic_iteration, 3);
@@ -216,7 +218,9 @@ fn failed_closeout_after_second_auto_recovery_remains_failed() {
     assert_eq!(stored_run.unwrap().status, "failed");
     assert_eq!(failed.status, "failed");
     assert_eq!(failed.recovery_attempts, 2);
-    assert_eq!(failed.message, "failed-closeout");
+    assert!(failed.message.contains("auto-recovery exhausted"));
+    assert!(failed.message.contains("3 semantic iterations"));
+    assert!(failed.message.contains("failed-closeout"));
     let attempts = state::load_web_queue_item_attempts(&run.id, &failed.id).unwrap();
     assert_eq!(attempts.len(), 1);
     assert_eq!(attempts[0].semantic_iteration, 3);
@@ -255,4 +259,71 @@ fn stale_failed_agent_exit_row_schedules_auto_recovery() {
     assert_eq!(recovered.recovery_attempts, 1);
     assert!(recovered.message.contains("auto-recovery scheduled"));
     assert!(recovered.message.contains(QUEUE_AGENT_EXITED_BEFORE_CLOSEOUT));
+}
+
+#[test]
+fn recovery_task_packet_is_one_shot_and_uses_separate_agent_id() {
+    let _guard = test_support::env_guard();
+    let temp = tempfile::tempdir().unwrap();
+    std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+    let repo = temp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    let run = queue_run_fixture("auto-recovery-packet", &repo);
+    let mut item = queue_taskflow_item("task-auto-recovery-packet", &repo, None);
+    item.run_id.clone_from(&run.id);
+    item.status = "running".into();
+    let first_agent = queue_agent_id(&item);
+    item.agent_id = Some(first_agent.clone());
+    state::insert_agent(&state::AgentRow {
+        id: first_agent.clone(),
+        track: queue_track(&run.id),
+        pid: 42,
+        started_at: 10,
+        command: vec!["c1".to_string()],
+        cwd: Some(repo.clone()),
+        stdout_log_path: Some(repo.join("logs/original.out")),
+        stderr_log_path: Some(repo.join("logs/original.err")),
+    })
+    .unwrap();
+    let mut record = task_record_fixture("task-auto-recovery-packet", "closed:failed", &repo);
+    record.agent_id = Some(first_agent.clone());
+    record.metadata_json =
+        Some(r#"{"task_terminal_bundle":"/bundles/task-auto-recovery-packet-failed.zip"}"#.to_string());
+    state::upsert_task_record(&record).unwrap();
+    state::replace_web_queue(&run, &[item.clone()]).unwrap();
+    state::set_web_queue_item_attempt_terminal(&run.id, &item.id, 1, "tmux:first").unwrap();
+    state::schedule_web_queue_item_recovery(
+        &run.id,
+        &item.id,
+        "auto-recovery scheduled after failed task: closed:failed",
+        "closed:failed",
+        1,
+    )
+    .unwrap();
+    let (_, items) = state::load_web_queue_run(&run.id).unwrap();
+    let item = &items[0];
+
+    let packet = queue_task_instruction(item);
+
+    assert_ne!(queue_agent_id(item), first_agent);
+    assert!(packet.contains("auto_recovery:"));
+    assert!(packet.contains("attempt: 1/2"));
+    assert!(packet.contains("make one repair attempt"));
+    assert!(packet.contains("previous_failure:"));
+    assert!(packet.contains("closed:failed"));
+    assert!(packet.contains("persisted_attempts:"));
+    assert!(packet.contains("iteration: 1"));
+    assert!(packet.contains("status: failed"));
+    assert!(packet.contains("selected_command: c1"));
+    assert!(packet.contains("task_record_id: task/task-auto-recovery-packet"));
+    assert!(packet.contains("agent_id: qa-task-auto-recovery-packet"));
+    assert!(packet.contains("terminal: tmux:first"));
+    assert!(packet.contains("stdout_log: "));
+    assert!(packet.contains("logs/original.out"));
+    assert!(packet.contains("stderr_log: "));
+    assert!(packet.contains("logs/original.err"));
+    assert!(packet.contains("bundle: /bundles/task-auto-recovery-packet-failed.zip"));
+    assert!(packet.contains("failure_message: |"));
+    assert!(packet.contains("iteration: 2"));
+    assert!(packet.contains("status: pending"));
 }

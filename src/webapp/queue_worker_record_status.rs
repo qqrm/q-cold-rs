@@ -83,17 +83,22 @@ fn reconcile_queue_task_record_status(
         return Ok(true);
     }
     if queue_task_status_terminal(&status) && !item.status.is_success() {
+        let message = if queue_status_auto_recoverable(&status) {
+            exhausted_queue_item_failure_message(item, &status)?
+        } else {
+            status.clone()
+        };
         state::update_web_queue_item(
             &run.id,
             &item.id,
             "failed",
-            &status,
+            &message,
             item.agent_id.as_deref(),
             item.attempts,
             None,
         )?;
         *changed = true;
-        terminal_run.get_or_insert(("failed".into(), item.position, status));
+        terminal_run.get_or_insert(("failed".into(), item.position, message));
         return Ok(true);
     }
     Ok(false)
