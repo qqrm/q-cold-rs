@@ -13,6 +13,9 @@ actions.
   config locations, validation lanes, and cleanup hooks.
 - Define typed capability outcomes instead of relying only on string output.
 - Keep the current process adapter as a compatibility implementation.
+- Resolve registered repository adapter IDs through the Q-COLD adapter registry
+  so app and command layers depend on adapter capabilities instead of concrete
+  process-adapter types.
 - Add capability inspection so operators can see what the active repository
   supports before running task flow.
 - Document the minimum repository requirements for Q-COLD-owned task open.
@@ -33,6 +36,8 @@ Do not convert legacy wrappers yet.
 - Missing capabilities fail with actionable errors.
 - Existing registered repositories still work through the compatibility
   adapter.
+- Unknown repository adapter IDs fail at the registry boundary with the list of
+  supported adapter IDs.
 - Capability tests cover both supported and unsupported repositories.
 
 ## Validation

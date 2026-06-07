@@ -44,7 +44,6 @@ use serde_json::Value;
 use telegram::TelegramArgs;
 use wsl::WslArgs;
 
-use crate::adapter::{BundleAdapter, ProofAdapter, TaskAdapter};
 use crate::repository::{AdapterContext, RepositoryArgs, RepositoryConfig};
 
 const QCOLD_VERSION: &str = concat!(

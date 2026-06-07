@@ -6,6 +6,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 
+use crate::repository::RepositoryConfig;
+
+pub const XTASK_PROCESS_ADAPTER_ID: &str = "xtask-process";
+const SUPPORTED_ADAPTER_IDS: &[&str] = &[XTASK_PROCESS_ADAPTER_ID];
+
 #[allow(
     dead_code,
     reason = "adapter contract is intentionally wider than current call sites"
@@ -48,6 +53,48 @@ pub trait ProofAdapter {
 
 pub trait BundleAdapter {
     fn task_bundle(&self, task_id: Option<&str>) -> Result<u8>;
+}
+
+pub trait RepositoryAdapter: RepoAdapter + TaskAdapter + ProofAdapter + BundleAdapter {}
+
+impl<T> RepositoryAdapter for T where T: RepoAdapter + TaskAdapter + ProofAdapter + BundleAdapter {}
+
+pub struct AdapterRegistry {
+    supported_ids: &'static [&'static str],
+}
+
+impl AdapterRegistry {
+    pub const fn new() -> Self {
+        Self {
+            supported_ids: SUPPORTED_ADAPTER_IDS,
+        }
+    }
+
+    pub fn adapter_for(&self, repo: &RepositoryConfig) -> Result<Box<dyn RepositoryAdapter>> {
+        match repo.adapter.as_str() {
+            XTASK_PROCESS_ADAPTER_ID => Ok(Box::new(xtask_process_for(
+                &repo.root,
+                repo.xtask_manifest.as_deref(),
+                repo.default_branch.as_deref(),
+            )?)),
+            unsupported => bail!(
+                "repository {} uses unsupported adapter {}; supported adapters: {}",
+                repo.id,
+                unsupported,
+                self.supported_ids.join(", ")
+            ),
+        }
+    }
+}
+
+impl Default for AdapterRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn adapter_for_repository(repo: &RepositoryConfig) -> Result<Box<dyn RepositoryAdapter>> {
+    AdapterRegistry::default().adapter_for(repo)
 }
 
 pub fn xtask_process_for(
@@ -571,6 +618,49 @@ mod tests {
                     .to_string()
             })
         })
+    }
+
+    #[test]
+    fn adapter_registry_resolves_xtask_process_repository() {
+        let temp = tempfile::tempdir().unwrap();
+        let xtask_manifest = temp.path().join("xtask/Cargo.toml");
+        std::fs::create_dir_all(xtask_manifest.parent().unwrap()).unwrap();
+        std::fs::write(
+            &xtask_manifest,
+            "[package]\nname = \"fixture-xtask\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        let repo = RepositoryConfig {
+            id: "target".to_string(),
+            root: temp.path().canonicalize().unwrap(),
+            adapter: XTASK_PROCESS_ADAPTER_ID.to_string(),
+            xtask_manifest: None,
+            default_branch: Some("main".to_string()),
+            active: true,
+        };
+
+        let _adapter = AdapterRegistry::default().adapter_for(&repo).unwrap();
+    }
+
+    #[test]
+    fn adapter_registry_rejects_unknown_adapter_id_clearly() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = RepositoryConfig {
+            id: "target".to_string(),
+            root: temp.path().canonicalize().unwrap(),
+            adapter: "custom-adapter".to_string(),
+            xtask_manifest: None,
+            default_branch: None,
+            active: true,
+        };
+
+        let err = match AdapterRegistry::default().adapter_for(&repo) {
+            Ok(_) => panic!("unknown adapter should fail"),
+            Err(err) => err.to_string(),
+        };
+
+        assert!(err.contains("repository target uses unsupported adapter custom-adapter"));
+        assert!(err.contains("supported adapters: xtask-process"));
     }
 }
 

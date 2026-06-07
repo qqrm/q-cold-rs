@@ -306,6 +306,7 @@ fn required_control_plane_files() -> Vec<&'static str> {
         "src/webapp_assets/app/events_bootstrap.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
+        "src/webapp_assets/app/queue_graph_diagnostics.js",
         "src/webapp_assets/app/queue_scroll.js",
         "src/webapp_assets/app/queue_transcript_lookup.js",
         "src/webapp_assets/app/terminal.js",

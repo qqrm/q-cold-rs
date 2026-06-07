@@ -242,6 +242,46 @@ fn task_flow_command_prefers_registered_cwd_checkout_over_active_repository() {
 }
 
 #[test]
+fn adapter_backed_command_rejects_unknown_registered_adapter_id() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let repo = temp.path().join("qcold");
+
+    seed_git_repo(&repo);
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args([
+            "repo",
+            "add",
+            "qcold",
+            &repo.display().to_string(),
+            "--adapter",
+            "custom-adapter",
+            "--set-active",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    AssertCommand::cargo_bin("qcold")
+        .unwrap()
+        .args(["task", "terminal-check"])
+        .current_dir(&repo)
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .failure()
+        .stderr(contains(
+            "repository qcold uses unsupported adapter custom-adapter",
+        ))
+        .stderr(contains("supported adapters: xtask-process"));
+}
+
+#[test]
 fn mutating_adapter_command_rejects_active_repo_from_another_checkout() {
     let temp = tempdir().unwrap();
     let state_dir = temp.path().join("state");

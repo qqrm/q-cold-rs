@@ -10,8 +10,9 @@ repository.
 - Package 1 is partially landed: the SQLite schema already has `runs`,
   `events`, `claims`, `budgets`, and `recipes`, but Q-COLD still lacks a
   first-class typed task-process state machine.
-- Package 2 is not landed: repository registration exists, but there is no
-  typed capability contract or `qcold repo inspect` surface yet.
+- Package 2 is not landed: repository registration and adapter-registry
+  dispatch exist, but there is no typed capability contract or
+  `qcold repo inspect` surface yet.
 - Packages 3 and 4 are the strongest landed areas: `task open`, managed
   worktrees, and devcontainer lifecycle already have regression coverage, but
   the ownership boundary still leans on adapter-era behavior.
@@ -44,6 +45,8 @@ repository.
 
 - Add typed capability structs for base branch, worktree root, supported task
   profiles, environment config roots, validation lanes, and cleanup hooks.
+- Keep repository adapter ID resolution centralized in the adapter registry;
+  `xtask-process` is currently the only supported adapter ID.
 - Teach the xtask process adapter to populate that model as a compatibility
   source instead of exposing only opaque command execution.
 - Add `qcold repo inspect` with deterministic missing-capability errors.

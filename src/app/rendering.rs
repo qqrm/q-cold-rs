@@ -609,30 +609,15 @@ fn unix_now() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-fn adapter_for_task_flow_repo() -> Result<adapter::XtaskProcessAdapter> {
+fn adapter_for_task_flow_repo() -> Result<Box<dyn adapter::RepositoryAdapter>> {
     adapter_for_context(AdapterContext::TaskFlowRepository)
 }
 
-fn adapter_for_cwd_sensitive_repo() -> Result<adapter::XtaskProcessAdapter> {
+fn adapter_for_cwd_sensitive_repo() -> Result<Box<dyn adapter::RepositoryAdapter>> {
     adapter_for_context(AdapterContext::CwdManagedWorktree)
 }
 
-fn adapter_for_context(context: AdapterContext) -> Result<adapter::XtaskProcessAdapter> {
+fn adapter_for_context(context: AdapterContext) -> Result<Box<dyn adapter::RepositoryAdapter>> {
     let repo = repository::for_adapter_context(context)?;
-    repository_adapter_for(&repo)
-}
-
-fn repository_adapter_for(repo: &RepositoryConfig) -> Result<adapter::XtaskProcessAdapter> {
-    if repo.adapter != "xtask-process" {
-        anyhow::bail!(
-            "repository {} uses unsupported adapter {}; supported adapter: xtask-process",
-            repo.id,
-            repo.adapter
-        );
-    }
-    adapter::xtask_process_for(
-        &repo.root,
-        repo.xtask_manifest.as_deref(),
-        repo.default_branch.as_deref(),
-    )
+    adapter::adapter_for_repository(&repo)
 }
