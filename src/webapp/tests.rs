@@ -344,7 +344,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped_queue_run_can_continue_without_deleting_current_item() {
+    fn stopped_queue_run_resets_local_items_without_deleting_current_item() {
         let _guard = test_support::env_guard();
         let temp = tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path());
@@ -367,13 +367,13 @@ mod tests {
         assert_eq!(
             stored_items
                 .iter()
-                .map(|item| (item.id.as_str(), item.status.as_str()))
+                .map(|item| (item.id.as_str(), item.status.as_str(), item.agent_id.as_deref()))
                 .collect::<Vec<_>>(),
             [
-                ("first", "success"),
-                ("second", "stopped"),
-                ("third", "pending"),
-                ("fourth", "pending")
+                ("first", "success", Some("agent-1")),
+                ("second", "pending", None),
+                ("third", "pending", None),
+                ("fourth", "pending", None)
             ]
         );
     }

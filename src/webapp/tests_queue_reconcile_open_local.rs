@@ -38,12 +38,70 @@ fn queue_continue_resumes_failed_local_row_with_open_task_record() {
     assert_eq!(
         stored_items
             .iter()
-            .map(|item| (item.id.as_str(), item.status.as_str(), item.message.as_str()))
+            .map(|item| {
+                (
+                    item.id.as_str(),
+                    item.status.as_str(),
+                    item.message.as_str(),
+                    item.agent_id.as_deref(),
+                )
+            })
             .collect::<Vec<_>>(),
         [
-            ("first", "stopped", LOCAL_OPEN_RECORD_STOPPED_MESSAGE),
-            ("second", "pending", "")
+            ("first", "pending", "pending after queue continue", None),
+            ("second", "pending", "", None)
         ]
+    );
+    assert!(test_web_queue_worker_spawned(&run.id));
+}
+
+#[test]
+fn queue_continue_resets_stopped_local_row_with_stale_agent_id() {
+    let _guard = test_support::env_guard();
+    let temp = tempdir().unwrap();
+    std::env::set_var("QCOLD_STATE_DIR", temp.path());
+    let mut run = queue_run_fixture("stopped-local-stale-agent", "stopped", 0);
+    run.execution_mode = "graph".into();
+    run.message = LOCAL_OPEN_RECORD_STOPPED_MESSAGE.to_string();
+    let first = queue_item_fixture(&run.id, "first", 0, "stopped", Some("qa-task-first"));
+    state::replace_web_queue(&run, std::slice::from_ref(&first)).unwrap();
+    state::upsert_task_record(&state::new_task_record(
+        "task/task-first".to_string(),
+        "task-flow".to_string(),
+        "first".to_string(),
+        "prompt first".to_string(),
+        "open".to_string(),
+        None,
+        None,
+        Some("qa-task-first".to_string()),
+        None,
+    ))
+    .unwrap();
+
+    handle_queue_continue_result(
+        &HeaderMap::new(),
+        &QueueContinueRequest {
+            run_id: run.id.clone(),
+        },
+    )
+    .unwrap();
+    let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+    let stored_run = stored_run.unwrap();
+
+    assert_eq!(stored_run.status, "running");
+    assert_eq!(
+        stored_items
+            .iter()
+            .map(|item| {
+                (
+                    item.id.as_str(),
+                    item.status.as_str(),
+                    item.message.as_str(),
+                    item.agent_id.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        [("first", "pending", "pending after queue continue", None)]
     );
     assert!(test_web_queue_worker_spawned(&run.id));
 }

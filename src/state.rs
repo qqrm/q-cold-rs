@@ -597,11 +597,11 @@ pub fn continue_web_queue_run(run_id: &str) -> Result<()> {
     tx.execute(
         "update web_queue_items
          set status = 'pending', message = 'pending after queue continue',
-             updated_at_unix = ?2
-         where run_id = ?1 and status = 'stopped' and agent_id is null",
+             agent_id = null, updated_at_unix = ?2
+         where run_id = ?1 and status = 'stopped' and execution_host = 'local'",
         params![run_id, now],
     )
-    .context("failed to restore stopped future queue items")?;
+    .context("failed to restore stopped local queue items")?;
     tx.commit()
         .context("failed to commit web queue continue transaction")?;
     Ok(())

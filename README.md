@@ -115,6 +115,9 @@ Queue run, append, and update dashboard API responses preserve the existing
 dependency normalization, wave indexes, and display-safe validation messages.
 Local rows with a matching open task record but no live agent session are
 stopped for operator resume instead of being treated as failed task attempts.
+On `queue continue`, those local rows are reset to pending with a clean agent
+context; remote-native stopped rows retain their remote agent identity for
+remote resume.
 
 Mutating queue commands post to the local dashboard daemon on
 `127.0.0.1:8787` by default. If it is not reachable, Q-COLD starts it unless the
