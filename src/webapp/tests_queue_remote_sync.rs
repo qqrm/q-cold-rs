@@ -84,7 +84,7 @@ mod queue_remote_sync_tests {
     }
 
     #[test]
-    fn open_remote_native_record_without_session_marks_queue_stopped() {
+    fn open_remote_native_record_without_session_relaunches_item() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
         std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
@@ -109,19 +109,114 @@ mod queue_remote_sync_tests {
         let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
         assert!(matches!(
             reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
-            QueueReconcile::Terminal
+            QueueReconcile::Changed
         ));
         let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
         let stored_run = stored_run.unwrap();
-        let stopped = &stored_items[0];
+        let relaunched = &stored_items[0];
 
-        assert_eq!(stored_run.status, "stopped");
-        assert_eq!(stored_run.message, REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE);
-        assert_eq!(stopped.status, "stopped");
-        assert_eq!(stopped.message, REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE);
+        assert_eq!(stored_run.status, "running");
         assert_eq!(
-            stopped.agent_id.as_deref(),
-            Some("qa-task-remote-native-disconnected")
+            stored_run.message,
+            REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
+        );
+        assert_eq!(relaunched.status, "pending");
+        assert_eq!(
+            relaunched.message,
+            REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
+        );
+        assert_eq!(relaunched.agent_id.as_deref(), None);
+    }
+
+    #[test]
+    fn waiting_remote_native_record_without_session_relaunches_item() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let run = queue_run("remote-native-waiting-disconnected", &repo);
+        let mut item = queue_item("task-remote-native-waiting-disconnected", &repo);
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".into();
+        item.remote_launcher = Some("/bin/false".to_string());
+        item.status = "waiting".into();
+        item.message = "remote-agent open retry scheduled".to_string();
+        item.attempts = 1;
+        item.next_attempt_at = Some(1);
+        item.agent_id = Some("qa-task-remote-native-waiting-disconnected".to_string());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+        state::upsert_task_record(&task_record(
+            &item.slug,
+            "open",
+            &repo,
+            item.agent_id.as_deref(),
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+        let relaunched = &stored_items[0];
+
+        assert_eq!(stored_run.status, "running");
+        assert_eq!(stored_run.current_index, 0);
+        assert_eq!(relaunched.status, "pending");
+        assert_eq!(relaunched.attempts, 1);
+        assert_eq!(relaunched.next_attempt_at, None);
+        assert_eq!(relaunched.agent_id.as_deref(), None);
+        assert_eq!(
+            relaunched.message,
+            REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
+        );
+    }
+
+    #[test]
+    fn stale_stopped_remote_native_record_without_session_relaunches_item() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut run = queue_run("remote-native-stopped-disconnected", &repo);
+        run.status = "running".into();
+        run.current_index = 0;
+        let mut item = queue_item("task-remote-native-stopped-disconnected", &repo);
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".into();
+        item.remote_launcher = Some("/bin/false".to_string());
+        item.status = "stopped".into();
+        item.message = REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string();
+        item.agent_id = Some("qa-task-remote-native-stopped-disconnected".to_string());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+        state::upsert_task_record(&task_record(
+            &item.slug,
+            "open",
+            &repo,
+            item.agent_id.as_deref(),
+        ))
+        .unwrap();
+
+        let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        assert!(matches!(
+            reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+            QueueReconcile::Changed
+        ));
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+        let relaunched = &stored_items[0];
+
+        assert_eq!(stored_run.status, "running");
+        assert_eq!(stored_run.current_index, 0);
+        assert_eq!(relaunched.status, "pending");
+        assert_eq!(relaunched.agent_id.as_deref(), None);
+        assert_eq!(
+            relaunched.message,
+            REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
         );
     }
 

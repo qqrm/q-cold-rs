@@ -1,5 +1,7 @@
 const REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE: &str =
     "remote-native task is open, but remote-agent session is not running on the remote host";
+const REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE: &str =
+    "remote-native task is open but remote-agent session is missing; relaunching item";
 
 fn reconcile_queue_task_record_status(
     run: &state::QueueRunRow,
@@ -15,7 +17,7 @@ fn reconcile_queue_task_record_status(
         }
         return Ok(true);
     }
-    if reconcile_remote_native_open_record(run, item, &status, changed, terminal_run)? {
+    if reconcile_remote_native_open_record(run, item, &status, changed)? {
         return Ok(true);
     }
     if status == "paused" && !item.status.is_paused() {
@@ -85,7 +87,6 @@ fn reconcile_remote_native_open_record(
     item: &state::QueueItemRow,
     status: &str,
     changed: &mut bool,
-    terminal_run: &mut Option<(String, i64, String)>,
 ) -> Result<bool> {
     if let Some(agent_id) = remote_native_stopped_open_record_live_agent_id(item, status) {
         let message = format!("resumed remote-native agent {agent_id}");
@@ -99,6 +100,11 @@ fn reconcile_remote_native_open_record(
             None,
         )?;
         state::update_web_queue_run(&run.id, "running", item.position, "running")?;
+        *changed = true;
+        return Ok(true);
+    }
+    if remote_native_stopped_disconnected_open_record_without_live_session(item, status) {
+        relaunch_remote_native_disconnected_item(&run.id, item, item.attempts)?;
         *changed = true;
         return Ok(true);
     }
@@ -122,21 +128,8 @@ fn reconcile_remote_native_open_record(
         return Ok(true);
     }
     if remote_native_open_record_without_live_session(item, status) {
-        state::update_web_queue_item(
-            &run.id,
-            &item.id,
-            "stopped",
-            REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE,
-            item.agent_id.as_deref(),
-            item.attempts,
-            None,
-        )?;
+        relaunch_remote_native_disconnected_item(&run.id, item, item.attempts)?;
         *changed = true;
-        terminal_run.get_or_insert((
-            "stopped".into(),
-            item.position,
-            REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE.to_string(),
-        ));
         return Ok(true);
     }
     Ok(false)
@@ -163,8 +156,17 @@ fn remote_native_open_record_without_live_session(
 ) -> bool {
     status == "open"
         && queue_item_remote_native(item)
-        && item.status.is_starting_or_running()
+        && remote_native_open_record_needs_live_session(item)
         && remote_native_open_record_live_agent_id(item).is_none()
+}
+
+fn remote_native_open_record_needs_live_session(item: &state::QueueItemRow) -> bool {
+    matches!(
+        item.status,
+        state::QueueItemStatus::Starting
+            | state::QueueItemStatus::Running
+            | state::QueueItemStatus::Waiting
+    )
 }
 
 fn remote_native_stopped_open_record_live_agent_id(
@@ -176,6 +178,17 @@ fn remote_native_stopped_open_record_live_agent_id(
         && item.status.is_stopped_or_paused())
     .then(|| remote_native_open_record_live_agent_id(item))
     .flatten()
+}
+
+fn remote_native_stopped_disconnected_open_record_without_live_session(
+    item: &state::QueueItemRow,
+    status: &str,
+) -> bool {
+    status == "open"
+        && queue_item_remote_native(item)
+        && item.status.is_stopped_or_paused()
+        && item.message == REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE
+        && remote_native_open_record_live_agent_id(item).is_none()
 }
 
 fn remote_native_open_record_live_agent_id(item: &state::QueueItemRow) -> Option<String> {
@@ -257,7 +270,7 @@ fn queue_item_status_closeout_outcome(
         return Ok(None);
     }
     if remote_native_open_record_without_live_session(item, &status) {
-        return stop_remote_native_disconnected_item(run_id, item, agent_id, attempts).map(Some);
+        return relaunch_remote_native_disconnected_item(run_id, item, attempts).map(Some);
     }
     if status == "open" && !queue_item_remote_native(item) && !agent_running(agent_id) {
         return fail_or_schedule_queue_item_recovery(
@@ -330,26 +343,22 @@ fn fail_queue_item_from_task_status(
     Ok(QueueItemOutcome::failed(status))
 }
 
-fn stop_remote_native_disconnected_item(
+fn relaunch_remote_native_disconnected_item(
     run_id: &str,
     item: &state::QueueItemRow,
-    agent_id: &str,
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
-    state::update_web_queue_item(
+    state::reset_web_queue_item_for_relaunch(
         run_id,
         &item.id,
-        "stopped",
-        REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE,
-        Some(agent_id),
+        REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE,
         attempts,
-        None,
     )?;
     state::update_web_queue_run(
         run_id,
-        "stopped",
+        "running",
         item.position,
-        REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE,
+        REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE,
     )?;
-    Ok(QueueItemOutcome::Stopped)
+    Ok(QueueItemOutcome::RecoveryScheduled)
 }
