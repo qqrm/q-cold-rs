@@ -103,6 +103,7 @@ fn local_open_record_without_live_agent(item: &state::QueueItemRow, status: &str
     status == "open"
         && !queue_item_remote_native(item)
         && !item.status.is_success()
+        && !item.status.is_stopped_or_paused()
         && item
             .agent_id
             .as_deref()

@@ -79,3 +79,43 @@ fn local_open_task_record_without_live_agent_stops_active_item() {
         [("first", "stopped", LOCAL_OPEN_RECORD_STOPPED_MESSAGE)]
     );
 }
+
+#[test]
+fn stopped_local_open_task_record_stays_ready_for_resume_worker() {
+    let _guard = test_support::env_guard();
+    let temp = tempdir().unwrap();
+    std::env::set_var("QCOLD_STATE_DIR", temp.path());
+    let run = queue_run_fixture("stopped-local-open-task-record", "running", 0);
+    let item = queue_item_fixture(&run.id, "first", 0, "stopped", Some("qa-task-first"));
+    state::replace_web_queue(&run, std::slice::from_ref(&item)).unwrap();
+    state::upsert_task_record(&state::new_task_record(
+        "task/task-first".to_string(),
+        "task-flow".to_string(),
+        "first".to_string(),
+        "prompt first".to_string(),
+        "open".to_string(),
+        None,
+        None,
+        Some("qa-task-first".to_string()),
+        None,
+    ))
+    .unwrap();
+
+    let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+    assert!(matches!(
+        reconcile_queue_task_statuses(&run, &stored_items).unwrap(),
+        QueueReconcile::Unchanged
+    ));
+    let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+    let stored_run = stored_run.unwrap();
+
+    assert_eq!(stored_run.status, "running");
+    assert_eq!(
+        stored_items
+            .iter()
+            .map(|item| (item.id.as_str(), item.status.as_str()))
+            .collect::<Vec<_>>(),
+        [("first", "stopped")]
+    );
+    assert_eq!(queue_ready_item_ids(&stored_run, &stored_items), ids(&["first"]));
+}
