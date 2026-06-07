@@ -2,6 +2,7 @@ macro_rules! qcold_app_js_assets {
     ($callback:ident) => {
         $callback! {
             "api.js",
+            "queue_status.js",
             "init_parse.js",
             "queue.js",
             "terminal.js",

@@ -570,7 +570,11 @@
     }
 
     function queueItemBackendActive(item) {
-      return Boolean(item?.runId && queueItemAgentId(item) && ['starting', 'running'].includes(item.status));
+      return Boolean(
+        item?.runId
+        && queueItemAgentId(item)
+        && QcoldQueueStatus.queueItemHasExecutorSession(item),
+      );
     }
 
     function runningAgent(agentId, item = null) {
@@ -656,15 +660,16 @@
         stop: false,
         activeIndex: -1,
         runId: existingQueueRunId() || Date.now().toString(36),
-        status: 'starting',
+        status: QcoldQueueRunStatus.Starting,
       };
       const usedSlugs = usedQueueSlugs(queueRun.runId);
       queueItems = queueItems.map((item, index) => {
         const slug = item.slug || nextQueueSlug(queueRun.runId, usedSlugs, index);
         const task = taskRecordForQueueItem(item);
         const repo = item.repoRoot ? queueItemRepository(item) : selectedRepo;
-        const closedStatus = task?.status?.startsWith('closed') ? task.status : '';
-        const success = closedStatus === 'closed:success' || item.status === 'success';
+        const closedStatus = QcoldQueueStatus.taskRecordClosedStatus(task);
+        const success = QcoldQueueStatus.isTaskRecordClosedSuccess(closedStatus)
+          || QcoldQueueStatus.isQueueItemSuccess(item);
         const prompt = item.prompt.trim();
         const startsNow = prompt && !success && !closedStatus && queueItemStartsImmediately(item, index);
         const waiting = prompt && !success && !closedStatus && !startsNow;
@@ -687,7 +692,9 @@
         const payload = await QcoldApi.runQueue({
           run_id: queueRun.runId,
           tab_id: activeQueueTabId,
-          execution_mode: queueGraphMode ? 'graph' : 'sequence',
+          execution_mode: queueGraphMode
+            ? QcoldQueueExecutionMode.Graph
+            : QcoldQueueExecutionMode.Sequence,
           selected_agent_command: selectedAgent.command,
           selected_repo_root: selectedRepo.root || '',
           selected_repo_name: selectedRepo.name || '',
@@ -703,7 +710,7 @@
         });
         if (payload.ok === false) {
           queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
-          queueItems[0].status = 'failed';
+          queueItems[0].status = QcoldQueueItemStatus.Failed;
           queueItems[0].message = payload.output || 'failed to start backend queue';
           appendLocalMessage('error', queueItems[0].message);
           saveQueueStorage();
@@ -712,7 +719,7 @@
         }
       } catch (err) {
         queueRun = { running: false, stopped: false, stop: false, activeIndex: -1, runId: '', status: '' };
-        queueItems[0].status = 'failed';
+        queueItems[0].status = QcoldQueueItemStatus.Failed;
         queueItems[0].message = String(err);
         appendLocalMessage('error', queueItems[0].message);
         saveQueueStorage();
@@ -805,10 +812,10 @@
     }
 
     function queueStartingStatus(success, closedStatus, startsNow, waiting) {
-      if (success) return 'success';
-      if (closedStatus) return 'failed';
-      if (startsNow) return 'starting';
-      return waiting ? 'waiting' : 'failed';
+      if (success) return QcoldQueueItemStatus.Success;
+      if (closedStatus) return QcoldQueueItemStatus.Failed;
+      if (startsNow) return QcoldQueueItemStatus.Starting;
+      return waiting ? QcoldQueueItemStatus.Waiting : QcoldQueueItemStatus.Failed;
     }
 
     async function stopQueue() {
@@ -844,11 +851,11 @@
         stopped: false,
         stop: false,
         runId,
-        status: 'starting',
+        status: QcoldQueueRunStatus.Starting,
       };
       queueItems = queueItems.map((item) => {
-        if (!['stopped', 'paused'].includes(item.status)) return item;
-        return { ...item, status: 'starting', message: 'continuing queue' };
+        if (!QcoldQueueStatus.isQueueItemStoppedOrPaused(item)) return item;
+        return { ...item, status: QcoldQueueItemStatus.Starting, message: 'continuing queue' };
       });
       appendLocalMessage('status', 'Continuing queue');
       saveQueueStorage();

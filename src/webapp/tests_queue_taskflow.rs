@@ -59,6 +59,28 @@ mod queue_taskflow_tests {
     }
 
     #[test]
+    fn queue_task_open_uses_workspace_binary_for_cargo_test_harness() {
+        let temp = tempfile::tempdir().unwrap();
+        let deps = temp.path().join("target").join("debug").join("deps");
+        fs::create_dir_all(&deps).unwrap();
+        let current = deps.join(format!("cargo_qcold-abc123{}", env::consts::EXE_SUFFIX));
+        fs::write(&current, "").unwrap();
+        make_executable(&current);
+        let workspace_binary = temp
+            .path()
+            .join("target")
+            .join("debug")
+            .join(format!("cargo-qcold{}", env::consts::EXE_SUFFIX));
+        fs::write(&workspace_binary, "").unwrap();
+        make_executable(&workspace_binary);
+
+        assert_eq!(
+            queue_qcold_executable_from(&current, None).unwrap(),
+            workspace_binary
+        );
+    }
+
+    #[test]
     fn queue_task_env_value_accepts_shell_quotes() {
         assert_eq!(shell_env_value("'task-run-01'"), "task-run-01");
         assert_eq!(shell_env_value("'task-'\\''run'"), "task-'run");

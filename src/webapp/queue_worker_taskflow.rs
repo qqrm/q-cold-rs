@@ -298,6 +298,13 @@ fn queue_qcold_executable() -> Result<PathBuf> {
 
 fn queue_qcold_executable_from(current: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf> {
     let current_is_test_harness = cargo_test_harness_executable(current);
+    if current_is_test_harness {
+        if let Some(test_subject) = cargo_test_subject_binary(current) {
+            if executable_file(&test_subject) {
+                return Ok(test_subject);
+            }
+        }
+    }
     if !current_is_test_harness && executable_file(current) {
         return Ok(current.to_path_buf());
     }
@@ -319,6 +326,21 @@ fn cargo_test_harness_executable(path: &Path) -> bool {
         return false;
     };
     parent.file_name().is_some_and(|name| name == "deps")
+}
+
+fn cargo_test_subject_binary(current: &Path) -> Option<PathBuf> {
+    if !cargo_test_harness_executable(current) {
+        return None;
+    }
+    let file_name = current.file_name()?.to_str()?;
+    let binary_name = if file_name.starts_with("cargo_qcold-") || file_name.starts_with("cargo-qcold-") {
+        format!("cargo-qcold{}", env::consts::EXE_SUFFIX)
+    } else if file_name.starts_with("qcold-") {
+        format!("qcold{}", env::consts::EXE_SUFFIX)
+    } else {
+        return None;
+    };
+    Some(current.parent()?.parent()?.join(binary_name))
 }
 
 fn sibling_qcold_executable(current: &Path) -> Option<PathBuf> {

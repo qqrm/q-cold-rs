@@ -135,11 +135,11 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function badge(status) {
       const span = document.createElement('span');
-      const tone = status.includes('failed')
+      const tone = QcoldQueueStatus.hasFailedStatus(status)
         ? 'failed'
-        : status === 'open'
+        : QcoldQueueStatus.isTaskRecordOpen(status)
           ? 'open'
-          : status.includes('blocked') ? 'warn' : 'ready';
+          : QcoldQueueStatus.hasBlockedStatus(status) ? 'warn' : 'ready';
       span.className = `badge ${tone}`;
       span.textContent = status;
       return span;
@@ -256,7 +256,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         repoRoot: '',
         repoName: '',
         position: null,
-        status: 'pending',
+        status: QcoldQueueItemStatus.Pending,
         message: '',
         recoveryAttempts: 0,
         startedAt: 0,
@@ -446,15 +446,15 @@ const tg = window.Telegram && window.Telegram.WebApp;
 
     function queueStatusText(item) {
       const view = queueItemView(item);
-      if (view.status === 'starting') return 'starting';
-      if (view.status === 'running') return 'running';
-      if (view.status === 'idle') return 'idle';
-      if (view.status === 'success') return 'done';
-      if (view.status === 'blocked') return 'blocked';
-      if (view.status === 'stopped') return 'stopped';
-      if (view.status === 'paused') return 'paused';
-      if (view.status === 'failed') return 'failed';
-      return 'waiting';
+      if (QcoldQueueStatus.isQueueItemStarting(view)) return QcoldQueueItemStatus.Starting;
+      if (view.status === QcoldQueueItemStatus.Running) return QcoldQueueItemStatus.Running;
+      if (view.status === QcoldQueueViewStatus.Idle) return QcoldQueueViewStatus.Idle;
+      if (QcoldQueueStatus.isQueueItemSuccess(view)) return 'done';
+      if (QcoldQueueStatus.isQueueItemBlocked(view)) return QcoldQueueItemStatus.Blocked;
+      if (QcoldQueueStatus.isQueueItemStopped(view)) return QcoldQueueItemStatus.Stopped;
+      if (QcoldQueueStatus.isQueueItemPaused(view)) return QcoldQueueItemStatus.Paused;
+      if (QcoldQueueStatus.isQueueItemFailed(view)) return QcoldQueueItemStatus.Failed;
+      return QcoldQueueItemStatus.Waiting;
     }
 
     function queueItemView(item) {
@@ -462,79 +462,87 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const agentId = queueItemAgentId(item, task);
       const activeAgentId = activeQueueAgentId(item, task);
       if (queueBackendTerminalStatus(item)) {
-        const fallback = item.status === 'success' ? 'closed successfully' : item.status;
+        const fallback = QcoldQueueStatus.isQueueItemSuccess(item) ? 'closed successfully' : item.status;
         return {
           status: item.status,
           message: item.message || task?.status || fallback,
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (task?.status === 'closed:success') {
+      if (QcoldQueueStatus.isTaskRecordClosedSuccess(task)) {
         return {
-          status: 'success',
+          status: QcoldQueueItemStatus.Success,
           message: 'closed successfully',
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (task?.status === 'closed:blocked') {
+      if (QcoldQueueStatus.isTaskRecordClosedBlocked(task)) {
         return {
-          status: 'blocked',
+          status: QcoldQueueItemStatus.Blocked,
           message: task.status,
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (queueRun.running && item.status === 'starting' && task?.status === 'paused') {
+      if (
+        queueRun.running
+        && QcoldQueueStatus.isQueueItemStarting(item)
+        && QcoldQueueStatus.isTaskRecordPaused(task)
+      ) {
         return {
-          status: 'starting',
+          status: QcoldQueueItemStatus.Starting,
           message: item.message || 'continuing queue',
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (task?.status === 'paused') {
+      if (QcoldQueueStatus.isTaskRecordPaused(task)) {
         return {
-          status: 'paused',
+          status: QcoldQueueItemStatus.Paused,
           message: 'paused; press Continue to resume',
           detail: queueItemDetail(item, task, agentId),
         };
       }
       if (
-        task?.status === 'closed:failed'
+        QcoldQueueStatus.isTaskRecordClosedFailed(task)
         && item.recoveryAttempts > 0
-        && !['success', 'failed', 'blocked'].includes(item.status)
+        && !QcoldQueueStatus.isQueueItemTerminal(item)
       ) {
         if (activeAgentId) {
           return {
-            status: item.status === 'starting' ? 'starting' : 'running',
+            status: QcoldQueueStatus.isQueueItemStarting(item)
+              ? QcoldQueueItemStatus.Starting
+              : QcoldQueueItemStatus.Running,
             message: item.message || agentBadgeText(activeAgentId, task) || 'auto-recovery running',
             detail: queueItemDetail(item, task, activeAgentId),
           };
         }
         if (queueRun.running) {
           return {
-            status: item.status === 'pending' ? 'starting' : item.status,
+            status: QcoldQueueStatus.isQueueItemPending(item) ? QcoldQueueItemStatus.Starting : item.status,
             message: item.message || 'auto-recovery scheduled',
             detail: queueItemDetail(item, task, agentId),
           };
         }
       }
-      if (task?.status?.startsWith('closed')) {
+      if (QcoldQueueStatus.isTaskRecordClosed(task)) {
         return {
-          status: 'failed',
+          status: QcoldQueueItemStatus.Failed,
           message: task.status,
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (queueRun.stopped && ['stopped', 'paused'].includes(item.status)) {
+      if (queueRun.stopped && QcoldQueueStatus.isQueueItemStoppedOrPaused(item)) {
         return {
-          status: 'stopped',
+          status: QcoldQueueItemStatus.Stopped,
           message: item.message || 'stopped by operator; press Continue to resume',
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (task?.status === 'open') {
+      if (QcoldQueueStatus.isTaskRecordOpen(task)) {
         if (!activeAgentId) {
           return {
-            status: item.status === 'starting' ? 'starting' : 'pending',
+            status: QcoldQueueStatus.isQueueItemStarting(item)
+              ? QcoldQueueItemStatus.Starting
+              : QcoldQueueItemStatus.Pending,
             message: 'task record open; ready to resume',
             detail: queueItemDetail(item, task, agentId),
           };
@@ -542,20 +550,20 @@ const tg = window.Telegram && window.Telegram.WebApp;
         const terminal = terminalForAgentId(activeAgentId);
         if (terminalCloseoutFailure(terminal)) {
           return {
-            status: 'failed',
+            status: QcoldQueueItemStatus.Failed,
             message: 'agent stopped after failed Q-COLD closeout',
             detail: queueItemDetail(item, task, agentId),
           };
         }
         if (terminalIdlePrompt(terminal)) {
           return {
-            status: 'idle',
+            status: QcoldQueueViewStatus.Idle,
             message: 'agent idle; task is still open',
             detail: queueItemDetail(item, task, agentId),
           };
         }
         return {
-          status: 'running',
+          status: QcoldQueueItemStatus.Running,
           message: item.message || agentBadgeText(activeAgentId, task),
           detail: queueItemDetail(item, task, agentId),
         };
@@ -564,40 +572,42 @@ const tg = window.Telegram && window.Telegram.WebApp;
         const terminal = terminalForAgentId(activeAgentId);
         if (terminalCloseoutFailure(terminal)) {
           return {
-            status: 'failed',
+            status: QcoldQueueItemStatus.Failed,
             message: 'agent stopped after failed Q-COLD closeout',
             detail: queueItemDetail(item, task, agentId),
           };
         }
         if (terminalIdlePrompt(terminal)) {
           return {
-            status: 'idle',
+            status: QcoldQueueViewStatus.Idle,
             message: 'agent idle; no task closeout detected',
             detail: queueItemDetail(item, task, agentId),
           };
         }
         return {
-          status: item.status === 'starting' ? 'starting' : 'running',
+          status: QcoldQueueStatus.isQueueItemStarting(item)
+            ? QcoldQueueItemStatus.Starting
+            : QcoldQueueItemStatus.Running,
           message: item.message || agentBadgeText(activeAgentId, task) || 'agent running',
           detail: queueItemDetail(item, task, agentId),
         };
       }
-      if (agentId && ['starting', 'running'].includes(item.status)) {
+      if (agentId && QcoldQueueStatus.isQueueItemStartingOrRunning(item)) {
         return {
-          status: 'failed',
+          status: QcoldQueueItemStatus.Failed,
           message: 'agent exited before task closeout',
           detail: queueItemDetail(item, task, agentId),
         };
       }
       return {
-        status: item.status || 'pending',
+        status: item.status || QcoldQueueItemStatus.Pending,
         message: item.message || item.slug || item.prompt.trim().slice(0, 120) || 'empty prompt',
         detail: queueItemDetail(item, task, agentId),
       };
     }
 
     function queueBackendTerminalStatus(item) {
-      return Boolean(item?.runId && ['success', 'failed', 'blocked'].includes(item.status));
+      return Boolean(item?.runId && QcoldQueueStatus.isQueueItemTerminal(item));
     }
 
     function queueItemDetail(item, task, agentId) {
@@ -636,7 +646,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function queueDependencyStatusText(item) {
       const pending = (item.dependsOn || [])
         .map((dependency) => queueItems.find((candidate) => candidate.id === dependency))
-        .filter((dependency) => dependency && queueItemView(dependency).status !== 'success');
+        .filter((dependency) => dependency && !QcoldQueueStatus.isQueueItemSuccess(queueItemView(dependency)));
       if (!pending.length) return '';
       return `waiting for ${pending.map(queueItemShortLabel).join(', ')}`;
     }
@@ -652,7 +662,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
       const updatedAt = Math.max(Number(item.updatedAt || 0), Number(task?.updated_at || 0));
       const startedAt = Math.max(Number(item.startedAt || 0), Number(task?.created_at || 0));
       if (updatedAt) parts.push(`updated ${relativeTimeText(updatedAt)}`);
-      if (startedAt && ['running', 'starting'].includes(item.status)) {
+      if (startedAt && QcoldQueueStatus.isQueueItemStartingOrRunning(item)) {
         parts.push(`started ${relativeTimeText(startedAt)}`);
       }
       if (item.recoveryAttempts > 0) parts.push(`recovery ${item.recoveryAttempts}`);
@@ -687,7 +697,9 @@ const tg = window.Telegram && window.Telegram.WebApp;
       if (activeTab?.run) {
         const nextRunId = activeTab.run.id || activeTab.runId || existingQueueRunId();
         const nextExecutionMode = activeTab.run.execution_mode || '';
-        const preservedWaves = queueRun.runId && queueRun.runId === nextRunId && nextExecutionMode === 'graph'
+        const preservedWaves = queueRun.runId
+          && queueRun.runId === nextRunId
+          && nextExecutionMode === QcoldQueueExecutionMode.Graph
           ? queueWaves
           : [];
         clearQueueDraft(activeQueueTabId);
@@ -699,13 +711,13 @@ const tg = window.Telegram && window.Telegram.WebApp;
         queueWaves = normalizeQueueWaves(preservedWaves, queueItems, { pruneBackendEmpty: true });
         queueRun = {
           running: Boolean(activeTab.running),
-          stopped: activeTab.run.status === 'stopped',
+          stopped: QcoldQueueStatus.isQueueRunStopped(activeTab.run),
           stop: false,
           activeIndex: Number(activeTab.run.current_index ?? -1),
           runId: nextRunId,
           status: activeTab.run.status || '',
         };
-        queueGraphMode = nextExecutionMode === 'graph';
+        queueGraphMode = nextExecutionMode === QcoldQueueExecutionMode.Graph;
         return;
       }
       loadActiveQueueDraft();
@@ -823,10 +835,10 @@ const tg = window.Telegram && window.Telegram.WebApp;
     function isStaleQueueItem(item) {
       if (!item) return true;
       const task = taskRecordForQueueItem(item);
-      if (task?.status?.startsWith('closed')) return true;
+      if (QcoldQueueStatus.isTaskRecordClosed(task)) return true;
       if (item.runId && !task) return true;
       if (item.slug && !task) return true;
-      if (item.slug && ['success', 'failed', 'blocked'].includes(item.status)) return true;
+      if (item.slug && QcoldQueueStatus.isQueueItemTerminal(item)) return true;
       return false;
     }
 
@@ -847,7 +859,7 @@ const tg = window.Telegram && window.Telegram.WebApp;
         repoRoot: item.repo_root || '',
         repoName: item.repo_name || '',
         position: Number(item.position ?? 0),
-        status: item.status || 'pending',
+        status: item.status || QcoldQueueItemStatus.Pending,
         message: item.message || '',
         startedAt: item.started_at || 0,
         updatedAt: item.updated_at || 0,
@@ -901,8 +913,8 @@ const tg = window.Telegram && window.Telegram.WebApp;
       queueState.textContent = queueRun.running
         ? queueRunningText()
         : queueRun.stopped
-          ? 'stopped'
-          : queueGraphMode ? 'graph' : 'idle';
+          ? QcoldQueueItemStatus.Stopped
+          : queueGraphMode ? QcoldQueueExecutionMode.Graph : QcoldQueueViewStatus.Idle;
       queueState.className = queueRun.running ? 'badge open' : 'badge warn';
       createQueueTabButton.disabled = queueTabCreating;
       createQueueTabButton.textContent = queueTabCreating ? 'Creating...' : 'New queue';

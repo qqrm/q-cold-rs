@@ -215,7 +215,7 @@
 
     function queueBackendRunEditable() {
       if (!queueHasBackendRun()) return false;
-      return ['running', 'waiting', 'starting', 'stopped'].includes(queueRun.status);
+      return QcoldQueueStatus.isQueueRunEditable(queueRun);
     }
 
     function queueGraphAppendable() {
@@ -224,7 +224,7 @@
 
     function queueBackendRunAppendable() {
       if (!queueHasBackendRun()) return false;
-      return ['running', 'waiting', 'starting', 'stopped'].includes(queueRun.status);
+      return QcoldQueueStatus.isQueueRunAppendable(queueRun);
     }
 
     function queueHasBackendRun() {
@@ -425,18 +425,22 @@
 
     function queueRunningText() {
       const activePosition = Number(queueRun.activeIndex);
-      if (queueGraphMode || queueRun.status === 'graph') {
+      if (queueGraphMode || queueRun.status === QcoldQueueExecutionMode.Graph) {
         const active = queueItems.filter((item) => {
-          return ['starting', 'running', 'waiting'].includes(queueItemView(item).status);
+          return QcoldQueueStatus.isQueueItemActive(queueItemView(item));
         }).length;
-        const verb = queueRun.status === 'starting' ? 'starting' : 'running';
+        const verb = QcoldQueueStatus.isQueueRunStarting(queueRun)
+          ? QcoldQueueRunStatus.Starting
+          : QcoldQueueRunStatus.Running;
         return `${verb} ${active}/${queueItems.length}`;
       }
       const visibleIndex = queueItems.findIndex((item) => Number(item.position) === activePosition);
       const ordinal = visibleIndex >= 0
         ? visibleIndex + 1
         : Math.min(Math.max(activePosition + 1, 0), queueItems.length);
-      const verb = queueRun.status === 'starting' ? 'starting' : 'running';
+      const verb = QcoldQueueStatus.isQueueRunStarting(queueRun)
+        ? QcoldQueueRunStatus.Starting
+        : QcoldQueueRunStatus.Running;
       return `${verb} ${ordinal}/${queueItems.length}`;
     }
 
@@ -599,7 +603,7 @@
     }
 
     function queueItemTerminal(item) {
-      return ['success', 'failed', 'blocked'].includes(queueItemView(item).status);
+      return QcoldQueueStatus.isQueueItemTerminal(queueItemView(item));
     }
 
     function queueItemKey(item) {
@@ -668,7 +672,7 @@
       const view = queueItemView(item);
       const activePosition = Number(queueRun.activeIndex);
       return Boolean(item.runId)
-        && ['pending', 'waiting'].includes(view.status)
+        && QcoldQueueStatus.isQueueItemPendingOrWaiting(view)
         && !queueItemAgentId(item)
         && queueBackendRunEditable()
         && Number(item.position) > activePosition;
@@ -680,7 +684,7 @@
       const view = queueItemView(item);
       const activePosition = Number(queueRun.activeIndex);
       return Boolean(item.runId)
-        && ['pending', 'waiting'].includes(view.status)
+        && QcoldQueueStatus.isQueueItemPendingOrWaiting(view)
         && !queueItemAgentId(item)
         && Number(item.position) > activePosition;
     }
@@ -833,7 +837,7 @@
 
     function queueTaskTranscriptAvailable(item, task) {
       if (!task?.id || !task.session_path) return false;
-      return Boolean(task.status?.startsWith('closed'));
+      return QcoldQueueStatus.isTaskRecordClosed(task);
     }
 
     async function openTaskTranscript(taskId, options = {}) {

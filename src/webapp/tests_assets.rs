@@ -6,6 +6,7 @@ mod asset_tests {
 
     const EXPECTED_APP_JS_ASSETS: &[&str] = &[
         "src/webapp_assets/app/api.js",
+        "src/webapp_assets/app/queue_status.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
         "src/webapp_assets/app/terminal.js",
@@ -50,6 +51,43 @@ mod asset_tests {
     }
 
     #[test]
+    fn frontend_queue_status_classification_uses_contract_helpers() {
+        let repo = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let contract = std::fs::read_to_string(repo.join("src/webapp_assets/app/queue_status.js"))
+            .unwrap();
+        assert!(contract.contains("const QcoldQueueStatus = (() => {"));
+        assert!(contract.contains("const QueueRun = Object.freeze({"));
+        assert!(contract.contains("const QueueItem = Object.freeze({"));
+        assert!(contract.contains("const TaskRecord = Object.freeze({"));
+        assert!(contract.contains("isQueueRunEditable"));
+        assert!(contract.contains("isQueueItemTerminal"));
+        assert!(contract.contains("isQueueItemPendingOrWaiting"));
+        assert!(contract.contains("isTaskRecordClosedSuccess"));
+
+        let forbidden = [
+            ".status === 'closed:",
+            ".status !== 'closed:",
+            ".status?.startsWith('closed')",
+            ".status.startsWith('closed')",
+            "['running', 'waiting', 'starting', 'stopped']",
+            "['starting', 'running', 'waiting']",
+            "['starting', 'running']",
+            "['success', 'failed', 'blocked']",
+            "['pending', 'waiting']",
+            "['stopped', 'paused']",
+        ];
+        for &asset in app_js_asset_paths() {
+            if asset.ends_with("/queue_status.js") {
+                continue;
+            }
+            let source = std::fs::read_to_string(repo.join(asset)).unwrap();
+            for pattern in forbidden {
+                assert!(!source.contains(pattern), "{asset} still contains {pattern}");
+            }
+        }
+    }
+
+    #[test]
     fn web_terminal_slash_menu_uses_codex_command_prefixes() {
         assert!(APP_JS.contains("['model', 'choose what model and reasoning effort to use']"));
         assert!(APP_JS.contains(
@@ -85,7 +123,7 @@ mod asset_tests {
 
         assert!(terminal_index < transcript_index);
         assert!(APP_JS.contains("function queueTaskTranscriptAvailable(item, task)"));
-        assert!(APP_JS.contains("return Boolean(task.status?.startsWith('closed'));"));
+        assert!(APP_JS.contains("return QcoldQueueStatus.isTaskRecordClosed(task);"));
         assert!(APP_JS.contains(
             "return { kind: 'task-modal', taskId: task.id, task, terminal };"
         ));

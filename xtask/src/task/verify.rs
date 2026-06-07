@@ -173,6 +173,7 @@ mod web_asset_tests {
 
     const EXPECTED_WEBAPP_APP_JS_ASSETS: &[&str] = &[
         "src/webapp_assets/app/api.js",
+        "src/webapp_assets/app/queue_status.js",
         "src/webapp_assets/app/init_parse.js",
         "src/webapp_assets/app/queue.js",
         "src/webapp_assets/app/terminal.js",

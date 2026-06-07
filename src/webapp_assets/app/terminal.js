@@ -211,8 +211,8 @@
     function renderTasks() {
       const snapshot = model.taskRecords;
       const items = snapshot.records || [];
-      const openItems = items.filter((task) => task.status === 'open');
-      const historyItems = items.filter((task) => task.status !== 'open');
+      const openItems = items.filter((task) => QcoldQueueStatus.isTaskRecordOpen(task));
+      const historyItems = items.filter((task) => !QcoldQueueStatus.isTaskRecordOpen(task));
       document.getElementById('open-count').textContent = `${openItems.length} open`;
       document.getElementById('failed-count').textContent = `${snapshot.failed || 0} failed`;
       document.getElementById('nav-tasks').textContent = String(snapshot.count || 0);
@@ -237,7 +237,7 @@
     function renderTaskStats(snapshot) {
       const stats = document.getElementById('task-stats');
       const records = snapshot.records || [];
-      const closed = records.filter((task) => task.status.startsWith('closed'));
+      const closed = records.filter((task) => QcoldQueueStatus.isTaskRecordClosed(task));
       const withTelemetry = records.filter((task) => task.token_usage);
       const closedWithTelemetry = closed.filter((task) => task.token_usage);
       const closedWithRuntime = closed.filter((task) => task.duration_seconds);
