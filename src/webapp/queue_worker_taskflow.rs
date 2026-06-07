@@ -98,7 +98,10 @@ fn start_remote_native_queue_item(
     );
     cleanup_queue_task_packet_file(&prompt_file);
     if let Err(err) = open_result {
-        return Ok(QueueItemOutcome::retryable_failure(format!("{err:#}")));
+        let message = format!("{err:#}");
+        if !remote_agent_existing_session_prompt_file_refusal(&message) {
+            return Ok(QueueItemOutcome::retryable_failure(message));
+        }
     }
     if let Some(outcome) = update_queue_item_unless_terminal(
         run_id,
@@ -273,6 +276,10 @@ fn run_remote_agent_contract(
         );
     }
     Ok(())
+}
+
+fn remote_agent_existing_session_prompt_file_refusal(message: &str) -> bool {
+    message.contains("remote-agent: refusing to reuse existing session with --prompt-file")
 }
 
 fn set_remote_agent_launcher_env(command: &mut Command, launcher: &str) {

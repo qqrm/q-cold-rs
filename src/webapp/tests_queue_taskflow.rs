@@ -581,6 +581,43 @@ mod queue_taskflow_tests {
 
     #[test]
     #[cfg(unix)]
+    fn remote_native_open_recognizes_existing_prompt_file_session_refusal() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let log = install_fake_cargo_existing_session_refusal(temp.path());
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_taskflow_item(
+            "task-remote-native-existing-session",
+            &repo,
+            Some("remote-dev-env"),
+        );
+        item.execution_host = "remote-native".into();
+        let prompt_file = write_remote_native_task_packet_file(&item).unwrap();
+        let err = run_remote_agent_contract(
+            &item,
+            &repo,
+            "open",
+            "qcold-qa-task-remote-native-existing-session",
+            Some(&item.slug),
+            Some(&prompt_file),
+        )
+        .unwrap_err();
+        let message = format!("{err:#}");
+
+        assert!(
+            remote_agent_existing_session_prompt_file_refusal(&message),
+            "{message}"
+        );
+        let log = fs::read_to_string(log).unwrap();
+        assert!(log.contains("xtask remote-agent open"));
+        assert!(log.contains("--prompt-file"));
+        assert!(log.contains("task-remote-native-existing-session"));
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn remote_native_terminal_snapshot_captures_remote_output() {
         let _guard = test_support::env_guard();
         let temp = tempfile::tempdir().unwrap();
@@ -837,6 +874,33 @@ mod queue_taskflow_tests {
             "#!/bin/sh\n\
              printf '%s\\n' \"$PWD|$*|QCOLD_REMOTE_DEV_ENV_WRAPPER=$QCOLD_REMOTE_DEV_ENV_WRAPPER\" \
              >> {}\n",
+            shell_quote(&log)
+        );
+        fs::write(&cargo, script).unwrap();
+        make_executable(&cargo);
+
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        log
+    }
+
+    #[cfg(unix)]
+    fn install_fake_cargo_existing_session_refusal(temp: &Path) -> PathBuf {
+        let bin = temp.join("bin");
+        fs::create_dir(&bin).unwrap();
+        let log = temp.join("cargo-existing-session.log");
+        let cargo = bin.join("cargo");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf '%s\\n' \"$PWD|$*|QCOLD_REMOTE_DEV_ENV_WRAPPER=$QCOLD_REMOTE_DEV_ENV_WRAPPER\" \
+             >> {}\n\
+             if printf '%s\\n' \"$*\" | grep -q 'remote-agent open' && \
+             printf '%s\\n' \"$*\" | grep -q -- '--prompt-file'; then\n\
+             printf '%s\\n' 'remote-agent: refusing to reuse existing session with --prompt-file' >&2\n\
+             exit 66\n\
+             fi\n",
             shell_quote(&log)
         );
         fs::write(&cargo, script).unwrap();
