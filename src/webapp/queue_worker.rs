@@ -444,7 +444,7 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
                     item.attempts,
                     None,
                 )?;
-                let resumed_item = remote_native_running_wait_item(&item);
+                let resumed_item = remote_native_running_wait_item(&item, agent_id);
                 return wait_for_queue_item_closeout(run_id, &resumed_item, agent_id, item.attempts);
             }
             if agent_running(agent_id) {

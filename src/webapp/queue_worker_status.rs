@@ -70,7 +70,12 @@ fn optional_remote_sync_unneeded(
     item: &state::QueueItemRow,
     local_status: &QueueTaskLocalStatus,
 ) -> bool {
-    item.status.is_pending_or_waiting() && item.agent_id.is_none() && local_status.status.is_none()
+    item.status.is_pending_or_waiting()
+        && item.agent_id.is_none()
+        && local_status
+            .status
+            .as_deref()
+            .is_none_or(|status| !queue_task_status_terminal(status))
 }
 
 fn queue_task_status_from_local_records(

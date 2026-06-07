@@ -535,7 +535,7 @@ mod queue_taskflow_tests {
         let mut item = queue_taskflow_item("task-remote-native-wait", &repo, Some("remote-dev-env"));
         item.execution_host = "remote-native".into();
 
-        let wait_item = remote_native_running_wait_item(&item);
+        let wait_item = remote_native_running_wait_item(&item, "qa-task-remote-native-wait");
 
         assert!(!remote_native_requires_task_record_sync(&item));
         assert!(remote_native_requires_task_record_sync(&wait_item));

@@ -104,6 +104,60 @@ mod queue_remote_sync_tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn pending_remote_native_open_record_skips_optional_remote_sync() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let sync_attempt = temp.path().join("sync-attempted");
+        let remote_launcher = temp.path().join("remote-dev-env");
+        fs::write(
+            &remote_launcher,
+            format!(
+                "#!/bin/sh\n\
+                 touch {}\n\
+                 exit 1\n",
+                shell_quote(&sync_attempt),
+            ),
+        )
+        .unwrap();
+        make_executable(&remote_launcher);
+        let mut item = queue_item("iouring-rust-05-eventfd-docs", &repo);
+        item.execution_host = "remote-native".into();
+        item.remote_launcher = Some(remote_launcher.display().to_string());
+        item.status = "pending".into();
+        state::upsert_task_record(&task_record(&item.slug, "open", &repo, Some("abeliakov")))
+            .unwrap();
+
+        assert_eq!(queue_task_status(&item).unwrap().as_deref(), Some("open"));
+        assert!(
+            !sync_attempt.exists(),
+            "pending remote-native open record tried optional remote sync"
+        );
+    }
+
+    #[test]
+    fn remote_native_wait_item_keeps_launch_agent_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut item = queue_item("task-remote-native-wait-agent", &repo);
+        item.execution_host = "remote-native".into();
+        item.status = "pending".into();
+        item.agent_id = None;
+
+        let wait_item = remote_native_running_wait_item(&item, "qa-task-remote-native-wait-agent");
+
+        assert_eq!(wait_item.status, state::QueueItemStatus::Running);
+        assert_eq!(
+            wait_item.agent_id.as_deref(),
+            Some("qa-task-remote-native-wait-agent")
+        );
+    }
+
     #[test]
     fn open_remote_native_record_without_session_relaunches_item() {
         let _guard = test_support::env_guard();

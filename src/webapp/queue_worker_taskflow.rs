@@ -120,7 +120,7 @@ fn start_remote_native_queue_item(
         queue_item_semantic_iteration(item),
         &remote_native_terminal_target(&agent_id),
     )?;
-    let wait_item = remote_native_running_wait_item(item);
+    let wait_item = remote_native_running_wait_item(item, &agent_id);
     wait_for_queue_item_closeout(run_id, &wait_item, &agent_id, attempts)
 }
 
@@ -185,9 +185,10 @@ fn remote_native_terminal_item(agent_id: &str) -> Result<state::QueueItemRow> {
         .with_context(|| format!("remote-native queue terminal {agent_id} is not active"))
 }
 
-fn remote_native_running_wait_item(item: &state::QueueItemRow) -> state::QueueItemRow {
+fn remote_native_running_wait_item(item: &state::QueueItemRow, agent_id: &str) -> state::QueueItemRow {
     let mut item = item.clone();
     item.status = state::QueueItemStatus::Running;
+    item.agent_id = Some(agent_id.to_string());
     item
 }
 
@@ -580,7 +581,7 @@ fn queue_task_record_matches_item(
     }
     queue_task_record_launcher_matches_item(item, record)
         || legacy_local_item_matches_remote_terminal_record(item, record)
-        || remote_native_terminal_record_without_launcher_matches_item(item, record)
+        || remote_native_task_flow_record_without_launcher_matches_item(item, record)
 }
 
 fn legacy_local_item_matches_remote_terminal_record(
@@ -593,14 +594,13 @@ fn legacy_local_item_matches_remote_terminal_record(
         && task_record_remote_launcher(record).is_some()
 }
 
-fn remote_native_terminal_record_without_launcher_matches_item(
+fn remote_native_task_flow_record_without_launcher_matches_item(
     item: &state::QueueItemRow,
     record: &state::TaskRecordRow,
 ) -> bool {
     queue_item_remote_native(item)
         && item.remote_launcher.is_some()
         && record.source == "task-flow"
-        && queue_task_status_terminal(&record.status)
         && task_record_remote_launcher(record).is_none()
         && record
             .agent_id
