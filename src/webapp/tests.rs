@@ -246,6 +246,78 @@ mod tests {
     }
 
     #[test]
+    fn agent_status_parser_normalizes_capacity_and_reset() {
+        let agent = agent_command_fixture("c1");
+        let record = classify_agent_status_text(
+            &agent,
+            1,
+            1_780_000_000,
+            true,
+            Some(0),
+            "state: ready\nremaining capacity: 72%\nreset_at_unix: 1780003600",
+        );
+
+        assert_eq!(record.state, "ok");
+        assert_eq!(record.capacity_score, 72);
+        assert_eq!(record.reset_at_unix, Some(1_780_003_600));
+        assert_eq!(record.checked_at_unix, 1_780_000_000);
+        assert_eq!(record.expires_at_unix, 1_780_001_800);
+        assert!(record.raw_summary.contains("remaining capacity: 72%"));
+    }
+
+    #[test]
+    fn agent_status_parser_marks_limit_with_relative_retry() {
+        let agent = agent_command_fixture("c2");
+        let record = classify_agent_status_text(
+            &agent,
+            1,
+            1_780_000_000,
+            false,
+            Some(1),
+            "usage limit reached\ntry again in 15 minutes",
+        );
+
+        assert_eq!(record.state, "limited");
+        assert_eq!(record.capacity_score, 0);
+        assert_eq!(record.reset_at_unix, Some(1_780_000_900));
+        assert!(record.summary.contains("usage limit reached"));
+    }
+
+    #[test]
+    fn queue_agent_selector_chooses_highest_usable_capacity() {
+        let now = 1_780_000_000;
+        let c1 = agent_limit_fixture("c1", "ok", 35, None, now);
+        let c2 = agent_limit_fixture("c2", "ok", 80, None, now);
+
+        match select_queue_agent_from_records(now, &[c1, c2]) {
+            QueueAgentSelection::Selected { command, record } => {
+                assert_eq!(command, "c2");
+                assert_eq!(record.capacity_score, 80);
+            }
+            QueueAgentSelection::Waiting { .. } => panic!("expected selected agent"),
+        }
+    }
+
+    #[test]
+    fn queue_agent_selector_waits_until_limited_reset() {
+        let now = 1_780_000_000;
+        let c1 = agent_limit_fixture("c1", "limited", 0, Some(now + 600), now);
+        let c2 = agent_limit_fixture("c2", "limited", 0, Some(now + 300), now);
+
+        match select_queue_agent_from_records(now, &[c1, c2]) {
+            QueueAgentSelection::Waiting {
+                message,
+                next_retry_at,
+            } => {
+                assert_eq!(next_retry_at, now + 300);
+                assert!(message.contains("c1 state=limited"));
+                assert!(message.contains("c2 state=limited"));
+            }
+            QueueAgentSelection::Selected { .. } => panic!("expected waiting selection"),
+        }
+    }
+
+    #[test]
     fn stopped_queue_item_is_resumable_not_terminal() {
         assert!(!queue_item_terminal("stopped"));
         assert!(!queue_item_terminal("paused"));
@@ -1103,6 +1175,37 @@ mod tests {
             started_at: 0,
             updated_at: 0,
         }
+    }
+
+    fn agent_command_fixture(command: &str) -> agents::AvailableAgentCommand {
+        agents::AvailableAgentCommand {
+            command: command.to_string(),
+            label: command.to_string(),
+            invocation: "exec",
+            path: format!("/bin/{command}"),
+            account: command.trim_start_matches('c').to_string(),
+            status_command: command.to_string(),
+        }
+    }
+
+    fn agent_limit_fixture(
+        command: &str,
+        state: &str,
+        capacity_score: i64,
+        reset_at_unix: Option<u64>,
+        checked_at_unix: u64,
+    ) -> AgentLimitRecord {
+        agent_limit_record(
+            &agent_command_fixture(command),
+            state,
+            capacity_score,
+            reset_at_unix,
+            format!("{command} {state}"),
+            "",
+            "",
+            checked_at_unix,
+            1,
+        )
     }
 
     #[test]

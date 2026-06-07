@@ -721,6 +721,23 @@ pub fn set_web_queue_item_agent(run_id: &str, item_id: &str, agent_id: &str) -> 
     Ok(())
 }
 
+pub fn set_web_queue_item_agent_command(
+    run_id: &str,
+    item_id: &str,
+    agent_command: &str,
+) -> Result<()> {
+    let connection = open_db()?;
+    connection
+        .execute(
+            "update web_queue_items
+             set agent_command = ?3, updated_at_unix = ?4
+             where run_id = ?1 and id = ?2",
+            params![run_id, item_id, agent_command, unix_now()],
+        )
+        .context("failed to update web queue item agent command")?;
+    Ok(())
+}
+
 pub fn set_web_queue_item_remote_proxy(run_id: &str, item_id: &str, remote_proxy: &str) -> Result<()> {
     let connection = open_db()?;
     connection
