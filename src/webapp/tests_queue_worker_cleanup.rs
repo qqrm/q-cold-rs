@@ -124,6 +124,7 @@ mod queue_worker_cleanup_tests {
             repo_name: Some("repo".to_string()),
             execution_host: "local".into(),
             agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,

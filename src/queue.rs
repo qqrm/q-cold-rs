@@ -159,6 +159,7 @@ struct QueuePackageItem {
     repo_name: Option<String>,
     execution_host: Option<String>,
     agent_command: Option<String>,
+    task_class: Option<String>,
     remote_launcher: Option<String>,
     remote_agent_local_proxy: Option<String>,
     remote_agent_remote_proxy: Option<String>,
@@ -195,6 +196,7 @@ struct QueueRunItemRequest {
     repo_name: Option<String>,
     execution_host: Option<String>,
     agent_command: Option<String>,
+    task_class: Option<String>,
     remote_launcher: Option<String>,
     remote_agent_local_proxy: Option<String>,
     remote_agent_remote_proxy: Option<String>,
@@ -405,11 +407,12 @@ fn list_queue() -> Result<u8> {
                 item.depends_on.join(",")
             };
             println!(
-                "queue-item\t{}\tid={}\tslug={}\tstatus={}\tagent={}\tdepends_on={}\tmessage={}",
+                "queue-item\t{}\tid={}\tslug={}\tstatus={}\tclass={}\tagent={}\tdepends_on={}\tmessage={}",
                 item.position,
                 compact_field(&item.id),
                 compact_field(&item.slug),
                 compact_field(item.status.as_str()),
+                compact_field(item.task_class.as_str()),
                 compact_field(item.agent_id.as_deref().unwrap_or("-")),
                 compact_field(&depends_on),
                 compact_field(&item.message)
@@ -556,6 +559,7 @@ impl From<QueuePackageItem> for QueueRunItemRequest {
             repo_name: item.repo_name,
             execution_host: item.execution_host,
             agent_command: item.agent_command,
+            task_class: item.task_class,
             remote_launcher: item.remote_launcher,
             remote_agent_local_proxy: item.remote_agent_local_proxy,
             remote_agent_remote_proxy: item.remote_agent_remote_proxy,
@@ -933,6 +937,8 @@ fn json_item(
                 repo_name: json_string_field(object, "repo_name"),
                 execution_host: json_string_field(object, "execution_host"),
                 agent_command: json_string_field(object, "agent_command"),
+                task_class: json_string_field(object, "task_class")
+                    .or_else(|| json_string_field(object, "class")),
                 remote_launcher: json_string_field(object, "remote_launcher"),
                 remote_agent_local_proxy: json_string_field(object, "remote_agent_local_proxy"),
                 remote_agent_remote_proxy: json_string_field(object, "remote_agent_remote_proxy"),

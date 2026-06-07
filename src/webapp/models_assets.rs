@@ -88,6 +88,7 @@ pub(crate) struct WebQueueItem {
     pub(crate) repo_name: Option<String>,
     pub(crate) execution_host: String,
     pub(crate) agent_command: String,
+    pub(crate) task_class: String,
     pub(crate) remote_launcher: Option<String>,
     pub(crate) remote_agent_local_proxy: Option<String>,
     pub(crate) remote_agent_remote_proxy: Option<String>,
@@ -114,6 +115,7 @@ impl WebQueueItem {
             repo_name: row.repo_name.clone(),
             execution_host: row.execution_host.as_str().to_string(),
             agent_command: row.agent_command.clone(),
+            task_class: row.task_class.as_str().to_string(),
             remote_launcher: row.remote_launcher.clone(),
             remote_agent_local_proxy: row.remote_agent_local_proxy.clone(),
             remote_agent_remote_proxy: row.remote_agent_remote_proxy.clone(),
@@ -562,6 +564,8 @@ pub(crate) struct QueueRunItemRequest {
     pub(crate) repo_name: Option<String>,
     pub(crate) execution_host: Option<String>,
     pub(crate) agent_command: Option<String>,
+    #[serde(alias = "class")]
+    pub(crate) task_class: Option<String>,
     pub(crate) remote_launcher: Option<String>,
     pub(crate) remote_agent_local_proxy: Option<String>,
     pub(crate) remote_agent_remote_proxy: Option<String>,
@@ -591,6 +595,8 @@ struct QueueUpdateItemRequest {
     repo_name: Option<String>,
     execution_host: Option<String>,
     agent_command: Option<String>,
+    #[serde(alias = "class")]
+    task_class: Option<String>,
     remote_launcher: Option<String>,
     remote_agent_local_proxy: Option<String>,
     remote_agent_remote_proxy: Option<String>,

@@ -482,6 +482,72 @@ impl PartialEq<QueueExecutionHost> for &str {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum QueueTaskClass {
+    Cheap,
+    #[default]
+    Mid,
+    Heavy,
+}
+
+impl QueueTaskClass {
+    pub fn from_db_value(value: impl AsRef<str>) -> Self {
+        match value.as_ref().trim() {
+            "cheap" => Self::Cheap,
+            "heavy" => Self::Heavy,
+            _ => Self::Mid,
+        }
+    }
+
+    pub fn from_setting(value: Option<&str>) -> Self {
+        value.map_or(Self::Mid, Self::from_db_value)
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Cheap => "cheap",
+            Self::Mid => "mid",
+            Self::Heavy => "heavy",
+        }
+    }
+}
+
+impl Serialize for QueueTaskClass {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for QueueTaskClass {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        String::deserialize(deserializer).map(Self::from_db_value)
+    }
+}
+
+impl fmt::Display for QueueTaskClass {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl From<&str> for QueueTaskClass {
+    fn from(value: &str) -> Self {
+        Self::from_db_value(value)
+    }
+}
+
+impl From<String> for QueueTaskClass {
+    fn from(value: String) -> Self {
+        Self::from_db_value(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{QueueExecutionHost, QueueExecutionMode, QueueItemStatus, QueueRunStatus};

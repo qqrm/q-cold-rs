@@ -97,6 +97,23 @@ fn json_plan_preserves_remote_native_contract() {
 }
 
 #[test]
+fn json_plan_preserves_task_classes() {
+    let package = parse_json_package(
+        r#"{
+            "items": [
+                {"slug":"cheap-one","prompt":"cheap","task_class":"cheap"},
+                {"slug":"heavy-one","prompt":"heavy","class":"heavy"}
+            ]
+        }"#,
+        "test",
+    )
+    .unwrap();
+
+    assert_eq!(package.items[0].task_class.as_deref(), Some("cheap"));
+    assert_eq!(package.items[1].task_class.as_deref(), Some("heavy"));
+}
+
+#[test]
 fn json_item_layers_can_override_defaults() {
     let package = parse_json_package(
         r#"{

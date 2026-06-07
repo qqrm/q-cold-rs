@@ -125,6 +125,7 @@ pub(crate) struct NodeQueueItem {
     pub(crate) status: String,
     pub(crate) execution_host: String,
     pub(crate) agent_command: String,
+    pub(crate) task_class: String,
     pub(crate) agent_id: Option<String>,
     pub(crate) repo_root: Option<String>,
     pub(crate) repo_name: Option<String>,

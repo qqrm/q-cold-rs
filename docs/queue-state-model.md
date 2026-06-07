@@ -11,6 +11,8 @@ runtime scheduler fully implements every rule yet.
   semantic iteration.
 - `admission`: the scheduler decision that a ready item may own one live
   executor slot.
+- `task_class`: the item resource class: `cheap`, `mid`, or `heavy`. Missing
+  classes default to `mid`.
 
 ## Item States
 
@@ -35,6 +37,6 @@ runtime scheduler fully implements every rule yet.
 5. Graph mode must honor admission when picking ready items, so a ready item
    that is already admitted cannot be launched again.
 
-The current queue runtime still has known gaps around semantic recovery budget
-and graph admission. Characterization tests keep those gaps visible while the
-scheduler is changed in later tasks.
+The runtime scheduler admits graph-ready items against live reservations and
+last-hour host resource samples. Rows that cannot be admitted remain `waiting`
+with the admission reason and next retry time.

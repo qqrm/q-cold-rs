@@ -654,6 +654,7 @@ include!("webapp/queue_api.rs");
 include!("webapp/queue_graph.rs");
 include!("webapp/queue_api_dedupe.rs");
 include!("webapp/queue_api_cleanup.rs");
+include!("webapp/queue_admission.rs");
 include!("webapp/queue_worker.rs");
 include!("webapp/queue_worker_agent_selection.rs");
 include!("webapp/queue_worker_recovery.rs");

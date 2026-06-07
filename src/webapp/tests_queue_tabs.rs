@@ -316,6 +316,7 @@ mod queue_tabs_tests {
                 "slug",
                 "started_at",
                 "status",
+                "task_class",
                 "updated_at",
             ],
         );
@@ -328,6 +329,7 @@ mod queue_tabs_tests {
         assert_eq!(item["attempts"].as_i64(), Some(2));
         assert_eq!(item["recovery_attempts"].as_i64(), Some(1));
         assert_eq!(item["next_attempt_at"].as_u64(), Some(30));
+        assert_eq!(item["task_class"].as_str(), Some("mid"));
 
         assert_json_object_keys(
             tab,
@@ -595,6 +597,7 @@ mod queue_tabs_tests {
             repo_name: None,
             execution_host: "local".into(),
             agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,

@@ -145,6 +145,7 @@ mod tests {
             repo_name: Some("repo".to_string()),
             execution_host: "local".into(),
             agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
@@ -174,6 +175,7 @@ mod tests {
             repo_name: Some("repo".to_string()),
             execution_host: "local".into(),
             agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,
@@ -483,6 +485,7 @@ mod tests {
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
                     agent_command: None,
+                    task_class: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
                     remote_agent_remote_proxy: None,
@@ -494,6 +497,31 @@ mod tests {
         let (_, items) = state::load_web_queue_run("remote-native-run").unwrap();
         assert_eq!(items[0].execution_host, "remote-native");
         assert_eq!(items[0].agent_command, "remote-only-agent");
+    }
+
+    #[test]
+    fn queue_run_accepts_class_alias_from_json() {
+        let _guard = test_support::env_guard();
+        let temp = tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path());
+        let payload = serde_json::from_str::<QueueRunRequest>(
+            r#"{
+                "run_id": "class-alias-run",
+                "selected_execution_host": "remote-native",
+                "selected_agent_command": "remote-only-agent",
+                "selected_remote_launcher": "remote-dev-env",
+                "items": [
+                    { "id": "heavy-item", "prompt": "run heavy", "class": "heavy" }
+                ]
+            }"#,
+        )
+        .unwrap();
+
+        let response = handle_queue_run(&HeaderMap::new(), payload);
+
+        assert!(response.ok, "{}", response.output);
+        let (_, items) = state::load_web_queue_run("class-alias-run").unwrap();
+        assert_eq!(items[0].task_class, state::QueueTaskClass::Heavy);
     }
 
     #[test]
@@ -530,6 +558,7 @@ mod tests {
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
                     agent_command: None,
+                    task_class: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
                     remote_agent_remote_proxy: None,
@@ -583,6 +612,7 @@ mod tests {
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
                     agent_command: None,
+                    task_class: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
                     remote_agent_remote_proxy: None,
@@ -636,6 +666,7 @@ mod tests {
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
                     agent_command: None,
+                    task_class: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
                     remote_agent_remote_proxy: None,
@@ -683,6 +714,7 @@ mod tests {
                     repo_name: None,
                     execution_host: Some("remote-native".into()),
                     agent_command: None,
+                    task_class: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
                     remote_agent_remote_proxy: None,
@@ -727,6 +759,7 @@ mod tests {
                     repo_name: None,
                     execution_host: None,
                     agent_command: None,
+                    task_class: None,
                     remote_launcher: None,
                     remote_agent_local_proxy: None,
                     remote_agent_remote_proxy: None,
@@ -1274,6 +1307,7 @@ mod tests {
                         repo_name: None,
                         execution_host: Some("remote-native".into()),
                         agent_command: None,
+                        task_class: None,
                         remote_launcher: None,
                         remote_agent_local_proxy: None,
                         remote_agent_remote_proxy: None,
@@ -1289,6 +1323,7 @@ mod tests {
                         repo_name: None,
                         execution_host: Some("remote-native".into()),
                         agent_command: None,
+                        task_class: None,
                         remote_launcher: None,
                         remote_agent_local_proxy: None,
                         remote_agent_remote_proxy: None,
@@ -1371,6 +1406,7 @@ mod tests {
             repo_name: None,
             execution_host: "local".into(),
             agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,

@@ -282,6 +282,9 @@ fn apply_queue_update_item(
         Some(item.execution_host.clone()),
         run.execution_host.clone(),
     );
+    if let Some(task_class) = request.task_class.as_deref() {
+        item.task_class = state::QueueTaskClass::from_setting(Some(task_class));
+    }
     item.remote_launcher = update_queue_item_remote_launcher(
         request.remote_launcher.as_deref(),
         item.remote_launcher.clone(),
@@ -626,6 +629,7 @@ fn queue_item_from_request(
             .agent_command
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| run.selected_agent_command.clone()),
+        task_class: state::QueueTaskClass::from_setting(request.task_class.as_deref()),
         remote_launcher,
         remote_agent_local_proxy: resolve_queue_item_optional_setting(
             request.remote_agent_local_proxy.as_deref(),

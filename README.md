@@ -115,6 +115,12 @@ Queue item workers also take a durable SQLite lease with a heartbeat before
 launching executor work, so a restarted daemon can distinguish active ownership
 from expired ownership and retry bounded stale work without relying only on
 process-local thread state.
+Queue items also carry a task class: `cheap`, `mid`, or `heavy`; omitted class
+fields default to `mid`. Graph scheduling admits ready items against live queue
+reservations plus the last hour of local host resource samples. The default
+8-core / 128 GiB policy has soft max 8 tasks, hard max 12 tasks, and heavy max
+2 tasks. Items that cannot be admitted stay `waiting` with an admission reason
+and `next_attempt_at` retry time.
 Queue run, append, and update dashboard API responses preserve the existing
 `ok`/`output` fields and may include `queue_graph` diagnostics with canonical
 dependency normalization, wave indexes, and display-safe validation messages.

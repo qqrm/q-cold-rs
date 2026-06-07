@@ -104,9 +104,10 @@ fn run_web_queue(run_id: &str) -> Result<()> {
             return Ok(());
         }
 
-        let ready = queue_ready_items(&run, &items);
+        let QueueAdmissionPlan { admitted, waiting } =
+            apply_queue_admission(queue_ready_items(&run, &items))?;
         let mut spawned = 0_usize;
-        for item in ready {
+        for item in admitted {
             if spawn_web_queue_item_worker(run_id.to_string(), item) {
                 spawned += 1;
             }
@@ -118,6 +119,11 @@ fn run_web_queue(run_id: &str) -> Result<()> {
             .count();
         let message = if spawned > 0 {
             format!("started {spawned} ready task(s); {runnable} active or waiting")
+        } else if let Some((_, wait)) = waiting.first() {
+            format!(
+                "waiting for resource admission: {}; retry_at={}",
+                wait.reason, wait.next_retry_at
+            )
         } else if active > 0 {
             format!("running {active} task(s); {runnable} active or waiting")
         } else {

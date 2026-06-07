@@ -58,6 +58,7 @@ mod task_flow_sync_tests {
             repo_name: run.selected_repo_name.clone(),
             execution_host: "local".into(),
             agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,

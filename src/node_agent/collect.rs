@@ -306,6 +306,7 @@ fn node_queue_item(item: &state::QueueItemRow, now: u64) -> NodeQueueItem {
         status: item.status.to_string(),
         execution_host: item.execution_host.to_string(),
         agent_command: item.agent_command.clone(),
+        task_class: item.task_class.to_string(),
         agent_id: item.agent_id.clone(),
         repo_root: item.repo_root.clone(),
         repo_name: item.repo_name.clone(),

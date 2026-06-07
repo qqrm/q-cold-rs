@@ -27,8 +27,8 @@ Preferred JSON package:
     ],
     "default_layers": ["policy"],
     "items": [
-      { "slug": "task-one", "prompt": "first task" },
-      { "slug": "task-two", "prompt": "second task" }
+      { "slug": "task-one", "task_class": "cheap", "prompt": "first task" },
+      { "slug": "task-two", "task_class": "heavy", "prompt": "second task" }
     ]
   }
 
@@ -43,6 +43,10 @@ Graph execution is available with `execution_mode: "graph"` and per-item
 `depends_on` arrays in JSON. Dependencies may reference item ids or slugs and
 are stored as item ids. Queue items are still executed through managed
 task open plus terminal closeout; the queue owns the agent lifecycle.
+Per-item `task_class` values can be `cheap`, `mid`, or `heavy`; omitted values
+default to `mid`. Ready graph items are admitted against live reservations and
+last-hour host resource history. When resources are insufficient, the item stays
+waiting with an admission reason and next retry time.
 
 If a managed queue task reaches `closed:failed`, lands in `failed-closeout`, or
 its executor exits before recording a closeout, Q-COLD starts a fresh

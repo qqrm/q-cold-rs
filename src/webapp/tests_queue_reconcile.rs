@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod queue_reconcile_tests {
     #![allow(clippy::unwrap_used)]
-
     use crate::test_support;
 
     use super::*;
@@ -984,6 +983,7 @@ mod queue_reconcile_tests {
             repo_name: None,
             execution_host: "local".into(),
             agent_command: "c1".to_string(),
+            task_class: state::QueueTaskClass::Mid,
             remote_launcher: None,
             remote_agent_local_proxy: None,
             remote_agent_remote_proxy: None,

@@ -9,8 +9,8 @@ use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use super::queue_tabs::deduplicate_web_queue_tab_runs;
 use super::{
     source_uses_task_sequence, AgentRow, QueueExecutionHost, QueueExecutionMode, QueueItemRow,
-    QueueItemStatus, QueueRunRow, QueueRunStatus, QueueTabRow, TaskRecordRow, TaskTopicRow,
-    DEFAULT_SQLITE_BUSY_TIMEOUT_MS,
+    QueueItemStatus, QueueRunRow, QueueRunStatus, QueueTabRow, QueueTaskClass, TaskRecordRow,
+    TaskTopicRow, DEFAULT_SQLITE_BUSY_TIMEOUT_MS,
 };
 
 struct SchemaMigration {
@@ -42,6 +42,10 @@ const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
     SchemaMigration {
         id: "006_web_queue_worker_leases",
         apply: apply_web_queue_worker_lease_schema,
+    },
+    SchemaMigration {
+        id: "007_web_queue_resource_admission",
+        apply: apply_web_queue_resource_admission_schema,
     },
     SchemaMigration {
         id: "task_sequence_task_sources_only_v1",
@@ -169,6 +173,7 @@ const INITIAL_STATE_SCHEMA_SQL: &str = "
         repo_name text,
         execution_host text not null default 'local',
         agent_command text not null,
+        task_class text not null default 'mid',
         remote_launcher text,
         remote_agent_local_proxy text,
         remote_agent_remote_proxy text,
@@ -200,6 +205,15 @@ const INITIAL_STATE_SCHEMA_SQL: &str = "
         finished_at_unix integer,
         updated_at_unix integer not null,
         primary key(run_id, item_id, semantic_iteration)
+    );
+    create table if not exists web_queue_resource_samples (
+        sampled_at_unix integer primary key,
+        logical_cpus integer,
+        load_one_milli integer,
+        memory_total_bytes integer,
+        memory_available_bytes integer,
+        reserved_tasks integer not null,
+        reserved_heavy_tasks integer not null
     );
     create unique index if not exists web_queue_tabs_default
     on web_queue_tabs(is_default)
@@ -354,6 +368,12 @@ fn apply_web_queue_execution_metadata_schema(connection: &Connection) -> Result<
         "execution_host",
         "text not null default 'local'",
     )?;
+    ensure_column(
+        connection,
+        "web_queue_items",
+        "task_class",
+        "text not null default 'mid'",
+    )?;
     ensure_column(connection, "web_queue_items", "remote_launcher", "text")?;
     ensure_column(
         connection,
@@ -403,6 +423,10 @@ fn apply_web_queue_worker_lease_schema(connection: &Connection) -> Result<()> {
     ensure_web_queue_worker_lease_schema(connection)
 }
 
+fn apply_web_queue_resource_admission_schema(connection: &Connection) -> Result<()> {
+    ensure_web_queue_resource_admission_schema(connection)
+}
+
 fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
     connection
         .execute_batch(
@@ -444,6 +468,7 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  repo_name text,
                  execution_host text not null default 'local',
                  agent_command text not null,
+                 task_class text not null default 'mid',
                  remote_launcher text,
                  remote_agent_local_proxy text,
                  remote_agent_remote_proxy text,
@@ -476,6 +501,15 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
                  updated_at_unix integer not null,
                  primary key(run_id, item_id, semantic_iteration)
              );
+             create table if not exists web_queue_resource_samples (
+                 sampled_at_unix integer primary key,
+                 logical_cpus integer,
+                 load_one_milli integer,
+                 memory_total_bytes integer,
+                 memory_available_bytes integer,
+                 reserved_tasks integer not null,
+                 reserved_heavy_tasks integer not null
+             );
              create unique index if not exists web_queue_tabs_default
              on web_queue_tabs(is_default)
              where is_default = 1;
@@ -484,6 +518,30 @@ fn ensure_web_queue_schema(connection: &Connection) -> Result<()> {
              where active = 1;",
         )
         .context("failed to initialize web queue tables")?;
+    Ok(())
+}
+
+fn ensure_web_queue_resource_admission_schema(connection: &Connection) -> Result<()> {
+    ensure_column(
+        connection,
+        "web_queue_items",
+        "task_class",
+        "text not null default 'mid'",
+    )?;
+    connection
+        .execute(
+            "create table if not exists web_queue_resource_samples (
+                 sampled_at_unix integer primary key,
+                 logical_cpus integer,
+                 load_one_milli integer,
+                 memory_total_bytes integer,
+                 memory_available_bytes integer,
+                 reserved_tasks integer not null,
+                 reserved_heavy_tasks integer not null
+             )",
+            [],
+        )
+        .context("failed to initialize web queue resource sample table")?;
     Ok(())
 }
 
@@ -1067,9 +1125,9 @@ pub(super) fn queue_tab_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Qu
 }
 
 pub(super) fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<QueueItemRow> {
-    let depends_on_json = row.get::<_, Option<String>>(20)?.unwrap_or_default();
+    let depends_on_json = row.get::<_, Option<String>>(21)?.unwrap_or_default();
     let depends_on = serde_json::from_str(&depends_on_json).map_err(|err| {
-        rusqlite::Error::FromSqlConversionFailure(20, rusqlite::types::Type::Text, Box::new(err))
+        rusqlite::Error::FromSqlConversionFailure(21, rusqlite::types::Type::Text, Box::new(err))
     })?;
     Ok(QueueItemRow {
         id: row.get(0)?,
@@ -1082,17 +1140,18 @@ pub(super) fn queue_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Q
         repo_name: row.get(6)?,
         execution_host: QueueExecutionHost::from_db_value(row.get::<_, String>(7)?),
         agent_command: row.get(8)?,
-        remote_launcher: row.get(9)?,
-        remote_agent_local_proxy: row.get(10)?,
-        remote_agent_remote_proxy: row.get(11)?,
-        agent_id: row.get(12)?,
-        status: QueueItemStatus::from_db_value(row.get::<_, String>(13)?),
-        message: row.get(14)?,
-        attempts: row.get(15)?,
-        recovery_attempts: row.get(16)?,
-        next_attempt_at: row.get(17)?,
-        started_at: row.get(18)?,
-        updated_at: row.get(19)?,
+        task_class: QueueTaskClass::from_db_value(row.get::<_, String>(9)?),
+        remote_launcher: row.get(10)?,
+        remote_agent_local_proxy: row.get(11)?,
+        remote_agent_remote_proxy: row.get(12)?,
+        agent_id: row.get(13)?,
+        status: QueueItemStatus::from_db_value(row.get::<_, String>(14)?),
+        message: row.get(15)?,
+        attempts: row.get(16)?,
+        recovery_attempts: row.get(17)?,
+        next_attempt_at: row.get(18)?,
+        started_at: row.get(19)?,
+        updated_at: row.get(20)?,
     })
 }
 
