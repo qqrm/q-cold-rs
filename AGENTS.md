@@ -191,6 +191,13 @@ fixture or debugging task explicitly needs them.
   automatic cleanup after `QCOLD_PAUSED_TASK_TTL_HOURS` or 2 hours by default;
   ZIP bundles are retained separately for `QCOLD_BUNDLE_RETENTION_HOURS` or 24
   hours by default.
+- Terminal self-hosted task worktrees are disposable after the terminal bundle
+  and receipt are written. Successful, blocked, and failed closeouts remove the
+  managed task worktree; `terminal-check` and stale-cleanup commands also prune
+  leftover `closed:*` task worktrees, direct-child managed worktree orphans with
+  no `.task/task.env`, and stale Git worktree metadata. Preserve `open`,
+  `paused`, and `failed-closeout` worktrees because they still represent
+  resumable or repairable task-flow state.
 - For Q-COLD self-development, successful managed closeout fetches `origin`,
   fast-forwards the primary checkout to the current remote base, rebases the
   task branch onto that base, fast-forward integrates it into the primary base

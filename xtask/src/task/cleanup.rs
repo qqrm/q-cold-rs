@@ -1,3 +1,89 @@
+fn clear_terminal_task_worktrees(repo: &Path) -> Result<TaskWorktreeCleanup> {
+    let mut removed = 0;
+    for task in open_tasks(repo)? {
+        if !task.status.starts_with("closed:") {
+            continue;
+        }
+        clear_finished_task_worktree(repo, &task)?;
+        removed += 1;
+    }
+    Ok(TaskWorktreeCleanup { removed })
+}
+
+fn clear_finished_task_worktree(repo: &Path, task: &TaskEnv) -> Result<()> {
+    if task.task_worktree.exists() {
+        let _ = run_git(&task.task_worktree, ["checkout", "--detach"]);
+        run_git(
+            repo,
+            [
+                "worktree",
+                "remove",
+                "--force",
+                path_arg(&task.task_worktree),
+            ],
+        )?;
+    }
+    let _ = run_git(repo, ["branch", "-D", &task.task_branch]);
+    Ok(())
+}
+
+fn clear_orphan_task_worktrees(repo: &Path) -> Result<TaskWorktreeCleanup> {
+    let mut removed = 0;
+    for orphan in orphan_task_worktrees(repo)? {
+        run_git(repo, ["worktree", "remove", "--force", path_arg(&orphan)])?;
+        removed += 1;
+    }
+    Ok(TaskWorktreeCleanup { removed })
+}
+
+fn orphan_task_worktrees(repo: &Path) -> Result<Vec<PathBuf>> {
+    let managed = managed_root(repo)?;
+    if !managed.exists() {
+        return Ok(Vec::new());
+    }
+    let managed = managed
+        .canonicalize()
+        .with_context(|| format!("failed to resolve {}", managed.display()))?;
+    let worktrees = git_worktree_paths(repo)?;
+    let mut orphans = Vec::new();
+    for worktree in worktrees {
+        if !worktree.exists() {
+            continue;
+        }
+        let worktree = worktree
+            .canonicalize()
+            .with_context(|| format!("failed to resolve {}", worktree.display()))?;
+        if !is_direct_child(&managed, &worktree) {
+            continue;
+        }
+        if worktree.join(".task/task.env").is_file() {
+            continue;
+        }
+        orphans.push(worktree);
+    }
+    orphans.sort();
+    Ok(orphans)
+}
+
+fn git_worktree_paths(repo: &Path) -> Result<Vec<PathBuf>> {
+    Ok(git_output(repo, ["worktree", "list", "--porcelain"])?
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .collect())
+}
+
+fn is_direct_child(parent: &Path, child: &Path) -> bool {
+    child
+        .strip_prefix(parent)
+        .ok()
+        .is_some_and(|relative| relative.components().count() == 1)
+}
+
+fn prune_git_worktree_metadata(repo: &Path) -> Result<()> {
+    run_git(repo, ["worktree", "prune"])
+}
+
 fn clear_stale_paused_tasks(repo: &Path, max_age_hours: u64) -> Result<StaleCleanup> {
     let now = unix_now();
     let max_age_seconds = max_age_hours.saturating_mul(60).saturating_mul(60);

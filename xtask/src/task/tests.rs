@@ -109,6 +109,126 @@ mod tests {
     }
 
     #[test]
+    fn success_worktree_cleanup_removes_task_worktree_and_branch() {
+        let root = unique_test_dir("qcold-success-worktree-cleanup");
+        let primary = root.join("primary");
+        run_git_in(&root, ["init", path_arg(&primary)]);
+        run_git_in(&primary, ["config", "user.name", "tester"]);
+        run_git_in(&primary, ["config", "user.email", "tester@example.com"]);
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        run_git_in(&primary, ["add", "README.md"]);
+        run_git_in(&primary, ["commit", "-m", "seed"]);
+
+        let worktree = root.join("WT/primary/001-clean-me");
+        run_git_in(
+            &primary,
+            [
+                "worktree",
+                "add",
+                "-b",
+                "task/clean-me",
+                path_arg(&worktree),
+                "HEAD",
+            ],
+        );
+        let mut task = test_task_env();
+        task.primary_repo_path = primary.clone();
+        task.task_worktree = worktree.clone();
+        task.task_branch = "task/clean-me".into();
+
+        remove_success_task_worktree(&task).unwrap();
+
+        std::env::set_current_dir(std::env::temp_dir()).unwrap();
+        assert!(!worktree.exists());
+        assert!(
+            !git_output(&primary, ["branch", "--list", "task/clean-me"])
+                .unwrap()
+                .contains("task/clean-me")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminal_task_cleanup_removes_closed_task_env_worktrees() {
+        let root = unique_test_dir("qcold-terminal-task-cleanup");
+        let primary = root.join("primary");
+        run_git_in(&root, ["init", path_arg(&primary)]);
+        run_git_in(&primary, ["config", "user.name", "tester"]);
+        run_git_in(&primary, ["config", "user.email", "tester@example.com"]);
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        run_git_in(&primary, ["add", "README.md"]);
+        run_git_in(&primary, ["commit", "-m", "seed"]);
+
+        let worktree = root.join("WT/primary/002-closed-task");
+        run_git_in(
+            &primary,
+            [
+                "worktree",
+                "add",
+                "-b",
+                "task/closed-task",
+                path_arg(&worktree),
+                "HEAD",
+            ],
+        );
+        let mut task = test_task_env();
+        task.primary_repo_path = primary.clone();
+        task.task_worktree = worktree.clone();
+        task.task_branch = "task/closed-task".into();
+        task.task_name = "closed-task".into();
+        task.status = "closed:success".into();
+        write_task_env(&task).unwrap();
+
+        let cleanup = clear_terminal_task_worktrees(&primary).unwrap();
+
+        assert_eq!(cleanup.removed, 1);
+        assert!(!worktree.exists());
+        assert!(
+            !git_output(&primary, ["branch", "--list", "task/closed-task"])
+                .unwrap()
+                .contains("task/closed-task")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn orphan_task_cleanup_removes_detached_top_level_managed_worktrees() {
+        let root = unique_test_dir("qcold-orphan-task-cleanup");
+        let primary = root.join("primary");
+        run_git_in(&root, ["init", path_arg(&primary)]);
+        run_git_in(&primary, ["config", "user.name", "tester"]);
+        run_git_in(&primary, ["config", "user.email", "tester@example.com"]);
+        fs::write(primary.join("README.md"), "seed\n").unwrap();
+        run_git_in(&primary, ["add", "README.md"]);
+        run_git_in(&primary, ["commit", "-m", "seed"]);
+
+        let orphan = root.join("WT/primary/003-orphan-task");
+        run_git_in(
+            &primary,
+            ["worktree", "add", "--detach", path_arg(&orphan), "HEAD"],
+        );
+        let nested_agent = root.join("WT/primary/agents/agent-c1");
+        run_git_in(
+            &primary,
+            [
+                "worktree",
+                "add",
+                "--detach",
+                path_arg(&nested_agent),
+                "HEAD",
+            ],
+        );
+
+        let cleanup = clear_orphan_task_worktrees(&primary).unwrap();
+
+        assert_eq!(cleanup.removed, 1);
+        assert!(!orphan.exists());
+        assert!(nested_agent.exists());
+        run_git_in(&primary, ["worktree", "remove", "--force", path_arg(&nested_agent)]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn task_env_round_trips_multiline_description() {
         let root = unique_test_dir("qcold-task-env-multiline");
         let worktree = root.join("task");

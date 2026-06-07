@@ -143,7 +143,7 @@ fn task_command(args: TaskArgs) -> Result<u8> {
         TaskCommand::Clean { task_slug } => clean_command(&task_slug, false),
         TaskCommand::Clear { task_slug } => clean_command(&task_slug, true),
         TaskCommand::ClearAll => clear_all_command(),
-        TaskCommand::OrphanList => Ok(orphan_list_command()),
+        TaskCommand::OrphanList => orphan_list_command(),
         TaskCommand::OrphanClearStale { max_age_hours } => {
             orphan_clear_stale_command(max_age_hours)
         }
@@ -333,8 +333,20 @@ fn list_command() -> Result<u8> {
 
 fn terminal_check_command() -> Result<u8> {
     let repo = task_inventory_repo_root()?;
+    let terminal_cleanup = clear_terminal_task_worktrees(&repo)?;
+    let orphan_cleanup = clear_orphan_task_worktrees(&repo)?;
     let cleanup = clear_stale_paused_tasks(&repo, paused_task_ttl_hours()?)?;
     let bundle_cleanup = clear_stale_bundles(&repo, bundle_retention_hours()?)?;
+    prune_git_worktree_metadata(&repo)?;
+    if terminal_cleanup.removed > 0 {
+        println!(
+            "terminal-task-cleanup\tremoved={}",
+            terminal_cleanup.removed
+        );
+    }
+    if orphan_cleanup.removed > 0 {
+        println!("orphan-task-cleanup\tremoved={}", orphan_cleanup.removed);
+    }
     if cleanup.removed > 0 {
         println!(
             "paused-task-cleanup\tmax_age_hours={}\tremoved={}",
@@ -508,23 +520,12 @@ fn closeout_success_inner(
     record_closeout_phase(task, phase, "terminal-bundle")?;
     let bundle =
         create_task_archive_bundle(task).context("closeout phase terminal-bundle failed")?;
-    let worktree = task.task_worktree.clone();
-    let branch = task.task_branch.clone();
     let task_status = worktree_status_summary(&task.task_worktree)?;
     let primary_status = worktree_status_summary(&task.primary_repo_path)?;
     if let Some(agent_worktree) = agent_worktree {
         record_closeout_phase(task, phase, "agent-return-cleanup")?;
-        run_git(&worktree, ["checkout", "--detach"])
-            .context("closeout phase cleanup-agent failed")?;
-        let task_state = worktree.join(".task");
-        if task_state.exists() {
-            fs::remove_dir_all(&task_state)
-                .context("closeout phase cleanup-agent failed")
-                .with_context(|| format!("failed to remove {}", task_state.display()))?;
-        }
-        run_git(&task.primary_repo_path, ["branch", "-d", &branch])
-            .context("closeout phase cleanup-agent failed")?;
-        let receipt = success_terminal_receipt(message, primary_status, task_status, false);
+        remove_success_task_worktree(task).context("closeout phase cleanup-agent failed")?;
+        let receipt = success_terminal_receipt(message, primary_status, task_status, true);
         warn_if_receipt_append_fails(&bundle, &receipt);
         println!("task-closeout\tsuccess\t{}", task.task_name);
         println!("BUNDLE_PATH={}", bundle.display());
@@ -533,20 +534,33 @@ fn closeout_success_inner(
         return Ok(0);
     }
     record_closeout_phase(task, phase, "cleanup-worktree")?;
-    run_git(&worktree, ["checkout", "--detach"])
-        .context("closeout phase cleanup-worktree failed")?;
-    run_git(&task.primary_repo_path, ["branch", "-d", &branch])
-        .context("closeout phase cleanup-worktree failed")?;
-    run_git(
-        &task.primary_repo_path,
-        ["worktree", "remove", "--force", path_arg(&worktree)],
-    )
-    .context("closeout phase cleanup-worktree failed")?;
+    remove_success_task_worktree(task).context("closeout phase cleanup-worktree failed")?;
     let receipt = success_terminal_receipt(message, primary_status, task_status, true);
     warn_if_receipt_append_fails(&bundle, &receipt);
     println!("task-closeout\tsuccess\t{}", task.task_name);
     println!("BUNDLE_PATH={}", bundle.display());
     Ok(0)
+}
+
+fn remove_success_task_worktree(task: &TaskEnv) -> Result<()> {
+    std::env::set_current_dir(&task.primary_repo_path).with_context(|| {
+        format!(
+            "failed to leave task worktree for cleanup: {}",
+            task.primary_repo_path.display()
+        )
+    })?;
+    run_git(&task.task_worktree, ["checkout", "--detach"])?;
+    run_git(&task.primary_repo_path, ["branch", "-d", &task.task_branch])?;
+    run_git(
+        &task.primary_repo_path,
+        [
+            "worktree",
+            "remove",
+            "--force",
+            path_arg(&task.task_worktree),
+        ],
+    )?;
+    Ok(())
 }
 
 fn warn_if_receipt_append_fails(bundle: &Path, receipt: &TerminalReceipt<'_>) {
@@ -888,15 +902,25 @@ fn clear_all_command() -> Result<u8> {
     Ok(0)
 }
 
-fn orphan_list_command() -> u8 {
-    println!("orphans\tcount=0");
-    0
+fn orphan_list_command() -> Result<u8> {
+    let repo = task_inventory_repo_root()?;
+    let orphans = orphan_task_worktrees(&repo)?;
+    println!("orphans\tcount={}", orphans.len());
+    for orphan in orphans {
+        println!("orphan\t{}", orphan.display());
+    }
+    Ok(0)
 }
 
 fn orphan_clear_stale_command(max_age_hours: u64) -> Result<u8> {
     let repo = task_inventory_repo_root()?;
+    let terminal_cleanup = clear_terminal_task_worktrees(&repo)?;
+    let orphan_cleanup = clear_orphan_task_worktrees(&repo)?;
     let cleanup = clear_stale_paused_tasks(&repo, max_age_hours)?;
     let bundle_cleanup = clear_stale_bundles(&repo, bundle_retention_hours()?)?;
+    prune_git_worktree_metadata(&repo)?;
+    println!("terminal-task-clear\tremoved={}", terminal_cleanup.removed);
+    println!("orphan-task-clear\tremoved={}", orphan_cleanup.removed);
     println!(
         "orphan-clear-stale\tmax_age_hours={}\tremoved={}",
         cleanup.max_age_hours, cleanup.removed
@@ -910,6 +934,10 @@ fn orphan_clear_stale_command(max_age_hours: u64) -> Result<u8> {
 
 struct StaleCleanup {
     max_age_hours: u64,
+    removed: usize,
+}
+
+struct TaskWorktreeCleanup {
     removed: usize,
 }
 
