@@ -110,6 +110,30 @@ compatibility for tests and legacy callers. Direct
 calls into a repository adapter are implementation details unless a test
 fixture or debugging task explicitly needs them.
 
+## Imported Prompt Packages
+
+- When the operator provides a ZIP, directory, or file set with multiple
+  prompts, roadmap steps, queue metadata, dependency metadata, or numbered
+  prompt files, treat it as a prompt package, not as a single task.
+- Inspect the package index first: `README`, `ROADMAP`, manifests,
+  dependency files, and prompt filenames. Identify all tasks before starting
+  execution.
+- If the operator intent is execution, convert the package into a Q-COLD queue
+  and run it through `qcold queue create` / `qcold queue run --from ...`.
+  Preserve package ordering and dependency shape: use sequence mode for
+  ordered roadmaps and graph mode when dependency metadata is present.
+- If queue prerequisites or package shape block an actual queue launch, say
+  the exact blocker and execute the full task set as an explicit sequential
+  managed rollout. Do not silently downgrade the package to only the first
+  prompt.
+- Keep monitoring and repairing the queue or sequential rollout until every
+  package item reaches terminal success, blocked, or failed with exact
+  evidence. Report partial completion as partial, including which package items
+  have not started.
+- For read-only audits, applicability checks, or operator requests that clearly
+  ask only for inspection, do not launch the queue. Still summarize the package
+  item count and the execution plan that would be used.
+
 ## Development Rules
 
 - Keep Q-COLD Rust-first and facade-owned: command parsing, operator UX,
