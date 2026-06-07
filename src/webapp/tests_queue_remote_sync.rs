@@ -243,11 +243,11 @@ mod queue_remote_sync_tests {
         assert_eq!(relaunched.status, "pending");
         assert_eq!(relaunched.attempts, 1);
         assert_eq!(relaunched.next_attempt_at, None);
-        assert_eq!(relaunched.agent_id.as_deref(), None);
         assert_eq!(
             relaunched.message,
             REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
         );
+        assert_eq!(relaunched.agent_id.as_deref(), None);
     }
 
     #[test]

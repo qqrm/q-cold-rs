@@ -40,3 +40,6 @@ runtime scheduler fully implements every rule yet.
 The runtime scheduler admits graph-ready items against live reservations and
 last-hour host resource samples. Rows that cannot be admitted remain `waiting`
 with the admission reason and next retry time.
+
+The concrete reducer/action split used by reconciliation is documented in
+[`queue-status-reducer-architecture.md`](queue-status-reducer-architecture.md).

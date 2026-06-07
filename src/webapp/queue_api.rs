@@ -852,7 +852,11 @@ fn queue_item_removable_while_running(
     {
         return Ok(true);
     }
-    Ok(queue_task_status(item)?.is_some_and(|status| queue_task_status_terminal(&status)))
+    let evidence = collect_queue_status_evidence_for_item(run, item)?;
+    Ok(evidence
+        .task_status
+        .as_deref()
+        .is_some_and(queue_task_status_terminal))
 }
 
 fn queue_item_editable_while_running(
@@ -868,8 +872,13 @@ fn queue_item_editable_while_running(
     if item.position <= run.current_index {
         return Ok(false);
     }
-    Ok(!queue_task_status(item)?.is_some_and(|status| {
-        status == "paused" || queue_task_status_terminal(&status)
+    let evidence = collect_queue_status_evidence_for_item(run, item)?;
+    let reduction = reduce_queue_status(&evidence);
+    if reduction.effective_status == QueueEffectiveStatus::StaleUnknown {
+        return Ok(false);
+    }
+    Ok(!evidence.task_status.as_deref().is_some_and(|status| {
+        status == "paused" || queue_task_status_terminal(status)
     }))
 }
 

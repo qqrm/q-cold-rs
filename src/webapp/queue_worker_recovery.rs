@@ -13,10 +13,17 @@ fn queue_status_auto_recoverable(status: &str) -> bool {
 fn queue_failure_message_auto_recoverable(message: &str) -> bool {
     matches!(
         message,
-        QUEUE_AGENT_EXITED_BEFORE_CLOSEOUT
-            | QUEUE_AGENT_EXITED_BEFORE_TASK_RECORD
-            | QUEUE_AGENT_FAILED_QCOLD_CLOSEOUT
+        QUEUE_AGENT_EXITED_BEFORE_CLOSEOUT | QUEUE_AGENT_FAILED_QCOLD_CLOSEOUT
     )
+}
+
+fn queue_failure_message_launch_recoverable(message: &str) -> bool {
+    message == QUEUE_AGENT_EXITED_BEFORE_TASK_RECORD
+        || message == QUEUE_LOCAL_LAUNCH_FAILED_BEFORE_TASK_RECORD_RELAUNCH_MESSAGE
+        || message == REMOTE_NATIVE_MISSING_RECORD_RELAUNCH_MESSAGE
+        || message.starts_with(
+            "remote-native task record was not visible after remote-agent open",
+        )
 }
 
 fn queue_task_status_terminal(status: &str) -> bool {

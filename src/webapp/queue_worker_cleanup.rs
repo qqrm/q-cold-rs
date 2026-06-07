@@ -313,38 +313,15 @@ fn queue_launch_failure_agent_id(item: &state::QueueItemRow) -> Option<String> {
 fn fail_remote_native_missing_task_record(
     run_id: &str,
     item: &state::QueueItemRow,
-    agent_id: &str,
+    _agent_id: &str,
     attempts: i64,
 ) -> Result<QueueItemOutcome> {
-    let message = "remote-native task record was not visible after remote-agent open";
-    if retry_index(attempts) < WEB_QUEUE_RETRY_DELAYS.len()
-        && item
-            .remote_launcher
-            .as_deref()
-            .is_some_and(|launcher| !launcher.trim().is_empty())
-    {
-        let delay = WEB_QUEUE_RETRY_DELAYS[retry_index(attempts)];
-        let attempts = attempts.saturating_add(1);
-        let next_attempt_at = unix_now().saturating_add(delay);
-        state::schedule_web_queue_item_relaunch(
-            run_id,
-            &item.id,
-            message,
-            attempts,
-            next_attempt_at,
-        )?;
-        return Ok(QueueItemOutcome::RecoveryScheduled);
-    }
-    state::update_web_queue_item(
+    bounded_queue_item_relaunch(
         run_id,
-        &item.id,
-        "failed",
-        message,
-        Some(agent_id),
+        item,
+        "remote-native task record was not visible after remote-agent open",
         attempts,
-        None,
-    )?;
-    Ok(QueueItemOutcome::failed(message))
+    )
 }
 
 fn cleanup_queue_agent(agent_id: &str) -> String {

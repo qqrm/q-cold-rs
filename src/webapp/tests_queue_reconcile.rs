@@ -881,12 +881,10 @@ mod queue_reconcile_tests {
         third.repo_root = Some(repo);
         third.depends_on = vec!["second".to_string()];
         state::replace_web_queue(&run, &[first, second, third]).unwrap();
-
         let (_, stored_items) = state::load_web_queue_run(&run.id).unwrap();
         resume_stale_active_queue_run(&run, stored_items).unwrap();
         let (resumed_run, resumed_items) = state::load_web_queue_run(&run.id).unwrap();
         let resumed_run = resumed_run.unwrap();
-
         assert_eq!(resumed_run.status, "running");
         assert_eq!(
             resumed_items
@@ -904,15 +902,17 @@ mod queue_reconcile_tests {
                 ("first", "success", Some("agent-1"), ""),
                 (
                     "second",
-                    "pending",
+                    "waiting",
                     None,
                     "remote-native task record and session are missing; relaunching item",
                 ),
                 ("third", "pending", None, ""),
             ]
         );
+        let relaunched = resumed_items.iter().find(|item| item.id == "second").unwrap();
+        assert_eq!(relaunched.attempts, 1);
+        assert!(relaunched.next_attempt_at.is_some());
     }
-
     #[test]
     fn remote_native_running_item_skips_local_agent_failure_message() {
         let mut item = queue_item_fixture(

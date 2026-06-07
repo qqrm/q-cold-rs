@@ -1,3 +1,6 @@
+const QUEUE_LOCAL_LAUNCH_FAILED_BEFORE_TASK_RECORD_RELAUNCH_MESSAGE: &str =
+    "local executor exited before opening task record; relaunching item";
+
 fn cleanup_existing_task_agent_artifacts(
     task_id: &str,
     task: Option<&state::TaskRecordRow>,
@@ -149,59 +152,34 @@ fn reconcile_queue_task_statuses(
     let mut changed = false;
     let mut terminal_run: Option<(String, i64, String)> = None;
     for item in items {
-        if let Some(status) = queue_task_status(item)? {
-            if reconcile_queue_task_record_status(
+        let evidence = collect_queue_status_evidence_for_item(run, item)?;
+        let reduction = reduce_queue_status(&evidence);
+        if let Some(status) = evidence.task_status.as_deref() {
+            if execute_queue_status_reduction(
                 run,
                 item,
                 status,
+                &evidence,
+                &reduction,
                 &mut changed,
                 &mut terminal_run,
             )? {
                 continue;
             }
+        } else if let Some(item_changed) =
+            reconcile_queue_item_without_task_record(run, item, &reduction, &mut terminal_run)?
+        {
+            changed |= item_changed;
+            continue;
         }
         if reconcile_remote_native_retry(run, item)? {
             changed = true;
             continue;
         }
-        if item.status.is_failed_or_blocked()
-            && queue_failure_message_auto_recoverable(&item.message)
-            && schedule_queue_item_auto_recovery(&run.id, item, &item.message)?
-        {
-            changed = true;
+        if reduction.handled {
             continue;
         }
-        if let Some(agent_id) = item.agent_id.as_deref() {
-            if let Some(message) = queue_agent_failure_message(item, agent_id) {
-                if schedule_queue_item_auto_recovery(&run.id, item, message)? {
-                    changed = true;
-                    continue;
-                }
-                state::update_web_queue_item(
-                    &run.id,
-                    &item.id,
-                    "failed",
-                    message,
-                    Some(agent_id),
-                    item.attempts,
-                    None,
-                )?;
-                changed = true;
-                terminal_run.get_or_insert((
-                    "failed".into(),
-                    item.position,
-                    message.to_string(),
-                ));
-                continue;
-            }
-        }
-        if item.status.is_success()
-            && item
-                .agent_id
-                .as_deref()
-                .is_some_and(agent_running)
-        {
-            update_successful_queue_item(&run.id, item, item.agent_id.as_deref(), item.attempts)?;
+        if reconcile_queue_item_fallback_status(run, item, &mut terminal_run)? {
             changed = true;
         }
     }
@@ -429,6 +407,105 @@ fn run_web_queue_item(run_id: &str, item: &state::QueueItemRow) -> Result<QueueI
     run_web_queue_item_with_lease(run_id, item, None)
 }
 
+fn queue_item_preflight_outcome_from_reduction(
+    run_id: &str,
+    item: &mut state::QueueItemRow,
+    status: &str,
+    evidence: &QueueStatusEvidence,
+    reduction: &QueueStatusReduction,
+) -> Result<Option<QueueItemOutcome>> {
+    match reduction.allowed_action {
+        QueueAllowedAction::None | QueueAllowedAction::RefreshEvidence => Ok(None),
+        QueueAllowedAction::MarkSuccess => {
+            update_successful_queue_item(run_id, item, item.agent_id.as_deref(), item.attempts)?;
+            Ok(Some(QueueItemOutcome::Success))
+        }
+        QueueAllowedAction::MarkPaused => {
+            if let Some(agent_id) = item.agent_id.as_deref() {
+                return mark_queue_item_paused(run_id, item, agent_id, item.attempts, status)
+                    .map(Some);
+            }
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "paused",
+                status,
+                None,
+                item.attempts,
+                None,
+            )?;
+            state::update_web_queue_run(run_id, "stopped", item.position, status)?;
+            Ok(Some(QueueItemOutcome::Stopped))
+        }
+        QueueAllowedAction::MarkRunning => {
+            let agent_id = evidence
+                .remote_live_agent_id
+                .as_deref()
+                .or(evidence.recovery_live_agent_id.as_deref())
+                .or(item.agent_id.as_deref())
+                .map(str::to_string);
+            let message = queue_status_running_message(item, agent_id.as_deref(), evidence);
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "running",
+                &message,
+                agent_id.as_deref(),
+                item.attempts,
+                None,
+            )?;
+            state::update_web_queue_run(
+                run_id,
+                "running",
+                item.position,
+                queue_status_running_run_message(item, evidence, &message),
+            )?;
+            item.status = state::QueueItemStatus::Running;
+            item.message = message;
+            item.agent_id = agent_id;
+            Ok(None)
+        }
+        QueueAllowedAction::RelaunchRemoteDisconnectedOpenRecord => {
+            relaunch_remote_native_disconnected_item(run_id, item, item.attempts).map(Some)
+        }
+        QueueAllowedAction::RecoverExecution => {
+            if evidence.recovery_live_agent_id.is_some()
+                || evidence.recovery_waiting_on_current_attempt
+            {
+                return Ok(None);
+            }
+            let failure_message = queue_status_recovery_failure_message(status, evidence);
+            fail_or_schedule_queue_item_recovery(
+                run_id,
+                item,
+                failure_message,
+                item.agent_id.as_deref(),
+                item.attempts,
+            )
+            .map(Some)
+        }
+        QueueAllowedAction::MarkFailed => {
+            state::update_web_queue_item(
+                run_id,
+                &item.id,
+                "failed",
+                status,
+                item.agent_id.as_deref(),
+                item.attempts,
+                None,
+            )?;
+            Ok(Some(QueueItemOutcome::failed(status)))
+        }
+        QueueAllowedAction::BoundedRelaunch => bounded_queue_item_relaunch(
+            run_id,
+            item,
+            queue_launch_failed_before_record_message(item),
+            item.attempts,
+        )
+        .map(Some),
+    }
+}
+
 #[allow(clippy::too_many_lines, reason = "existing queue runner split debt")]
 fn run_web_queue_item_with_lease(
     run_id: &str,
@@ -436,34 +513,36 @@ fn run_web_queue_item_with_lease(
     lease: Option<&state::QueueWorkerLease>,
 ) -> Result<QueueItemOutcome> {
     let mut item = item.clone();
-    if let Some(status) = queue_task_status(&item)? {
-        if status == "closed:success" {
-            update_successful_queue_item(run_id, &item, item.agent_id.as_deref(), item.attempts)?;
-            return Ok(QueueItemOutcome::Success);
+    let run_view = status_reducer_run_view(run_id, &item);
+    let evidence = collect_queue_status_evidence_for_item(&run_view, &item)?;
+    let reduction = reduce_queue_status(&evidence);
+    if let Some(status) = evidence.task_status.as_deref() {
+        if let Some(outcome) = queue_item_preflight_outcome_from_reduction(
+            run_id,
+            &mut item,
+            status,
+            &evidence,
+            &reduction,
+        )? {
+            return Ok(outcome);
         }
-        if queue_status_auto_recoverable(&status) && queue_item_recovery_active_or_pending(&item) {
-            // Keep launching or waiting for the one-shot recovery agent; the old failed task
-            // record remains visible until that agent turns it into closed:success.
-        } else if queue_status_auto_recoverable(&status) {
-            return fail_or_schedule_queue_item_recovery(
-                run_id,
-                &item,
-                &status,
-                item.agent_id.as_deref(),
-                item.attempts,
-            );
-        } else if queue_task_status_terminal(&status) {
-            state::update_web_queue_item(
-                run_id,
-                &item.id,
-                "failed",
-                &status,
-                None,
-                item.attempts,
-                None,
-            )?;
-            return Ok(QueueItemOutcome::failed(status));
-        }
+    } else if reduction.allowed_action == QueueAllowedAction::BoundedRelaunch {
+        return bounded_queue_item_relaunch(
+            run_id,
+            &item,
+            queue_launch_failed_before_record_message(&item),
+            item.attempts,
+        );
+    } else if reduction.allowed_action == QueueAllowedAction::RefreshEvidence
+        && item.status.is_starting_or_running()
+    {
+        update_queue_item_status_sync_unavailable_wait(
+            run_id,
+            &item,
+            item.agent_id.as_deref(),
+            item.attempts,
+            reduction.reason,
+        )?;
     }
     if item.status.is_starting_or_running() {
         if let Some(agent_id) = item.agent_id.as_deref() {
@@ -754,147 +833,6 @@ fn queue_display_label(item: &state::QueueItemRow) -> String {
         .as_deref()
         .filter(|name| !name.trim().is_empty())
         .map_or_else(|| item.slug.clone(), |name| format!("{name} {}", item.slug))
-}
-
-fn wait_for_queue_item_closeout(
-    run_id: &str,
-    item: &state::QueueItemRow,
-    agent_id: &str,
-    attempts: i64,
-    lease: Option<&state::QueueWorkerLease>,
-) -> Result<QueueItemOutcome> {
-    loop {
-        if state::web_queue_stop_requested(run_id)? {
-            pause_web_queue_item(run_id, item, Some(agent_id), attempts)?;
-            return Ok(QueueItemOutcome::Stopped);
-        }
-        heartbeat_queue_item_worker_lease(lease)?;
-        thread::sleep(Duration::from_secs(5));
-        crate::sync_codex_task_records().ok();
-        if let Some(status) = queue_task_status(item)? {
-            if let Some(outcome) =
-                queue_item_status_closeout_outcome(run_id, item, agent_id, attempts, status)?
-            {
-                return Ok(outcome);
-            }
-        } else if let Some(outcome) =
-            missing_queue_task_record_outcome(run_id, item, agent_id, attempts)?
-        {
-            return Ok(outcome);
-        }
-    }
-}
-
-fn heartbeat_queue_item_worker_lease(lease: Option<&state::QueueWorkerLease>) -> Result<()> {
-    let Some(lease) = lease else {
-        return Ok(());
-    };
-    if state::heartbeat_web_queue_item_worker_lease(lease, WEB_QUEUE_WORKER_LEASE_TTL_SECS)? {
-        return Ok(());
-    }
-    match state::inspect_web_queue_item_worker_lease(&lease.run_id, &lease.item_id)? {
-        state::QueueWorkerLeaseState::Terminal { .. }
-        | state::QueueWorkerLeaseState::Retryable { .. } => Ok(()),
-        state => bail!(
-            "queue worker lease lost for {}:{} to {:?}",
-            lease.run_id,
-            lease.item_id,
-            state
-        ),
-    }
-}
-
-fn missing_queue_task_record_outcome(
-    run_id: &str,
-    item: &state::QueueItemRow,
-    agent_id: &str,
-    attempts: i64,
-) -> Result<Option<QueueItemOutcome>> {
-    if queue_item_remote_native(item) {
-        if let Some(outcome) = latest_queue_item_terminal_outcome(run_id, &item.id)? {
-            return Ok(Some(outcome));
-        }
-        if remote_native_session_running(item, agent_id) {
-            return update_remote_native_missing_record_wait(run_id, item, agent_id, attempts);
-        }
-        return fail_remote_native_missing_task_record(run_id, item, agent_id, attempts).map(Some);
-    }
-    if agent_running(agent_id) {
-        let _ = submit_agent_terminal_pending_paste(agent_id);
-        return Ok(None);
-    }
-    let message = QUEUE_AGENT_EXITED_BEFORE_TASK_RECORD;
-    fail_or_schedule_queue_item_recovery(run_id, item, message, Some(agent_id), attempts).map(Some)
-}
-
-fn update_remote_native_missing_record_wait(
-    run_id: &str,
-    item: &state::QueueItemRow,
-    agent_id: &str,
-    attempts: i64,
-) -> Result<Option<QueueItemOutcome>> {
-    update_queue_item_unless_terminal(
-        run_id,
-        &item.id,
-        "running",
-        "waiting for remote-native task record visibility after remote-agent open",
-        Some(agent_id),
-        attempts,
-        None,
-    )
-}
-
-fn pause_web_queue_item(
-    run_id: &str,
-    item: &state::QueueItemRow,
-    agent_id: Option<&str>,
-    attempts: i64,
-) -> Result<()> {
-    state::update_web_queue_item(
-        run_id,
-        &item.id,
-        "stopped",
-        "stopped by operator; press Continue to resume",
-        agent_id,
-        attempts,
-        None,
-    )
-}
-
-fn update_successful_queue_item(
-    run_id: &str,
-    item: &state::QueueItemRow,
-    agent_id: Option<&str>,
-    attempts: i64,
-) -> Result<()> {
-    let message = agent_id.map_or_else(
-        || "closed successfully".to_string(),
-        |agent_id| format!("closed successfully; {}", cleanup_queue_executor(item, agent_id)),
-    );
-    state::update_web_queue_item(
-        run_id,
-        &item.id,
-        "success",
-        &message,
-        agent_id,
-        attempts,
-        None,
-    )
-}
-
-fn cleanup_queue_executor(item: &state::QueueItemRow, agent_id: &str) -> String {
-    if !queue_item_remote_native(item) {
-        return cleanup_queue_agent(agent_id);
-    }
-    let repo_root = match queue_item_repo_root(item) {
-        Ok(repo_root) => repo_root,
-        Err(err) => return format!("remote-agent cleanup skipped: {err:#}"),
-    };
-    let session = remote_native_queue_session(agent_id);
-    match run_remote_agent_contract(item, &repo_root, "down", &session, None, None) {
-        Ok(()) => "remote-agent session stopped".to_string(),
-        Err(err) => format!("remote-agent cleanup failed: {err:#}"),
-    }
 }
 
 fn reconcile_stale_web_queue_run() -> Result<()> {
