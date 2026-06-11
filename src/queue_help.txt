@@ -44,8 +44,11 @@ Graph execution is available with `execution_mode: "graph"` and per-item
 are stored as item ids. Queue items are still executed through managed
 task open plus terminal closeout; the queue owns the agent lifecycle.
 Per-item `task_class` values can be `cheap`, `mid`, or `heavy`; omitted values
-default to `mid`. Ready graph items are admitted against live reservations and
-last-hour host resource history. When resources are insufficient, the item stays
+default to `mid`. Local ready graph items are admitted against local live
+reservations and last-hour local host resource history. Remote-native ready
+items are admitted in separate remote-launcher scopes by probing remote CPU,
+load, and memory through that launcher, so local controller memory does not
+block remote-native heavy items. When resources are insufficient, the item stays
 waiting with an admission reason and next retry time.
 
 If a managed queue task reaches `closed:failed`, lands in `failed-closeout`, its

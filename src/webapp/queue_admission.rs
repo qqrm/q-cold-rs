@@ -3,6 +3,7 @@ const QUEUE_ADMISSION_RETRY_SECONDS: u64 = 60;
 const QUEUE_ADMISSION_DEFAULT_SOFT_TASKS: usize = 8;
 const QUEUE_ADMISSION_DEFAULT_HARD_TASKS: usize = 12;
 const QUEUE_ADMISSION_DEFAULT_HEAVY_TASKS: usize = 2;
+const QUEUE_ADMISSION_REMOTE_RESOURCE_TIMEOUT: &str = "15s";
 const BYTES_PER_GIB: u64 = 1024 * 1024 * 1024;
 const MIN_MEMORY_SAFETY_FLOOR_GIB: u64 = 2;
 const MAX_MEMORY_SAFETY_FLOOR_GIB: u64 = 8;
@@ -207,6 +208,29 @@ struct QueueAdmissionPlan {
     waiting: Vec<(state::QueueItemRow, QueueAdmissionWait)>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum QueueAdmissionScope {
+    Local,
+    RemoteNative { launcher: String },
+    RemoteNativeMissingLauncher,
+}
+
+impl QueueAdmissionScope {
+    fn for_item(item: &state::QueueItemRow) -> Self {
+        if item.execution_host.is_remote_native() {
+            return item
+                .remote_launcher
+                .as_deref()
+                .map(str::trim)
+                .filter(|launcher| !launcher.is_empty())
+                .map_or(Self::RemoteNativeMissingLauncher, |launcher| Self::RemoteNative {
+                    launcher: launcher.to_string(),
+                });
+        }
+        Self::Local
+    }
+}
+
 fn select_queue_admission(
     ready: Vec<state::QueueItemRow>,
     mut context: QueueAdmissionContext,
@@ -353,31 +377,52 @@ fn load_threshold_milli(logical_cpus: usize, per_cpu_milli: u64) -> u64 {
         .saturating_mul(per_cpu_milli)
 }
 
-fn queue_resource_reservations(items: &[state::QueueItemRow]) -> QueueResourceReservation {
+fn queue_resource_reservations_for_scope(
+    items: &[state::QueueItemRow],
+    scope: &QueueAdmissionScope,
+) -> QueueResourceReservation {
     let mut reservations = QueueResourceReservation::default();
     for item in items {
-        if item.status.has_executor_session() || queue_item_worker_active(&item.run_id, &item.id) {
+        if &QueueAdmissionScope::for_item(item) == scope
+            && (item.status.has_executor_session()
+                || queue_item_worker_active(&item.run_id, &item.id))
+        {
             reservations.reserve(item.task_class);
         }
     }
     reservations
 }
 
-fn queue_admission_context() -> Result<QueueAdmissionContext> {
+fn queue_admission_context(
+    scope: &QueueAdmissionScope,
+    items: &[state::QueueItemRow],
+) -> Result<QueueAdmissionContext> {
     let policy = QueueAdmissionPolicy::from_env();
     let now = unix_now();
-    let items = state::load_web_queue_items()?;
-    let reservations = queue_resource_reservations(&items);
-    let host = QueueAdmissionHostResources::from_node_snapshot(&crate::node_agent::collect_snapshot());
+    let reservations = queue_resource_reservations_for_scope(items, scope);
+    let host = match scope {
+        QueueAdmissionScope::Local => {
+            QueueAdmissionHostResources::from_node_snapshot(&crate::node_agent::collect_snapshot())
+        }
+        QueueAdmissionScope::RemoteNative { launcher } => remote_admission_host_resources(launcher)?,
+        QueueAdmissionScope::RemoteNativeMissingLauncher => {
+            bail!("remote-native queue item requires remote_launcher or selected_remote_launcher")
+        }
+    };
     let retain_since = now.saturating_sub(policy.history_seconds);
-    state::record_queue_resource_sample(&host.to_sample(now, reservations), retain_since)?;
-    let samples = state::load_queue_resource_samples_since(retain_since)?;
+    let history = if matches!(scope, QueueAdmissionScope::Local) {
+        state::record_queue_resource_sample(&host.to_sample(now, reservations), retain_since)?;
+        let samples = state::load_queue_resource_samples_since(retain_since)?;
+        QueueAdmissionHistory::from_samples(&samples)
+    } else {
+        QueueAdmissionHistory::default()
+    };
     Ok(QueueAdmissionContext {
         policy,
         now,
         reservations,
         host,
-        history: QueueAdmissionHistory::from_samples(&samples),
+        history,
     })
 }
 
@@ -385,9 +430,49 @@ fn apply_queue_admission(ready: Vec<state::QueueItemRow>) -> Result<QueueAdmissi
     if ready.is_empty() {
         return Ok(QueueAdmissionPlan::default());
     }
-    let context = queue_admission_context()?;
-    let plan = select_queue_admission(ready, context);
-    for (item, wait) in &plan.waiting {
+    let all_items = state::load_web_queue_items()?;
+    let mut ready_by_scope: BTreeMap<QueueAdmissionScope, Vec<state::QueueItemRow>> =
+        BTreeMap::new();
+    for item in ready {
+        ready_by_scope
+            .entry(QueueAdmissionScope::for_item(&item))
+            .or_default()
+            .push(item);
+    }
+    let mut plan = QueueAdmissionPlan::default();
+    for (scope, items) in ready_by_scope {
+        match queue_admission_context(&scope, &all_items) {
+            Ok(context) => {
+                let scope_plan = select_queue_admission(items, context);
+                plan.admitted.extend(scope_plan.admitted);
+                plan.waiting.extend(scope_plan.waiting);
+            }
+            Err(err)
+                if matches!(
+                    scope,
+                    QueueAdmissionScope::RemoteNative { .. }
+                        | QueueAdmissionScope::RemoteNativeMissingLauncher
+                ) =>
+            {
+                let wait = QueueAdmissionWait {
+                    reason: format!("remote resource sample unavailable: {err:#}"),
+                    next_retry_at: unix_now()
+                        .saturating_add(QueueAdmissionPolicy::from_env().retry_seconds),
+                };
+                plan.waiting
+                    .extend(items.into_iter().map(|item| (item, wait.clone())));
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    update_queue_admission_waiting(&plan.waiting)?;
+    Ok(plan)
+}
+
+fn update_queue_admission_waiting(
+    waiting: &[(state::QueueItemRow, QueueAdmissionWait)],
+) -> Result<()> {
+    for (item, wait) in waiting {
         let message = format!(
             "admission waiting: {}; retry_at={}",
             wait.reason, wait.next_retry_at
@@ -402,7 +487,93 @@ fn apply_queue_admission(ready: Vec<state::QueueItemRow>) -> Result<QueueAdmissi
             Some(wait.next_retry_at),
         )?;
     }
-    Ok(plan)
+    Ok(())
+}
+
+fn remote_admission_host_resources(launcher: &str) -> Result<QueueAdmissionHostResources> {
+    let script = concat!(
+        "printf 'cpus=%s\\n' ",
+        "\"$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)\"; ",
+        "awk '/^MemTotal:/ {print \"mem_total_kib=\"$2} ",
+        "/^MemAvailable:/ {print \"mem_available_kib=\"$2}' /proc/meminfo; ",
+        "awk '{print \"load_one=\"$1}' /proc/loadavg",
+    );
+    let output = Command::new("timeout")
+        .arg(QUEUE_ADMISSION_REMOTE_RESOURCE_TIMEOUT)
+        .arg(launcher)
+        .arg("sh")
+        .arg("-lc")
+        .arg(script)
+        .output()
+        .with_context(|| format!("failed to collect remote admission resources through {launcher}"))?;
+    if !output.status.success() {
+        bail!(
+            "remote admission resource command through {launcher} failed: {}",
+            compact_remote_admission_output(&output.stdout, &output.stderr)
+        );
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_remote_admission_resources(&stdout)
+        .with_context(|| format!("failed to parse remote admission resources from {launcher}"))
+}
+
+fn parse_remote_admission_resources(output: &str) -> Result<QueueAdmissionHostResources> {
+    let mut logical_cpus = None;
+    let mut load_one = None;
+    let mut memory_total_bytes = None;
+    let mut memory_available_bytes = None;
+
+    for line in output.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim();
+        match key.trim() {
+            "cpus" => {
+                logical_cpus = value.parse::<usize>().ok().filter(|cpus| *cpus > 0);
+            }
+            "load_one" => {
+                load_one = value.parse::<f64>().ok();
+            }
+            "mem_total_kib" => {
+                memory_total_bytes = value
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|kib| kib.checked_mul(1024));
+            }
+            "mem_available_kib" => {
+                memory_available_bytes = value
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|kib| kib.checked_mul(1024));
+            }
+            _ => {}
+        }
+    }
+
+    Ok(QueueAdmissionHostResources {
+        logical_cpus: logical_cpus.context("missing logical CPU count")?,
+        load_one,
+        memory_total_bytes: Some(memory_total_bytes.context("missing MemTotal")?),
+        memory_available_bytes: Some(memory_available_bytes.context("missing MemAvailable")?),
+    })
+}
+
+fn compact_remote_admission_output(stdout: &[u8], stderr: &[u8]) -> String {
+    let stdout = String::from_utf8_lossy(stdout);
+    let stderr = String::from_utf8_lossy(stderr);
+    let detail = format!("stdout={} stderr={}", stdout.trim(), stderr.trim());
+    if detail.len() > QUEUE_PROCESS_OUTPUT_LIMIT {
+        let end = detail
+            .char_indices()
+            .map(|(index, _)| index)
+            .take_while(|index| *index <= QUEUE_PROCESS_OUTPUT_LIMIT)
+            .last()
+            .unwrap_or(0);
+        format!("{}...", &detail[..end])
+    } else {
+        detail
+    }
 }
 
 fn env_usize(name: &str) -> Option<usize> {
@@ -543,6 +714,91 @@ mod queue_admission_tests {
             }),
             8 * BYTES_PER_GIB
         );
+    }
+
+    #[test]
+    fn admission_scope_keys_remote_items_by_launcher() {
+        let mut local = queue_item("local", state::QueueTaskClass::Mid);
+        let mut remote_a = queue_item("remote-a", state::QueueTaskClass::Heavy);
+        remote_a.execution_host = state::QueueExecutionHost::RemoteNative;
+        remote_a.remote_launcher = Some(" remote-dev-env ".to_string());
+        let mut remote_b = queue_item("remote-b", state::QueueTaskClass::Heavy);
+        remote_b.execution_host = state::QueueExecutionHost::RemoteNative;
+        remote_b.remote_launcher = Some("other-remote".to_string());
+        let mut remote_missing = queue_item("remote-missing", state::QueueTaskClass::Heavy);
+        remote_missing.execution_host = state::QueueExecutionHost::RemoteNative;
+        local.remote_launcher = Some("ignored-for-local".to_string());
+
+        assert_eq!(QueueAdmissionScope::for_item(&local), QueueAdmissionScope::Local);
+        assert_eq!(
+            QueueAdmissionScope::for_item(&remote_a),
+            QueueAdmissionScope::RemoteNative {
+                launcher: "remote-dev-env".to_string()
+            }
+        );
+        assert_eq!(
+            QueueAdmissionScope::for_item(&remote_b),
+            QueueAdmissionScope::RemoteNative {
+                launcher: "other-remote".to_string()
+            }
+        );
+        assert_eq!(
+            QueueAdmissionScope::for_item(&remote_missing),
+            QueueAdmissionScope::RemoteNativeMissingLauncher
+        );
+    }
+
+    #[test]
+    fn admission_reservations_are_scoped_by_execution_host() {
+        let mut local = queue_item("local", state::QueueTaskClass::Heavy);
+        local.status = state::QueueItemStatus::Running;
+        let mut remote_a = queue_item("remote-a", state::QueueTaskClass::Heavy);
+        remote_a.status = state::QueueItemStatus::Running;
+        remote_a.execution_host = state::QueueExecutionHost::RemoteNative;
+        remote_a.remote_launcher = Some("remote-dev-env".to_string());
+        let mut remote_b = queue_item("remote-b", state::QueueTaskClass::Heavy);
+        remote_b.status = state::QueueItemStatus::Running;
+        remote_b.execution_host = state::QueueExecutionHost::RemoteNative;
+        remote_b.remote_launcher = Some("other-remote".to_string());
+        let items = vec![local, remote_a, remote_b];
+
+        assert_eq!(
+            queue_resource_reservations_for_scope(&items, &QueueAdmissionScope::Local).heavy_tasks,
+            1
+        );
+        assert_eq!(
+            queue_resource_reservations_for_scope(
+                &items,
+                &QueueAdmissionScope::RemoteNative {
+                    launcher: "remote-dev-env".to_string()
+                }
+            )
+            .heavy_tasks,
+            1
+        );
+        assert_eq!(
+            queue_resource_reservations_for_scope(
+                &items,
+                &QueueAdmissionScope::RemoteNative {
+                    launcher: "other-remote".to_string()
+                }
+            )
+            .heavy_tasks,
+            1
+        );
+    }
+
+    #[test]
+    fn admission_parses_remote_resource_snapshot() {
+        let host = parse_remote_admission_resources(
+            "cpus=32\nmem_total_kib=126877696\nmem_available_kib=89128960\nload_one=3.25\n",
+        )
+        .unwrap();
+
+        assert_eq!(host.logical_cpus, 32);
+        assert_eq!(host.load_one, Some(3.25));
+        assert_eq!(host.memory_total_bytes, Some(126877696 * 1024));
+        assert_eq!(host.memory_available_bytes, Some(89128960 * 1024));
     }
 
     fn admission_context(

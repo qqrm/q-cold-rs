@@ -116,8 +116,11 @@ launching executor work, so a restarted daemon can distinguish active ownership
 from expired ownership and retry bounded stale work without relying only on
 process-local thread state.
 Queue items also carry a task class: `cheap`, `mid`, or `heavy`; omitted class
-fields default to `mid`. Graph scheduling admits ready items against live queue
-reservations plus the last hour of local host resource samples. The default
+fields default to `mid`. Graph scheduling admits local ready items against
+local live reservations plus the last hour of local host resource samples.
+Remote-native ready items are admitted in separate scopes keyed by their remote
+launcher, and Q-COLD probes remote CPU, load, and memory through that launcher,
+so local controller memory does not block remote-native heavy items. The default
 8-core / 128 GiB policy has soft max 8 tasks, hard max 12 tasks, and heavy max
 2 tasks. Items that cannot be admitted stay `waiting` with an admission reason
 and `next_attempt_at` retry time.
