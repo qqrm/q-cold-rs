@@ -6,7 +6,7 @@ mod queue_remote_sync_tests {
 
     use super::*;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     #[cfg(unix)]
     #[test]
@@ -81,6 +81,51 @@ mod queue_remote_sync_tests {
         assert_eq!(lines.len(), 2);
         assert!(!lines[0].contains("--legacy-remote-qcold"));
         assert!(lines[1].contains("--legacy-remote-qcold"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_task_record_sync_uses_outer_timeout_wrapper() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let timeout_log = install_fake_timeout_logger(temp.path());
+        let qcold_log = temp.path().join("qcold.log");
+        let qcold = fake_qcold_sync_logger(temp.path(), &qcold_log, 0);
+
+        run_remote_queue_task_record_sync(&qcold, &repo, "remote-dev-env", false).unwrap();
+
+        let timeout_log = fs::read_to_string(timeout_log).unwrap();
+        assert!(timeout_log.contains("--kill-after 5s 30s"), "{timeout_log}");
+        assert!(timeout_log.contains(qcold.to_str().unwrap()), "{timeout_log}");
+        assert!(timeout_log.contains("task-record sync-remote --via remote-dev-env"));
+        let qcold_log = fs::read_to_string(qcold_log).unwrap();
+        assert!(qcold_log.contains(&format!("PWD={}", repo.display())), "{qcold_log}");
+        assert!(
+            qcold_log.contains(&format!("QCOLD_REPO_ROOT={}", repo.display())),
+            "{qcold_log}"
+        );
+        assert!(qcold_log.contains("ARGS=task-record sync-remote --via remote-dev-env"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_task_record_sync_timeout_env_changes_outer_wrapper_duration() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS", "7");
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let timeout_log = install_fake_timeout_logger(temp.path());
+        let qcold_log = temp.path().join("qcold.log");
+        let qcold = fake_qcold_sync_logger(temp.path(), &qcold_log, 0);
+
+        run_remote_queue_task_record_sync(&qcold, &repo, "remote-dev-env", true).unwrap();
+
+        let timeout_log = fs::read_to_string(timeout_log).unwrap();
+        assert!(timeout_log.contains("--kill-after 5s 7s"), "{timeout_log}");
+        assert!(timeout_log.contains("--legacy-remote-qcold"), "{timeout_log}");
     }
 
     #[test]
@@ -620,6 +665,47 @@ mod queue_remote_sync_tests {
     #[cfg(unix)]
     fn shell_quote(path: &Path) -> String {
         format!("'{}'", path.to_string_lossy().replace('\'', "'\\''"))
+    }
+
+    #[cfg(unix)]
+    fn install_fake_timeout_logger(temp: &Path) -> PathBuf {
+        let bin = temp.join("timeout-bin");
+        fs::create_dir(&bin).unwrap();
+        let log = temp.join("timeout.log");
+        let timeout = bin.join("timeout");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf '%s\n' \"$*\" >> {}\n\
+             if [ \"$1\" = '--kill-after' ]; then\n\
+             shift 3\n\
+             else\n\
+             shift\n\
+             fi\n\
+             exec \"$@\"\n",
+            shell_quote(&log)
+        );
+        fs::write(&timeout, script).unwrap();
+        make_executable(&timeout);
+
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let mut paths = vec![bin];
+        paths.extend(std::env::split_paths(&path));
+        std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
+        log
+    }
+
+    #[cfg(unix)]
+    fn fake_qcold_sync_logger(temp: &Path, log: &Path, exit_code: i32) -> PathBuf {
+        let qcold = temp.join("qcold");
+        let script = format!(
+            "#!/bin/sh\n\
+             printf 'PWD=%s QCOLD_REPO_ROOT=%s ARGS=%s\n' \"$PWD\" \"$QCOLD_REPO_ROOT\" \"$*\" >> {}\n\
+             exit {exit_code}\n",
+            shell_quote(log)
+        );
+        fs::write(&qcold, script).unwrap();
+        make_executable(&qcold);
+        qcold
     }
 
     fn queue_run(id: &str, repo: &Path) -> state::QueueRunRow {

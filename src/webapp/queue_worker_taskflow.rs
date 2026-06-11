@@ -1,4 +1,7 @@
 const QUEUE_PROCESS_OUTPUT_LIMIT: usize = 1200;
+const REMOTE_TASK_RECORD_SYNC_TIMEOUT_ENV: &str = "QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS";
+const DEFAULT_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS: u64 = 30;
+const REMOTE_TASK_RECORD_SYNC_KILL_AFTER_SECONDS: u64 = 5;
 
 struct QueueLaunchWorkspace {
     worktree: PathBuf,
@@ -729,10 +732,16 @@ fn run_remote_queue_task_record_sync(
     legacy_remote_qcold: bool,
 ) -> Result<()> {
     let repo_root_arg = repo_root.display().to_string();
-    let mut command = Command::new(executable);
+    let timeout_seconds = format!("{}s", remote_queue_task_record_sync_timeout_seconds());
+    let kill_after = format!("{REMOTE_TASK_RECORD_SYNC_KILL_AFTER_SECONDS}s");
+    let mut command = Command::new("timeout");
     command
         .current_dir(repo_root)
         .env("QCOLD_REPO_ROOT", repo_root)
+        .arg("--kill-after")
+        .arg(kill_after)
+        .arg(timeout_seconds)
+        .arg(executable)
         .args([
             "task-record",
             "sync-remote",
@@ -757,6 +766,14 @@ fn run_remote_queue_task_record_sync(
         );
     }
     Ok(())
+}
+
+fn remote_queue_task_record_sync_timeout_seconds() -> u64 {
+    env::var(REMOTE_TASK_RECORD_SYNC_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(DEFAULT_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS)
 }
 
 fn remote_queue_sync_due(item: &state::QueueItemRow, launcher: &str, required: bool) -> bool {
