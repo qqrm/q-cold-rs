@@ -241,8 +241,10 @@ Advanced maintenance commands such as task-record CRUD, bundles, output guard,
 adapter pass-through lanes, named-session cleanup, and stale-agent pruning remain
 available for compatibility but are intentionally hidden from default help.
 Source bundle commands require a clean checkout and fast-forward from the
-configured upstream, when one exists, before archiving. Terminal closeout
-bundles preserve task evidence as-is and do not run a pre-bundle sync.
+configured upstream, when one exists, before archiving. Source ZIPs include
+materialized recursive submodule contents, such as Vitastor's Oracle checkout
+and its nested dependencies. Terminal closeout bundles preserve task evidence
+as-is and do not run a pre-bundle sync.
 
 ## Validation
 

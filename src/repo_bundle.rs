@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -28,25 +29,186 @@ fn create_source_bundle(root: &Path) -> Result<Bundle> {
     let summary_path = format!("{prefix}summary.md");
     let summary = summary_content(&repo, &archive, &manifest_path);
 
-    let status = Command::new("git")
-        .current_dir(&repo.root)
-        .args([
-            "archive",
-            "--format=zip",
-            &format!("--prefix={prefix}"),
-            &format!("--add-virtual-file={manifest_path}:{manifest}"),
-            &format!("--add-virtual-file={summary_path}:{summary}"),
-            "-o",
-        ])
-        .arg(&archive)
-        .arg("HEAD")
-        .status()
-        .context("failed to run git archive")?;
-    if !status.success() {
-        bail!("git archive failed with status {status}");
-    }
+    let staging = unique_bundle_staging("qcold-source-bundle");
+    fs::create_dir_all(&staging)
+        .with_context(|| format!("failed to create {}", staging.display()))?;
+
+    let result = (|| {
+        archive_head_to_stage(
+            &repo.root,
+            &staging,
+            &prefix,
+            &[
+                (&manifest_path, manifest.as_str()),
+                (&summary_path, summary.as_str()),
+            ],
+        )?;
+
+        for submodule in materialized_submodule_paths(&repo.root)? {
+            let submodule_root = repo.root.join(&submodule);
+            let submodule_prefix = format!("{}{}/", prefix, path_for_archive(&submodule));
+            archive_head_to_stage(&submodule_root, &staging, &submodule_prefix, &[])?;
+        }
+
+        if archive.exists() {
+            fs::remove_file(&archive)
+                .with_context(|| format!("failed to replace {}", archive.display()))?;
+        }
+        zip_stage(&staging, &archive)
+    })();
+
+    fs::remove_dir_all(&staging).ok();
+    result?;
 
     Ok(Bundle { path: archive })
+}
+
+fn archive_head_to_stage(
+    root: &Path,
+    staging: &Path,
+    prefix: &str,
+    virtual_files: &[(&str, &str)],
+) -> Result<()> {
+    let tar_path = unique_bundle_staging("qcold-source-bundle-tar").with_extension("tar");
+    let result = (|| {
+        let mut command = Command::new("git");
+        command
+            .current_dir(root)
+            .args([
+                "archive",
+                "--format=tar",
+                &format!("--prefix={prefix}"),
+                "-o",
+            ])
+            .arg(&tar_path);
+        for (path, content) in virtual_files {
+            command.arg(format!("--add-virtual-file={path}:{content}"));
+        }
+        command.arg("HEAD");
+
+        let status = command
+            .status()
+            .with_context(|| format!("failed to archive {}", root.display()))?;
+        if !status.success() {
+            bail!("git archive failed with status {status}");
+        }
+
+        let status = Command::new("tar")
+            .args(["-xf"])
+            .arg(&tar_path)
+            .args(["-C"])
+            .arg(staging)
+            .status()
+            .with_context(|| format!("failed to extract {}", tar_path.display()))?;
+        if !status.success() {
+            bail!("tar extract failed with status {status}");
+        }
+        Ok(())
+    })();
+    fs::remove_file(&tar_path).ok();
+    result
+}
+
+fn zip_stage(staging: &Path, archive: &Path) -> Result<()> {
+    let status = Command::new("7z")
+        .current_dir(staging)
+        .args(["a", "-tzip", "-snl"])
+        .arg(archive)
+        .arg(".")
+        .status()
+        .with_context(|| format!("failed to create {}", archive.display()))?;
+    if !status.success() {
+        bail!("7z failed to create source bundle with status {status}");
+    }
+    Ok(())
+}
+
+fn materialized_submodule_paths(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    collect_materialized_submodules(root, Path::new(""), &mut paths)?;
+    Ok(paths)
+}
+
+fn collect_materialized_submodules(
+    repo: &Path,
+    base: &Path,
+    paths: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for submodule in configured_submodule_paths(repo)? {
+        let relative = base.join(&submodule);
+        let absolute = repo.join(&submodule);
+        if !is_materialized_submodule(&absolute) {
+            continue;
+        }
+        paths.push(relative.clone());
+        collect_materialized_submodules(&absolute, &relative, paths)?;
+    }
+    Ok(())
+}
+
+fn configured_submodule_paths(repo: &Path) -> Result<Vec<PathBuf>> {
+    if !repo.join(".gitmodules").is_file() {
+        return Ok(Vec::new());
+    }
+    let Some(output) = git_output_optional(
+        Some(repo),
+        &["config", "--file", ".gitmodules", "--get-regexp", "path$"],
+    )?
+    .filter(|output| !output.is_empty()) else {
+        return Ok(Vec::new());
+    };
+
+    let mut paths = Vec::new();
+    for line in output.lines() {
+        let Some((_, path)) = line.split_once(' ') else {
+            bail!(
+                "malformed submodule path line in {}: {line}",
+                repo.display()
+            );
+        };
+        paths.push(validate_relative_path(path)?);
+    }
+    Ok(paths)
+}
+
+fn validate_relative_path(path: &str) -> Result<PathBuf> {
+    let value = PathBuf::from(path);
+    if value.is_absolute()
+        || value.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::Prefix(_) | Component::RootDir
+            )
+        })
+    {
+        bail!("unsupported submodule path outside repository: {path}");
+    }
+    Ok(value)
+}
+
+fn is_materialized_submodule(path: &Path) -> bool {
+    if !path.is_dir() {
+        return false;
+    }
+    path.join(".git").exists()
+        || fs::read_dir(path).is_ok_and(|mut entries| entries.next().is_some())
+}
+
+fn path_for_archive(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => value.to_str(),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn unique_bundle_staging(prefix: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    std::env::temp_dir().join(format!("{prefix}-{}-{nanos}", std::process::id()))
 }
 
 fn sync_clean_checkout_to_upstream(root: &Path) -> Result<()> {
@@ -288,6 +450,68 @@ mod tests {
         assert!(unzip_stdout(&bundle.path, "remote.txt").contains("remote"));
     }
 
+    #[test]
+    fn source_bundle_includes_materialized_recursive_submodules() {
+        let temp = tempdir().unwrap();
+        let nested_remote = seed_repo_with_file(temp.path(), "json11", "README.md", "json11\n");
+
+        let parent_remote = temp.path().join("vitalif-vitastor.git");
+        let parent = temp.path().join("vitalif-vitastor-work");
+        git_init_bare(&parent_remote);
+        git_clone(&parent_remote, &parent);
+        configure_identity(&parent);
+        git(
+            &parent,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                nested_remote.to_str().unwrap(),
+                "json11",
+            ],
+        );
+        fs::write(parent.join("oracle.txt"), "oracle\n").unwrap();
+        git(&parent, &["add", "oracle.txt"]);
+        git(&parent, &["commit", "-m", "add nested dependency"]);
+        git(&parent, &["push", "-u", "origin", "main"]);
+
+        let root = seed_tracking_repo(temp.path());
+        git(
+            &root,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                parent_remote.to_str().unwrap(),
+                "legacy/vitalif-vitastor",
+            ],
+        );
+        git(
+            &root,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--init",
+                "--recursive",
+            ],
+        );
+        git(&root, &["commit", "-m", "add oracle submodule"]);
+
+        let bundle = create_source_bundle(&root).unwrap();
+
+        assert!(
+            unzip_stdout(&bundle.path, "legacy/vitalif-vitastor/oracle.txt").contains("oracle")
+        );
+        assert!(
+            unzip_stdout(&bundle.path, "legacy/vitalif-vitastor/json11/README.md",)
+                .contains("json11")
+        );
+    }
+
     fn seed_tracking_repo(temp: &Path) -> PathBuf {
         let remote = temp.join("remote.git");
         let root = temp.join("repo");
@@ -299,6 +523,19 @@ mod tests {
         git(&root, &["commit", "-m", "seed"]);
         git(&root, &["push", "-u", "origin", "main"]);
         root
+    }
+
+    fn seed_repo_with_file(temp: &Path, name: &str, file: &str, content: &str) -> PathBuf {
+        let remote = temp.join(format!("{name}.git"));
+        let work = temp.join(format!("{name}-work"));
+        git_init_bare(&remote);
+        git_clone(&remote, &work);
+        configure_identity(&work);
+        fs::write(work.join(file), content).unwrap();
+        git(&work, &["add", file]);
+        git(&work, &["commit", "-m", "seed"]);
+        git(&work, &["push", "-u", "origin", "main"]);
+        remote
     }
 
     fn git_init_bare(path: &Path) {
