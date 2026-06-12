@@ -163,6 +163,17 @@ fn help_mentions_console_queue_flow() {
 }
 
 #[test]
+fn queue_http_timeout_uses_bounded_env_override() {
+    let _guard = crate::test_support::env_guard();
+
+    assert_eq!(queue_http_timeout(), std::time::Duration::from_secs(60));
+    std::env::set_var("QCOLD_QUEUE_API_TIMEOUT_SECONDS", "120");
+    assert_eq!(queue_http_timeout(), std::time::Duration::from_secs(120));
+    std::env::set_var("QCOLD_QUEUE_API_TIMEOUT_SECONDS", "0");
+    assert_eq!(queue_http_timeout(), std::time::Duration::from_secs(60));
+}
+
+#[test]
 fn queue_list_hides_inactive_empty_tabs() {
     let tab = queue_tab_fixture("empty", false, None);
 

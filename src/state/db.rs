@@ -825,7 +825,7 @@ pub(super) fn task_record_sequence_for_upsert(
     let existing_sequence =
         existing.and_then(|row| (!repo_root_changed).then_some(row.sequence).flatten());
     match (record.sequence, existing_sequence, repo_root) {
-        (Some(sequence), _, _) | (_, Some(sequence), _) => Ok(Some(sequence)),
+        (_, Some(sequence), _) | (Some(sequence), _, _) => Ok(Some(sequence)),
         (None, None, Some(repo_root)) if !repo_root.trim().is_empty() => {
             allocate_task_sequence(connection, repo_root).map(Some)
         }

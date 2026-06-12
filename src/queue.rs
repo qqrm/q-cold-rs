@@ -18,6 +18,8 @@ use crate::{agents, repository, state, webapp};
 mod tests;
 
 const DEFAULT_LISTEN: &str = "127.0.0.1:8787";
+const QUEUE_HTTP_TIMEOUT_ENV: &str = "QCOLD_QUEUE_API_TIMEOUT_SECONDS";
+const QUEUE_HTTP_DEFAULT_TIMEOUT_SECS: u64 = 60;
 const MAX_PROMPT_PACKAGE_FILES: usize = 200;
 const QUEUE_HELP: &str = include_str!("queue_help.txt");
 
@@ -567,13 +569,24 @@ impl From<QueuePackageItem> for QueueRunItemRequest {
     }
 }
 
+fn queue_http_timeout() -> Duration {
+    std::env::var(QUEUE_HTTP_TIMEOUT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map_or_else(
+            || Duration::from_secs(QUEUE_HTTP_DEFAULT_TIMEOUT_SECS),
+            Duration::from_secs,
+        )
+}
+
 impl QueueHttpClient {
     fn from_args(args: &QueueClientArgs) -> Self {
         Self {
             listen: args.listen.clone(),
             auto_start: !args.no_start_daemon,
             agent: ureq::AgentBuilder::new()
-                .timeout(Duration::from_secs(5))
+                .timeout(queue_http_timeout())
                 .build(),
         }
     }

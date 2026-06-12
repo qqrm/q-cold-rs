@@ -145,7 +145,12 @@ remote-native record without a live remote-agent session is relaunched through
 the bounded remote-native retry path.
 Remote task-record sync is bounded by
 `QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS`, defaulting to 30 seconds, so a
-stale remote launcher cannot freeze queue reconciliation.
+stale remote launcher cannot freeze queue reconciliation. Queue CLI API calls
+use `QCOLD_QUEUE_API_TIMEOUT_SECONDS`, defaulting to 60 seconds, so remote-native
+failed-run reconciliation can finish before the client gives up. Queue-worker
+remote sync reads up to `QCOLD_QUEUE_REMOTE_TASK_RECORD_SYNC_LIMIT` records per
+sync, defaulting to 200; lower it for large remote task-record stores when the
+active queue only needs recent remote task records.
 The dashboard daemon periodically reconciles queue rows against task records
 once per minute by default. Set `QCOLD_WEB_QUEUE_STATUS_SYNC_INTERVAL_SECONDS`
 to tune that interval.

@@ -563,7 +563,9 @@ fn canonical_remote_task_record(
     );
     metadata.insert("remote_synced_at".to_string(), Value::from(unix_now()));
     record.metadata_json = Some(Value::Object(metadata).to_string());
-    record.sequence = existing.and_then(|record| record.sequence);
+    record.sequence = existing
+        .filter(|record| record.repo_root.as_deref() == Some(local_repo_root))
+        .and_then(|record| record.sequence);
     record
 }
 

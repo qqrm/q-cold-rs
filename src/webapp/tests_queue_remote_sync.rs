@@ -40,6 +40,7 @@ mod queue_remote_sync_tests {
             .collect::<Vec<_>>();
         assert_eq!(lines.len(), 1);
         assert!(lines[0].contains("task-record sync-remote --via remote-dev-env"));
+        assert!(lines[0].contains("--limit 200"));
         assert!(!lines[0].contains("--legacy-remote-qcold"));
     }
 
@@ -79,7 +80,9 @@ mod queue_remote_sync_tests {
             .map(str::to_string)
             .collect::<Vec<_>>();
         assert_eq!(lines.len(), 2);
+        assert!(lines[0].contains("--limit 200"));
         assert!(!lines[0].contains("--legacy-remote-qcold"));
+        assert!(lines[1].contains("--limit 200"));
         assert!(lines[1].contains("--legacy-remote-qcold"));
     }
 
@@ -127,6 +130,37 @@ mod queue_remote_sync_tests {
         assert!(timeout_log.contains("--kill-after 5s 7s"), "{timeout_log}");
         assert!(timeout_log.contains("--legacy-remote-qcold"), "{timeout_log}");
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_native_sync_limit_can_be_lowered_by_env() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        std::env::set_var("QCOLD_QUEUE_REMOTE_TASK_RECORD_SYNC_LIMIT", "20");
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let log = temp.path().join("sync.log");
+        let qcold = temp.path().join("qcold");
+        fs::write(
+            &qcold,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> {}\n",
+                shell_quote(&log)
+            ),
+        )
+        .unwrap();
+        make_executable(&qcold);
+        let mut item = queue_item("task-remote-sync-limit", &repo);
+        item.execution_host = "remote-native".into();
+        item.status = "running".into();
+
+        sync_remote_queue_task_records_with_executable(&item, true, &qcold).unwrap();
+
+        let output = fs::read_to_string(log).unwrap();
+        assert!(output.contains("--limit 20"));
+    }
+
 
     #[test]
     fn pending_remote_native_without_record_skips_optional_remote_sync() {
@@ -246,6 +280,48 @@ mod queue_remote_sync_tests {
             REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
         );
         assert_eq!(relaunched.agent_id.as_deref(), None);
+    }
+
+    #[test]
+    fn failed_remote_native_sync_row_with_open_record_relaunches_on_continue() {
+        let _guard = test_support::env_guard();
+        let temp = tempfile::tempdir().unwrap();
+        std::env::set_var("QCOLD_STATE_DIR", temp.path().join("state"));
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo).unwrap();
+        let mut run = queue_run("remote-native-failed-sync-disconnected", &repo);
+        run.status = "failed".into();
+        run.current_index = 0;
+        run.message = "remote-native task-record sync failed: timeout".to_string();
+        let mut item = queue_item("task-remote-native-failed-sync-disconnected", &repo);
+        item.run_id = run.id.clone();
+        item.execution_host = "remote-native".into();
+        item.remote_launcher = Some("/bin/false".to_string());
+        item.status = "failed".into();
+        item.message = run.message.clone();
+        item.agent_id = Some("qa-task-remote-native-failed-sync-disconnected".to_string());
+        state::replace_web_queue(&run, &[item.clone()]).unwrap();
+        state::upsert_task_record(&task_record(
+            &item.slug,
+            "open",
+            &repo,
+            item.agent_id.as_deref(),
+        ))
+        .unwrap();
+
+        assert!(continue_resolved_failed_queue_run(&run.id).unwrap());
+        let (stored_run, stored_items) = state::load_web_queue_run(&run.id).unwrap();
+        let stored_run = stored_run.unwrap();
+        let relaunched = &stored_items[0];
+
+        assert_eq!(stored_run.status, "running");
+        assert_eq!(stored_run.current_index, 0);
+        assert_eq!(relaunched.status, "pending");
+        assert_eq!(relaunched.agent_id.as_deref(), None);
+        assert_eq!(
+            relaunched.message,
+            REMOTE_NATIVE_OPEN_RECORD_RELAUNCH_MESSAGE
+        );
     }
 
     #[test]

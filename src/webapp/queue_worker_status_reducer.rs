@@ -116,7 +116,10 @@ fn collect_queue_status_evidence_for_item(
 }
 
 fn queue_task_status_error_is_stale_unknown(err: &anyhow::Error) -> bool {
-    let message = format!("{err:#}");
+    queue_task_status_message_is_stale_unknown(&format!("{err:#}"))
+}
+
+fn queue_task_status_message_is_stale_unknown(message: &str) -> bool {
     message.contains("remote-native task-record sync failed")
         || message.contains("task-record sync failed")
         || message.contains("failed to sync remote task records")
@@ -281,6 +284,8 @@ fn remote_native_open_record_should_relaunch(evidence: &QueueStatusEvidence) -> 
             | state::QueueItemStatus::Waiting
     ) || (evidence.item_status.is_stopped_or_paused()
         && evidence.item_message == REMOTE_NATIVE_DISCONNECTED_OPEN_MESSAGE)
+        || (evidence.item_status.is_failed_or_blocked()
+            && queue_task_status_message_is_stale_unknown(&evidence.item_message))
 }
 
 fn missing_record_can_relaunch(evidence: &QueueStatusEvidence) -> bool {

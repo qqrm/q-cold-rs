@@ -2,6 +2,8 @@ const QUEUE_PROCESS_OUTPUT_LIMIT: usize = 1200;
 const REMOTE_TASK_RECORD_SYNC_TIMEOUT_ENV: &str = "QCOLD_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS";
 const DEFAULT_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS: u64 = 30;
 const REMOTE_TASK_RECORD_SYNC_KILL_AFTER_SECONDS: u64 = 5;
+const QUEUE_REMOTE_TASK_RECORD_SYNC_LIMIT_ENV: &str = "QCOLD_QUEUE_REMOTE_TASK_RECORD_SYNC_LIMIT";
+const QUEUE_REMOTE_TASK_RECORD_SYNC_DEFAULT_LIMIT: usize = 200;
 
 struct QueueLaunchWorkspace {
     worktree: PathBuf,
@@ -749,6 +751,8 @@ fn run_remote_queue_task_record_sync(
             launcher,
             "--local-repo-root",
             &repo_root_arg,
+            "--limit",
+            &queue_remote_task_record_sync_limit().to_string(),
         ]);
     if legacy_remote_qcold {
         command.arg("--legacy-remote-qcold");
@@ -774,6 +778,14 @@ fn remote_queue_task_record_sync_timeout_seconds() -> u64 {
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|seconds| *seconds > 0)
         .unwrap_or(DEFAULT_REMOTE_TASK_RECORD_SYNC_TIMEOUT_SECONDS)
+}
+
+fn queue_remote_task_record_sync_limit() -> usize {
+    env::var(QUEUE_REMOTE_TASK_RECORD_SYNC_LIMIT_ENV)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|limit| *limit > 0)
+        .unwrap_or(QUEUE_REMOTE_TASK_RECORD_SYNC_DEFAULT_LIMIT)
 }
 
 fn remote_queue_sync_due(item: &state::QueueItemRow, launcher: &str, required: bool) -> bool {

@@ -166,6 +166,267 @@ fn sync_remote_imports_task_flow_records_under_local_repo_sequence() {
 }
 
 #[test]
+fn sync_remote_reallocates_sequence_when_existing_id_belongs_to_other_repo() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let local_repo = temp.path().join("vitastor");
+    let other_repo = temp.path().join("qcold");
+    git_init(&local_repo);
+    git_init(&other_repo);
+    let remote = temp.path().join("remote-dev-env");
+    let record = json!({
+        "id": "task/shared-cross-repo",
+        "source": "task-flow",
+        "sequence": 428,
+        "title": "Shared Cross Repo",
+        "description": "remote Vitastor work with a colliding local id",
+        "status": "open",
+        "created_at": 100,
+        "updated_at": 100,
+        "repo_root": "/remote/vitastor",
+        "cwd": "/remote/WT/vitastor/428-shared-cross-repo",
+        "agent_id": null,
+        "metadata_json": null
+    });
+    write_executable(
+        &remote,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf 'task-record-export\tcount=1\n'\n",
+                "printf 'task-record-json\t%s\n' '{}'\n",
+            ),
+            record.to_string().replace('\'', "'\\''"),
+        ),
+    );
+
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "create",
+            "--id",
+            "task/shared-cross-repo",
+            "--source",
+            "task-flow",
+            "--status",
+            "open",
+            "--description",
+            "existing same id under another repo",
+            "--repo-root",
+            other_repo.to_str().unwrap(),
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "create",
+            "--id",
+            "task/local-occupied",
+            "--source",
+            "task-flow",
+            "--status",
+            "open",
+            "--description",
+            "occupy first local sequence",
+            "--repo-root",
+            local_repo.to_str().unwrap(),
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    let output = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "sync-remote",
+            "--via",
+            remote.to_str().unwrap(),
+            "--local-repo-root",
+            local_repo.to_str().unwrap(),
+            "--remote-repo-root",
+            "/remote/vitastor",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("remote_records=1\timported=1\tskipped=0"));
+
+    let show = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args(["task-record", "show", "task/shared-cross-repo"])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let show = String::from_utf8(show).unwrap();
+    assert!(show.contains("\tsequence=2\t"));
+    assert!(show.contains(&format!("\trepo={}", local_repo.display())));
+}
+
+#[test]
+fn sync_remote_preserves_existing_local_sequence_when_remote_sequence_conflicts() {
+    let temp = tempdir().unwrap();
+    let state_dir = temp.path().join("state");
+    let local_repo = temp.path().join("vitastor");
+    git_init(&local_repo);
+    let remote = temp.path().join("remote-dev-env");
+    let existing = json!({
+        "id": "task/existing-remote",
+        "source": "task-flow",
+        "sequence": 24,
+        "title": "Existing Remote",
+        "description": "existing remote work",
+        "status": "open",
+        "created_at": 100,
+        "updated_at": 100,
+        "repo_root": "/remote/vitastor",
+        "cwd": "/remote/WT/vitastor/024-existing-remote",
+        "agent_id": null,
+        "metadata_json": null
+    });
+    let newer = json!({
+        "id": "task/newer-remote",
+        "source": "task-flow",
+        "sequence": 25,
+        "title": "Newer Remote",
+        "description": "newer remote work",
+        "status": "open",
+        "created_at": 200,
+        "updated_at": 200,
+        "repo_root": "/remote/vitastor",
+        "cwd": "/remote/WT/vitastor/025-newer-remote",
+        "agent_id": null,
+        "metadata_json": null
+    });
+    write_executable(
+        &remote,
+        &format!(
+            concat!(
+                "#!/bin/sh\n",
+                "printf 'task-record-export\tcount=2\n'\n",
+                "printf 'task-record-json\t%s\n' '{}'\n",
+                "printf 'task-record-json\t%s\n' '{}'\n",
+            ),
+            existing.to_string().replace('\'', "'\\''"),
+            newer.to_string().replace('\'', "'\\''"),
+        ),
+    );
+
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "create",
+            "--id",
+            "task/existing-remote",
+            "--source",
+            "task-flow",
+            "--status",
+            "open",
+            "--description",
+            "existing local sequence",
+            "--repo-root",
+            local_repo.to_str().unwrap(),
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+    AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "create",
+            "--id",
+            "task/local-only",
+            "--source",
+            "task-flow",
+            "--status",
+            "open",
+            "--description",
+            "occupy next local sequence",
+            "--repo-root",
+            local_repo.to_str().unwrap(),
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success();
+
+    let output = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args([
+            "task-record",
+            "sync-remote",
+            "--via",
+            remote.to_str().unwrap(),
+            "--local-repo-root",
+            local_repo.to_str().unwrap(),
+            "--remote-repo-root",
+            "/remote/vitastor",
+        ])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.contains("remote_records=2\timported=2\tskipped=0"));
+
+    let show_existing = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args(["task-record", "show", "task/existing-remote"])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let show_existing = String::from_utf8(show_existing).unwrap();
+    assert!(show_existing.contains("\tsequence=1\t"));
+
+    let show_newer = AssertCommand::cargo_bin("cargo-qcold")
+        .unwrap()
+        .args(["task-record", "show", "task/newer-remote"])
+        .env("QCOLD_STATE_DIR", &state_dir)
+        .env_remove("QCOLD_REPO_ROOT")
+        .env_remove("QCOLD_ACTIVE_REPO")
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let show_newer = String::from_utf8(show_newer).unwrap();
+    assert!(show_newer.contains("\tsequence=3\t"));
+}
+
+#[test]
 fn sync_remote_preserves_newer_terminal_status() {
     let temp = tempdir().unwrap();
     let state_dir = temp.path().join("state");
